@@ -1,0 +1,1141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coup - Multiplayer Card Game</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    }
+  </style>
+</head>
+<body>
+  <div id="app"></div>
+
+  <script>
+    // Game state
+    let socket = null;
+    let gameState = 'menu';
+    let roomCode = '';
+    let players = [];
+    let spectators = [];
+    let myPlayerId = null;
+    let currentPlayerId = null;
+    let actionInProgress = null;
+    let gameLog = [];
+    let selectedTarget = null;
+    let playerName = '';
+    let myResponse = null;
+    let countdown = null;
+    let countdownInterval = null;
+    let selectedExchangeCards = [];
+    let useInquisitor = false;
+    let allowSpectators = true;
+    let isSpectator = false;
+    let leftRooms = new Set();
+    let deckSize = 0;
+
+    // Room preview state
+    let previewRoomCode = '';
+    let previewMode = false;
+    let previewData = null;
+    
+    // Spectator card reveal tracking
+    let spectatorRevealedCards = {}; // Format: "playerId-cardIndex": true/false
+
+    const ACTIONS = {
+      income: { name: 'Income', coins: 1, blockable: false, challengeable: false },
+      foreignAid: { name: 'Foreign Aid', coins: 2, blockable: true, blocker: ['Duke'], challengeable: false },
+      tax: { name: 'Tax', coins: 3, blockable: false, challengeable: true, card: 'Duke' },
+      assassinate: { name: 'Assassinate', cost: 3, blockable: true, blocker: ['Contessa'], challengeable: true, card: 'Assassin' },
+      steal: { name: 'Steal', coins: 2, blockable: true, blocker: ['Captain', 'Ambassador', 'Inquisitor'], challengeable: true, card: 'Captain' },
+      exchange: { name: 'Exchange', blockable: false, challengeable: true, card: 'Ambassador' },
+      examine: { name: 'Examine', blockable: false, challengeable: true, card: 'Inquisitor' },
+      coup: { name: 'Coup', cost: 7, blockable: false, challengeable: false }
+    };
+
+    function initSocket() {
+      socket = io();
+      
+      socket.on('connect', () => {
+        console.log('Connected to server');
+        render();
+      });
+
+      socket.on('disconnect', () => {
+        console.log('Disconnected from server');
+        render();
+      });
+
+      socket.on('gameState', (state) => {
+        console.log('Game state update:', state);
+        
+        if (gameState === 'menu' && !roomCode && !state.roomCode) {
+          return;
+        }
+        
+        if (state.useInquisitor !== undefined) {
+          useInquisitor = state.useInquisitor;
+        }
+
+        if (state.allowSpectators !== undefined) {
+          allowSpectators = state.allowSpectators;
+        }
+
+        if (state.isSpectator !== undefined) {
+          isSpectator = state.isSpectator;
+        }
+        
+        if (!roomCode && state.roomCode) {
+          roomCode = state.roomCode;
+        }
+        
+        const actionChanged = !state.actionInProgress || 
+            !actionInProgress || 
+            state.actionInProgress.action !== actionInProgress.action ||
+            state.actionInProgress.playerId !== actionInProgress.playerId ||
+            state.actionInProgress.phase !== actionInProgress.phase;
+        
+        if (actionChanged) {
+          myResponse = null;
+          
+          if (state.actionInProgress && 
+              (state.actionInProgress.phase === 'waiting' || state.actionInProgress.phase === 'block')) {
+            startCountdown(10);
+          } else {
+            stopCountdown();
+          }
+        }
+        
+        players = state.players;
+        spectators = state.spectators || [];
+        myPlayerId = state.myPlayerId;
+        currentPlayerId = state.currentPlayerId;
+        actionInProgress = state.actionInProgress;
+        gameLog = state.gameLog;
+        deckSize = state.deckSize || 0;
+        
+        if (state.state === 'lobby') {
+          gameState = 'lobby';
+        } else if (state.state === 'playing') {
+          gameState = 'playing';
+        } else if (state.state === 'ended') {
+          gameState = 'ended';
+        }
+        
+        render();
+      });
+
+      socket.on('gameEnded', (data) => {
+        if (data && data.roomCode && leftRooms.has(data.roomCode)) {
+          return;
+        }
+        if (gameState === 'menu' && !roomCode) {
+          return;
+        }
+        gameState = 'ended';
+        render();
+      });
+    }
+
+    function createRoom() {
+      const name = document.getElementById('playerName').value.trim();
+      if (!name) {
+        alert('Please enter your name');
+        return;
+      }
+      playerName = name;
+      
+      const inquisitorCheckbox = document.getElementById('useInquisitor');
+      useInquisitor = inquisitorCheckbox ? inquisitorCheckbox.checked : false;
+
+      const spectatorsCheckbox = document.getElementById('allowSpectators');
+      allowSpectators = spectatorsCheckbox ? spectatorsCheckbox.checked : true;
+      
+      socket.emit('createRoom', { 
+        playerName: name, 
+        useInquisitor, 
+        allowSpectators 
+      }, (response) => {
+        if (response.success) {
+          roomCode = response.roomCode;
+          isSpectator = false;
+        } else {
+          alert(response.error);
+        }
+      });
+    }
+
+    function previewRoom() {
+      const code = document.getElementById('joinCode').value.trim().toUpperCase();
+      const name = document.getElementById('playerName').value.trim();
+      
+      if (!code) {
+        alert('Please enter a room code');
+        return;
+      }
+      if (!name) {
+        alert('Please enter your name');
+        return;
+      }
+      
+      playerName = name;
+      previewRoomCode = code;
+      
+      socket.emit('previewRoom', { roomCode: code }, (response) => {
+        if (response.success) {
+          previewMode = true;
+          previewData = response.roomData;
+          players = previewData.players;
+          spectators = previewData.spectators;
+          useInquisitor = previewData.useInquisitor;
+          allowSpectators = previewData.allowSpectators;
+          gameState = 'lobby';
+          render();
+        } else {
+          alert(response.error);
+        }
+      });
+    }
+
+    function joinAsPlayer() {
+      socket.emit('joinRoom', { 
+        roomCode: previewRoomCode, 
+        playerName: playerName, 
+        asSpectator: false 
+      }, (response) => {
+        if (response.success) {
+          roomCode = previewRoomCode;
+          isSpectator = response.joinedAs === 'spectator';
+          previewMode = false;
+          previewRoomCode = '';
+          previewData = null;
+        } else {
+          alert(response.error);
+        }
+      });
+    }
+
+    function joinAsSpectator() {
+      socket.emit('joinRoom', { 
+        roomCode: previewRoomCode, 
+        playerName: playerName, 
+        asSpectator: true 
+      }, (response) => {
+        if (response.success) {
+          roomCode = previewRoomCode;
+          isSpectator = true;
+          previewMode = false;
+          previewRoomCode = '';
+          previewData = null;
+        } else {
+          alert(response.error);
+        }
+      });
+    }
+
+    function switchToPlayer() {
+      socket.emit('switchToPlayer', { roomCode }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+        }
+      });
+    }
+
+    function switchToSpectator() {
+      socket.emit('switchToSpectator', { roomCode }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+        }
+      });
+    }
+
+    function startGame() {
+      socket.emit('startGame', { roomCode }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+        }
+      });
+    }
+
+    function performAction(action, targetId = null) {
+      if (!socket) return;
+
+      socket.emit('performAction', { roomCode, action, targetId }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+        } else {
+          selectedTarget = null;
+          render();
+        }
+      });
+    }
+
+    function respondToAction(responseType, blockCard = null) {
+      const response = { type: responseType };
+      if (blockCard) {
+        response.blockCard = blockCard;
+      }
+      
+      myResponse = responseType;
+      render();
+      
+      socket.emit('respondToAction', { roomCode, response }, (result) => {
+        if (!result.success) {
+          alert(result.error);
+          myResponse = null;
+          render();
+        }
+      });
+    }
+
+    function challengeBlock() {
+      myResponse = 'challenge-block';
+      render();
+      
+      socket.emit('challengeBlock', { roomCode }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+          myResponse = null;
+          render();
+        }
+      });
+    }
+
+    function revealInfluence(cardIndex) {
+      socket.emit('revealInfluence', { roomCode, cardIndex }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+        }
+      });
+    }
+
+    function toggleExchangeCard(cardIndex) {
+      const idx = selectedExchangeCards.indexOf(cardIndex);
+      if (idx > -1) {
+        selectedExchangeCards.splice(idx, 1);
+      } else {
+        const myPlayer = players.find(p => p.id === myPlayerId);
+        if (selectedExchangeCards.length < myPlayer.influences.length) {
+          selectedExchangeCards.push(cardIndex);
+        }
+      }
+      render();
+    }
+
+    function completeExchange() {
+      const myPlayer = players.find(p => p.id === myPlayerId);
+      if (selectedExchangeCards.length !== myPlayer.influences.length) {
+        alert(`You must select exactly ${myPlayer.influences.length} cards to keep`);
+        return;
+      }
+
+      socket.emit('completeExchange', { roomCode, keepIndices: selectedExchangeCards }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+        } else {
+          selectedExchangeCards = [];
+        }
+      });
+    }
+
+    function completeExamine(forceExchange) {
+      socket.emit('completeExamine', { roomCode, forceExchange }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+        }
+      });
+    }
+
+    function showCardToExaminer(cardIndex) {
+      socket.emit('showCardToExaminer', { roomCode, cardIndex }, (response) => {
+        if (!response.success) {
+          alert(response.error);
+        }
+      });
+    }
+
+    function toggleSpectatorCardReveal(playerId, cardIndex) {
+      const key = `${playerId}-${cardIndex}`;
+      spectatorRevealedCards[key] = !spectatorRevealedCards[key];
+      render();
+    }
+
+    function copyRoomCode() {
+      const code = previewMode ? previewRoomCode : roomCode;
+      navigator.clipboard.writeText(code).then(() => {
+        // Show feedback
+        const button = document.getElementById('copyButton');
+        if (button) {
+          const originalText = button.innerHTML;
+          button.innerHTML = '✓ Copied!';
+          button.classList.add('bg-green-600');
+          button.classList.remove('bg-gray-600');
+          setTimeout(() => {
+            button.innerHTML = originalText;
+            button.classList.remove('bg-green-600');
+            button.classList.add('bg-gray-600');
+          }, 2000);
+        }
+      }).catch(err => {
+        alert('Failed to copy code: ' + err);
+      });
+    }
+
+    function getCharacterColor(character) {
+      const colors = {
+        'Duke': 'text-purple-400',
+        'Assassin': 'text-gray-300',
+        'Captain': 'text-blue-400',
+        'Ambassador': 'text-yellow-400',
+        'Inquisitor': 'text-yellow-400',
+        'Contessa': 'text-red-400',
+        'Income': 'text-green-400',
+        'ForeignAid': 'text-blue-300',
+        'Coup': 'text-red-500'
+      };
+      return colors[character] || 'text-gray-300';
+    }
+
+    function getLogStyle(log) {
+      let borderColor = 'border-gray-700';
+      let bgColor = '';
+      let textColor = 'text-gray-300';
+      
+      if (log.type === 'action') {
+        borderColor = 'border-blue-600';
+        bgColor = 'bg-blue-900 bg-opacity-20';
+      } else if (log.type === 'challenge') {
+        borderColor = 'border-red-600';
+        bgColor = 'bg-red-900 bg-opacity-20';
+      } else if (log.type === 'block') {
+        borderColor = 'border-yellow-600';
+        bgColor = 'bg-yellow-900 bg-opacity-20';
+      } else if (log.type === 'success') {
+        borderColor = 'border-green-600';
+        bgColor = 'bg-green-900 bg-opacity-20';
+      } else if (log.type === 'fail') {
+        borderColor = 'border-red-600';
+        bgColor = 'bg-red-900 bg-opacity-20';
+      }
+      
+      if (log.character) {
+        textColor = getCharacterColor(log.character);
+      }
+      
+      return { borderColor, bgColor, textColor };
+    }
+
+    function highlightCharactersInLog(message) {
+      const characters = ['Duke', 'Assassin', 'Captain', 'Ambassador', 'Inquisitor', 'Contessa'];
+      const actions = ['Tax', 'Steal', 'Exchange', 'Examine', 'Income', 'Foreign Aid', 'Coup', 'assassinate', 'assassinates', 'assassination', 'steals', 'steal', 'blocks'];
+      
+      let result = message;
+      
+      // Highlight characters
+      characters.forEach(char => {
+        const color = getCharacterColor(char);
+        const regex = new RegExp(`\\b${char}\\b`, 'gi');
+        result = result.replace(regex, `<span class="${color} font-bold">${char}</span>`);
+      });
+      
+      // Highlight key action words with their character colors
+      const actionColors = {
+        'Tax': 'text-purple-400',
+        'assassinate': 'text-gray-300',
+        'assassinates': 'text-gray-300',
+        'assassination': 'text-gray-300',
+        'Steal': 'text-blue-400',
+        'steals': 'text-blue-400',
+        'steal': 'text-blue-400',
+        'Exchange': 'text-yellow-400',
+        'Examine': 'text-yellow-400',
+        'blocks': 'text-yellow-600',
+        'Income': 'text-green-400',
+        'Foreign Aid': 'text-blue-300',
+        'Coup': 'text-red-500'
+      };
+      
+      Object.entries(actionColors).forEach(([action, color]) => {
+        const regex = new RegExp(`\\b${action}\\b`, 'gi');
+        result = result.replace(regex, (match) => `<span class="${color} font-bold">${match}</span>`);
+      });
+      
+      return result;
+    }
+
+    function leaveRoom() {
+      if (socket && roomCode) {
+        leftRooms.add(roomCode);
+        socket.emit('leaveRoom', { roomCode });
+      }
+      
+      stopCountdown();
+      gameState = 'menu';
+      roomCode = '';
+      previewRoomCode = '';
+      previewMode = false;
+      previewData = null;
+      players = [];
+      spectators = [];
+      actionInProgress = null;
+      gameLog = [];
+      selectedTarget = null;
+      isSpectator = false;
+      spectatorRevealedCards = {};
+      render();
+    }
+
+    function cancelPreview() {
+      gameState = 'menu';
+      previewRoomCode = '';
+      previewMode = false;
+      previewData = null;
+      players = [];
+      spectators = [];
+      render();
+    }
+
+    function startCountdown(seconds) {
+      stopCountdown();
+      countdown = seconds;
+      render();
+      
+      countdownInterval = setInterval(() => {
+        countdown--;
+        if (countdown <= 0) {
+          stopCountdown();
+        }
+        render();
+      }, 1000);
+    }
+
+    function stopCountdown() {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
+      countdown = null;
+    }
+
+    function render() {
+      const app = document.getElementById('app');
+      
+      if (!socket || !socket.connected) {
+        app.innerHTML = renderConnecting();
+      } else if (gameState === 'menu') {
+        app.innerHTML = renderMenu();
+      } else if (gameState === 'lobby') {
+        app.innerHTML = renderLobby();
+      } else if (gameState === 'playing') {
+        app.innerHTML = renderGame();
+      } else if (gameState === 'ended') {
+        app.innerHTML = renderEndGame();
+      }
+    }
+
+    function renderConnecting() {
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white flex items-center justify-center">
+          <div class="bg-gray-800 rounded-lg p-8 text-center">
+            <div class="text-2xl mb-4">Connecting to server...</div>
+            <div class="text-sm text-gray-400">Please wait</div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderMenu() {
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-8">
+          <div class="max-w-md mx-auto">
+            <div class="flex justify-between items-center mb-8">
+              <h1 class="text-5xl font-bold text-red-500">COUP</h1>
+              <a href="/rules.html" target="_blank" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">
+                📖 Rules
+              </a>
+            </div>
+            
+            <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
+              <input
+                type="text"
+                id="playerName"
+                placeholder="Enter your name"
+                class="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 text-white"
+                onkeypress="if(event.key==='Enter') createRoom()"
+              />
+              
+              <div class="mb-4 bg-gray-700 rounded p-4 space-y-3">
+                <h3 class="text-lg font-bold mb-3">Game Options</h3>
+                <label class="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    id="useInquisitor"
+                    class="w-5 h-5 cursor-pointer"
+                  />
+                  <div>
+                    <div class="font-bold">Use Inquisitor (Expansion)</div>
+                    <div class="text-sm text-gray-400">Replaces Ambassador with Inquisitor</div>
+                  </div>
+                </label>
+                <label class="flex items-center gap-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    id="allowSpectators"
+                    class="w-5 h-5 cursor-pointer"
+                    checked
+                  />
+                  <div>
+                    <div class="font-bold">Allow Spectators</div>
+                    <div class="text-sm text-gray-400">Let others watch the game</div>
+                  </div>
+                </label>
+              </div>
+              
+              <button
+                onclick="createRoom()"
+                class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold mb-4"
+              >
+                Create New Room
+              </button>
+
+              <div class="text-center text-gray-400 my-4">- OR -</div>
+
+              <input
+                type="text"
+                id="joinCode"
+                placeholder="Enter room code"
+                class="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 text-white uppercase"
+                onkeypress="if(event.key==='Enter') previewRoom()"
+              />
+
+              <button
+                onclick="previewRoom()"
+                class="w-full bg-blue-600 hover:bg-blue-700 p-4 rounded text-xl font-bold"
+              >
+                Join Room
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderLobby() {
+      const displayRoomCode = previewMode ? previewRoomCode : roomCode;
+      
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-8">
+          <div class="max-w-4xl mx-auto">
+            <div class="flex justify-between items-center mb-6">
+              <h1 class="text-3xl font-bold text-red-500">COUP</h1>
+              <button onclick="${previewMode ? 'cancelPreview' : 'leaveRoom'}()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
+                ${previewMode ? 'Cancel' : 'Leave Room'}
+              </button>
+            </div>
+
+            <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
+              <div class="text-center mb-6">
+                <p class="text-gray-400 mb-2">Room Code</p>
+                <div class="flex items-center justify-center gap-3">
+                  <p class="text-4xl font-bold text-red-500">${displayRoomCode}</p>
+                  <button 
+                    id="copyButton"
+                    onclick="copyRoomCode()" 
+                    class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded text-sm font-bold transition-colors"
+                  >
+                    📋 Copy
+                  </button>
+                </div>
+                <p class="text-sm text-gray-500 mt-2">${previewMode ? 'Preview - Not yet joined' : 'Share this code with your friends'}</p>
+                <div class="flex gap-2 justify-center mt-2">
+                  ${useInquisitor ? '<p class="text-sm text-yellow-500">✓ Using Inquisitor</p>' : ''}
+                  ${allowSpectators ? '<p class="text-sm text-blue-500">✓ Spectators Allowed</p>' : ''}
+                </div>
+              </div>
+              
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+                <div>
+                  <h3 class="text-xl mb-4 flex items-center justify-between">
+                    <span>Players (${players.length}/6)</span>
+                    ${!previewMode && isSpectator ? `
+                      <button 
+                        onclick="switchToPlayer()" 
+                        class="text-sm bg-red-600 hover:bg-red-700 px-3 py-1 rounded ${players.length >= 6 ? 'opacity-50 cursor-not-allowed' : ''}"
+                        ${players.length >= 6 ? 'disabled' : ''}
+                      >
+                        Join as Player
+                      </button>
+                    ` : ''}
+                  </h3>
+                  <div class="space-y-2">
+                    ${players.map(player => `
+                      <div class="bg-gray-700 p-3 rounded flex items-center justify-between">
+                        <span>${player.name}</span>
+                        ${player.isMe ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">YOU</span>' : ''}
+                      </div>
+                    `).join('')}
+                    ${players.length === 0 ? '<div class="text-gray-500 text-center py-4">No players yet</div>' : ''}
+                  </div>
+                </div>
+
+                ${allowSpectators ? `
+                  <div>
+                    <h3 class="text-xl mb-4 flex items-center justify-between">
+                      <span>Spectators (${spectators.length})</span>
+                      ${!previewMode && !isSpectator ? `
+                        <button 
+                          onclick="switchToSpectator()" 
+                          class="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"
+                        >
+                          Switch to Spectator
+                        </button>
+                      ` : ''}
+                    </h3>
+                    <div class="space-y-2">
+                      ${spectators.map(spectator => `
+                        <div class="bg-gray-700 p-3 rounded flex items-center justify-between">
+                          <span>${spectator.name}</span>
+                          ${spectator.isMe ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded">YOU</span>' : ''}
+                        </div>
+                      `).join('')}
+                      ${spectators.length === 0 ? '<div class="text-gray-500 text-center py-4">No spectators</div>' : ''}
+                    </div>
+                  </div>
+                ` : ''}
+              </div>
+
+              ${previewMode ? `
+                <div class="space-y-3">
+                  <button 
+                    onclick="joinAsPlayer()" 
+                    class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold ${players.length >= 6 ? 'opacity-50 cursor-not-allowed' : ''}"
+                    ${players.length >= 6 ? 'disabled' : ''}
+                  >
+                    Join as Player ${players.length >= 6 ? '(Full)' : ''}
+                  </button>
+                  ${allowSpectators ? `
+                    <button 
+                      onclick="joinAsSpectator()" 
+                      class="w-full bg-blue-600 hover:bg-blue-700 p-4 rounded text-xl font-bold"
+                    >
+                      Join as Spectator
+                    </button>
+                  ` : ''}
+                </div>
+              ` : `
+                ${!isSpectator && players.length >= 2 ? `
+                  <button onclick="startGame()" class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold">
+                    Start Game
+                  </button>
+                ` : !isSpectator ? `
+                  <div class="text-center text-gray-400">Waiting for at least 2 players...</div>
+                ` : `
+                  <div class="text-center text-blue-400">Waiting for host to start the game...</div>
+                `}
+              `}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderGame() {
+      const myPlayer = players.find(p => p.id === myPlayerId);
+      const isMyTurn = currentPlayerId === myPlayerId && !isSpectator;
+      const canIRespond = actionInProgress && actionInProgress.playerId !== myPlayerId && myPlayer?.alive && !isSpectator;
+      const canIChallengeBlock = actionInProgress && actionInProgress.phase === 'block' && actionInProgress.blockerId !== myPlayerId && myPlayer?.alive && !isSpectator;
+      const mustReveal = myPlayer?.mustRevealInfluence && !isSpectator;
+      const mustExchange = myPlayer?.mustChooseExchange && !isSpectator;
+      const mustExamine = myPlayer?.mustChooseExamine && !isSpectator;
+      const mustShowCard = myPlayer?.mustShowCardToExaminer && !isSpectator;
+      const examineTarget = mustExamine ? players.find(p => p.id === myPlayer.examineTargetId) : null;
+
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-4">
+          <div class="max-w-7xl mx-auto">
+            <div class="flex justify-between items-center mb-6">
+              <div class="flex items-center gap-4">
+                <h1 class="text-3xl font-bold text-red-500">COUP</h1>
+                ${isSpectator ? '<span class="bg-blue-600 px-3 py-1 rounded text-sm">👁️ SPECTATING</span>' : ''}
+              </div>
+              <div class="flex gap-4 items-center">
+                <div class="text-gray-400">Room: ${roomCode}</div>
+                <button onclick="leaveRoom()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">
+                  Leave
+                </button>
+              </div>
+            </div>
+
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div class="lg:col-span-2">
+                <div class="grid grid-cols-2 gap-4 mb-6">
+                  ${players.map(player => `
+                    <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500' : ''} ${!player.alive ? 'opacity-50' : ''}">
+                      <div class="flex justify-between items-start mb-3">
+                        <div>
+                          <h3 class="font-bold text-lg">
+                            ${player.name}
+                            ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
+                          </h3>
+                          ${player.id === currentPlayerId ? '<span class="text-xs text-red-500">CURRENT TURN</span>' : ''}
+                        </div>
+                        <div class="flex items-center gap-1 text-yellow-500">
+                          <span>💰</span>
+                          <span class="font-bold">${player.coins}</span>
+                        </div>
+                      </div>
+                      
+                      <div class="flex gap-2">
+                        ${player.influences?.map((influence, idx) => {
+                          const key = `${player.id}-${idx}`;
+                          const spectatorRevealed = spectatorRevealedCards[key];
+                          const shouldShowCard = influence.revealed || player.isMe || (isSpectator && spectatorRevealed);
+                          
+                          return `
+                            <div class="relative flex-1 ${influence.revealed ? 'bg-red-900 border-2 border-red-600' : 'bg-gray-700'} rounded p-3 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
+                              ${influence.revealed ? `
+                                <div class="text-xs font-bold text-red-300 line-through">${influence.card}</div>
+                                <div class="text-xs text-red-500 mt-1">LOST</div>
+                              ` : shouldShowCard ? `
+                                <div class="text-xs font-bold">${influence.card}</div>
+                                ${isSpectator && spectatorRevealed ? '<div class="text-xs text-blue-400 mt-1">👁️</div>' : ''}
+                              ` : `
+                                <div class="text-2xl">🂠</div>
+                                ${isSpectator ? '<div class="text-xs text-gray-400 mt-1">Click to peek</div>' : ''}
+                              `}
+                            </div>
+                          `;
+                        }).join('')}
+                      </div>
+                    </div>
+                  `).join('')}
+                </div>
+
+                ${canIRespond && actionInProgress.phase === 'waiting' ? `
+                  <div class="mb-6 bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                      <h3 class="text-xl font-bold text-yellow-300">Action in Progress</h3>
+                      ${countdown !== null ? `
+                        <div class="bg-yellow-800 px-4 py-2 rounded-lg">
+                          <span class="text-2xl font-bold text-yellow-200">${countdown}</span>
+                          <span class="text-sm text-yellow-300 ml-1">sec</span>
+                        </div>
+                      ` : ''}
+                    </div>
+                    <p class="mb-4 text-yellow-100">${gameLog[gameLog.length - 1]?.message}</p>
+                    
+                    ${myResponse ? `
+                      <div class="bg-green-900 border border-green-600 rounded p-4 text-center">
+                        <div class="text-green-300 font-bold mb-2">✓ Response Recorded</div>
+                        <div class="text-green-200 text-sm">Waiting for other players...</div>
+                      </div>
+                    ` : `
+                      <div class="space-y-3">
+                        ${actionInProgress.canChallenge ? `
+                          <button onclick="respondToAction('challenge')" class="w-full bg-red-600 hover:bg-red-700 p-4 rounded font-bold">
+                            Challenge
+                          </button>
+                        ` : ''}
+                        ${actionInProgress.canBlock && (!actionInProgress.targetId || actionInProgress.targetId === myPlayerId) ? `
+                          <div>
+                            <p class="text-yellow-200 mb-2 font-bold">Block with:</p>
+                            <div class="grid grid-cols-1 gap-2">
+                              ${(actionInProgress.blocker || ACTIONS[actionInProgress.action].blocker).map(card => `
+                                <button onclick="respondToAction('block', '${card}')" class="bg-blue-600 hover:bg-blue-700 p-4 rounded font-bold text-white">
+                                  ${card}
+                                </button>
+                              `).join('')}
+                            </div>
+                          </div>
+                        ` : ''}
+                        <button onclick="respondToAction('pass')" class="w-full bg-green-600 hover:bg-green-700 p-4 rounded font-bold">
+                          Allow
+                        </button>
+                      </div>
+                    `}
+                  </div>
+                ` : ''}
+
+                ${canIChallengeBlock ? `
+                  <div class="mb-6 bg-blue-900 border-2 border-blue-600 rounded-lg p-6">
+                    <div class="flex justify-between items-center mb-4">
+                      <h3 class="text-xl font-bold text-blue-300">Block Declared</h3>
+                      ${countdown !== null ? `
+                        <div class="bg-blue-800 px-4 py-2 rounded-lg">
+                          <span class="text-2xl font-bold text-blue-200">${countdown}</span>
+                          <span class="text-sm text-blue-300 ml-1">sec</span>
+                        </div>
+                      ` : ''}
+                    </div>
+                    <p class="mb-4 text-blue-100">
+                      ${players.find(p => p.id === actionInProgress.blockerId)?.name} blocked with ${actionInProgress.blockCard}
+                    </p>
+                    
+                    ${myResponse ? `
+                      <div class="bg-green-900 border border-green-600 rounded p-4 text-center">
+                        <div class="text-green-300 font-bold mb-2">✓ Response Recorded</div>
+                        <div class="text-green-200 text-sm">Waiting for other players...</div>
+                      </div>
+                    ` : `
+                      <div class="flex gap-3">
+                        <button onclick="challengeBlock()" class="bg-red-600 hover:bg-red-700 p-3 rounded flex-1 font-bold">
+                          Challenge Block
+                        </button>
+                        <button onclick="respondToAction('pass')" class="bg-green-600 hover:bg-green-700 p-3 rounded flex-1 font-bold">
+                          Accept Block
+                        </button>
+                      </div>
+                    `}
+                  </div>
+                ` : ''}
+
+                ${mustReveal ? `
+                  <div class="mb-6 bg-red-900 border-2 border-red-600 rounded-lg p-6">
+                    <h3 class="text-xl font-bold mb-4 text-red-300">Choose a Card to Reveal</h3>
+                    <p class="mb-4 text-red-100">You must reveal ${myPlayer.influencesToLose || 1} influence${(myPlayer.influencesToLose || 1) > 1 ? 's' : ''}.</p>
+                    <div class="flex gap-3 justify-center">
+                      ${myPlayer.influences.map((influence, idx) => `
+                        ${!influence.revealed ? `
+                          <button 
+                            onclick="revealInfluence(${idx})" 
+                            class="bg-red-600 hover:bg-red-700 p-6 rounded text-center flex-1 max-w-xs"
+                          >
+                            <div class="text-2xl font-bold mb-2">${influence.card}</div>
+                            <div class="text-sm">Reveal this card</div>
+                          </button>
+                        ` : ''}
+                      `).join('')}
+                    </div>
+                  </div>
+                ` : ''}
+
+                ${mustExchange ? `
+                  <div class="mb-6 bg-teal-900 border-2 border-teal-600 rounded-lg p-6">
+                    <h3 class="text-xl font-bold mb-4 text-teal-300">Exchange Cards</h3>
+                    <p class="mb-4 text-teal-100">You drew ${myPlayer.exchangeCards.length} card(s). Select ${myPlayer.influences.length} card(s) to KEEP (the rest will be returned to the deck).</p>
+                    <div class="grid grid-cols-2 gap-3 mb-4">
+                      ${[...myPlayer.influences, ...myPlayer.exchangeCards].map((card, idx) => `
+                        <button 
+                          onclick="toggleExchangeCard(${idx})" 
+                          class="p-6 rounded text-center transition-all ${
+                            selectedExchangeCards.includes(idx) 
+                              ? 'bg-teal-600 ring-4 ring-teal-400' 
+                              : 'bg-gray-700 hover:bg-gray-600'
+                          }"
+                        >
+                          <div class="text-2xl font-bold mb-2">${card.card || card}</div>
+                          <div class="text-sm">
+                            ${selectedExchangeCards.includes(idx) ? '✓ Keep' : 'Click to keep'}
+                          </div>
+                        </button>
+                      `).join('')}
+                    </div>
+                    <div class="text-center mb-3">
+                      <span class="text-teal-200">Selected: ${selectedExchangeCards.length}/${myPlayer.influences.length}</span>
+                    </div>
+                    <button 
+                      onclick="completeExchange()" 
+                      class="w-full bg-teal-600 hover:bg-teal-700 p-4 rounded font-bold ${
+                        selectedExchangeCards.length !== myPlayer.influences.length ? 'opacity-50 cursor-not-allowed' : ''
+                      }"
+                      ${selectedExchangeCards.length !== myPlayer.influences.length ? 'disabled' : ''}
+                    >
+                      Confirm Exchange
+                    </button>
+                  </div>
+                ` : ''}
+
+                ${mustShowCard ? `
+                  <div class="mb-6 bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6">
+                    <h3 class="text-xl font-bold mb-4 text-yellow-300">Choose a Card to Show</h3>
+                    <p class="mb-4 text-yellow-100">You are being examined. Choose which card to show to the examiner.</p>
+                    <div class="flex gap-3 justify-center">
+                      ${myPlayer.influences.map((influence, idx) => `
+                        ${!influence.revealed ? `
+                          <button 
+                            onclick="showCardToExaminer(${idx})" 
+                            class="bg-yellow-600 hover:bg-yellow-700 p-6 rounded text-center flex-1 max-w-xs"
+                          >
+                            <div class="text-2xl font-bold mb-2">${influence.card}</div>
+                            <div class="text-sm">Show this card</div>
+                          </button>
+                        ` : ''}
+                      `).join('')}
+                    </div>
+                  </div>
+                ` : ''}
+
+                ${mustExamine && examineTarget ? `
+                  <div class="mb-6 bg-purple-900 border-2 border-purple-600 rounded-lg p-6">
+                    <h3 class="text-xl font-bold mb-4 text-purple-300">Examine ${examineTarget.name}'s Card</h3>
+                    ${myPlayer.examinedCard ? `
+                      <p class="mb-4 text-purple-100">You see one of ${examineTarget.name}'s cards:</p>
+                      <div class="bg-purple-800 rounded p-6 mb-4 text-center">
+                        <div class="text-4xl font-bold text-purple-200">
+                          ${myPlayer.examinedCard}
+                        </div>
+                      </div>
+                      <p class="mb-4 text-purple-100">Do you want to force ${examineTarget.name} to exchange this card for a new one from the deck?</p>
+                      <div class="flex gap-3">
+                        <button 
+                          onclick="completeExamine(true)" 
+                          class="flex-1 bg-red-600 hover:bg-red-700 p-4 rounded font-bold"
+                        >
+                          Force Exchange
+                        </button>
+                        <button 
+                          onclick="completeExamine(false)" 
+                          class="flex-1 bg-green-600 hover:bg-green-700 p-4 rounded font-bold"
+                        >
+                          Allow to Keep
+                        </button>
+                      </div>
+                    ` : `
+                      <p class="text-purple-100 text-center py-8">Waiting for ${examineTarget.name} to choose a card to show...</p>
+                    `}
+                  </div>
+                ` : ''}
+
+                ${isMyTurn && !actionInProgress && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && myPlayer?.alive ? `
+                  <div class="bg-gray-800 rounded-lg p-6">
+                    <h3 class="text-xl font-bold mb-4 text-red-400">Your Turn - Choose Action</h3>
+                    
+                    ${selectedTarget ? `
+                      <div class="mb-4 p-3 bg-gray-700 rounded">
+                        <div class="flex justify-between items-center">
+                          <span>Select target for ${selectedTarget}:</span>
+                          <button onclick="selectedTarget = null; render()" class="text-red-400">Cancel</button>
+                        </div>
+                        <div class="grid grid-cols-2 gap-2 mt-3">
+                          ${players.filter(p => p.id !== myPlayerId && p.alive).map(player => `
+                            <button onclick="performAction('${selectedTarget}', '${player.id}')" 
+                              class="bg-gray-600 hover:bg-gray-500 p-3 rounded">
+                              ${player.name} (${player.coins} 💰)
+                            </button>
+                          `).join('')}
+                        </div>
+                      </div>
+                    ` : ''}
+                    
+                    <div class="grid grid-cols-2 gap-3">
+                      <button onclick="performAction('income')" class="bg-green-600 hover:bg-green-700 p-3 rounded">
+                        Income (+1 💰)
+                      </button>
+                      <button onclick="performAction('foreignAid')" class="bg-blue-600 hover:bg-blue-700 p-3 rounded">
+                        Foreign Aid (+2 💰)
+                      </button>
+                      <button onclick="performAction('tax')" class="bg-purple-600 hover:bg-purple-700 p-3 rounded">
+                        Tax - Duke (+3 💰)
+                      </button>
+                      <button onclick="selectedTarget = 'steal'; render()" class="bg-orange-600 hover:bg-orange-700 p-3 rounded">
+                        Steal - Captain
+                      </button>
+                      <button onclick="performAction('exchange')" class="bg-teal-600 hover:bg-teal-700 p-3 rounded">
+                        Exchange - ${useInquisitor ? 'Inquisitor' : 'Ambassador'}
+                      </button>
+                      ${useInquisitor ? `
+                        <button onclick="selectedTarget = 'examine'; render()" class="bg-purple-600 hover:bg-purple-700 p-3 rounded">
+                          Examine - Inquisitor
+                        </button>
+                      ` : '<div></div>'}
+                      <button onclick="selectedTarget = 'assassinate'; render()" 
+                        class="bg-red-600 hover:bg-red-700 p-3 rounded ${myPlayer.coins < 3 ? 'opacity-50 cursor-not-allowed' : ''}"
+                        ${myPlayer.coins < 3 ? 'disabled' : ''}>
+                        Assassinate (3 💰)
+                      </button>
+                      <button onclick="selectedTarget = 'coup'; render()" 
+                        class="bg-red-900 hover:bg-red-950 p-3 rounded ${!useInquisitor ? 'col-span-2' : ''} ${myPlayer.coins < 7 ? 'opacity-50 cursor-not-allowed' : ''}"
+                        ${myPlayer.coins < 7 ? 'disabled' : ''}>
+                        Coup (7 💰)
+                      </button>
+                    </div>
+                    
+                    ${myPlayer.coins >= 10 ? `
+                      <div class="mt-4 p-3 bg-red-900 border border-red-700 rounded text-center">
+                        You must Coup with 10+ coins!
+                      </div>
+                    ` : ''}
+                  </div>
+                ` : ''}
+
+                ${isSpectator ? `
+                  <div class="bg-blue-900 border-2 border-blue-600 rounded-lg p-6 text-center">
+                    <div class="text-2xl mb-2">👁️</div>
+                    <div class="text-xl font-bold text-blue-300 mb-2">Spectating</div>
+                    <div class="text-blue-200 text-sm">You're watching the game</div>
+                  </div>
+                ` : ''}
+              </div>
+
+              <div>
+                <div class="bg-gray-800 rounded-lg p-4 h-[600px] overflow-y-auto mb-4">
+                  <div class="flex justify-between items-center mb-3 sticky top-0 bg-gray-800 pb-2 border-b border-gray-700">
+                    <h3 class="font-bold">Game Log</h3>
+                    <div class="text-sm text-gray-400">
+                      <span class="font-bold text-white">${deckSize}</span> cards in deck
+                    </div>
+                  </div>
+                  <div class="space-y-2">
+                    ${gameLog.map(log => {
+                      const style = getLogStyle(log);
+                      const highlighted = highlightCharactersInLog(log.message);
+                      return `
+                        <div class="text-sm ${style.textColor} border-l-2 ${style.borderColor} ${style.bgColor} pl-3 py-1 rounded-r">
+                          ${highlighted}
+                        </div>
+                      `;
+                    }).join('')}
+                  </div>
+                </div>
+
+                ${spectators.length > 0 ? `
+                  <div class="bg-gray-800 rounded-lg p-4">
+                    <h3 class="font-bold mb-3">Spectators (${spectators.length})</h3>
+                    <div class="space-y-2">
+                      ${spectators.map(spectator => `
+                        <div class="text-sm text-gray-300 flex items-center gap-2">
+                          <span class="text-blue-500">👁️</span>
+                          <span>${spectator.name}</span>
+                          ${spectator.isMe ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded ml-auto">YOU</span>' : ''}
+                        </div>
+                      `).join('')}
+                    </div>
+                  </div>
+                ` : ''}
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderEndGame() {
+      const winner = players.find(p => p.alive);
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white flex items-center justify-center">
+          <div class="bg-gray-800 rounded-lg p-12 text-center max-w-md">
+            <h1 class="text-4xl font-bold mb-4">Game Over!</h1>
+            <p class="text-2xl mb-8 text-red-400">${winner?.name} wins!</p>
+            ${isSpectator ? `
+              <p class="text-blue-400 mb-4">You were spectating</p>
+            ` : ''}
+            <button onclick="leaveRoom()" class="bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold w-full">
+              Back to Menu
+            </button>
+          </div>
+        </div>
+      `;
+    }
+
+    window.onload = () => {
+      initSocket();
+      render();
+    };
+  </script>
+</body>
+</html>

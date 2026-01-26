@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Coup - Game Rules</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
+  <div class="max-w-4xl mx-auto p-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <h1 class="text-5xl font-bold text-red-500">COUP - Rules</h1>
+      <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">Back to Game</a>
+    </div>
+
+    <div class="bg-gray-800 rounded-lg p-8 space-y-6">
+      <!-- Objective -->
+      <section>
+        <h2 class="text-3xl font-bold text-red-400 mb-3">Objective</h2>
+        <p class="text-gray-300">
+          Be the last player with influence in the game. You start with 2 influence cards (characters) and 2 coins. 
+          When you lose both influence, you're eliminated.
+        </p>
+      </section>
+
+      <!-- Characters -->
+      <section>
+        <h2 class="text-3xl font-bold text-red-400 mb-3">Characters (Influence)</h2>
+        <div class="space-y-4">
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-xl font-bold text-purple-400 mb-2">Duke</h3>
+            <p class="text-gray-300"><strong>Action:</strong> Tax - Take 3 coins from the treasury</p>
+            <p class="text-gray-300"><strong>Blocks:</strong> Foreign Aid</p>
+          </div>
+          
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-xl font-bold text-red-400 mb-2">Assassin</h3>
+            <p class="text-gray-300"><strong>Action:</strong> Assassinate - Pay 3 coins to force a player to lose influence</p>
+            <p class="text-gray-300"><strong>Blocks:</strong> Nothing</p>
+          </div>
+          
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-xl font-bold text-orange-400 mb-2">Captain</h3>
+            <p class="text-gray-300"><strong>Action:</strong> Steal - Take 2 coins from another player</p>
+            <p class="text-gray-300"><strong>Blocks:</strong> Stealing</p>
+          </div>
+          
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-xl font-bold text-teal-400 mb-2">Ambassador</h3>
+            <p class="text-gray-300"><strong>Action:</strong> Exchange - Draw 2 cards, choose which to keep, return 2</p>
+            <p class="text-gray-300"><strong>Blocks:</strong> Stealing</p>
+          </div>
+          
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-xl font-bold text-yellow-400 mb-2">Contessa</h3>
+            <p class="text-gray-300"><strong>Action:</strong> None</p>
+            <p class="text-gray-300"><strong>Blocks:</strong> Assassination</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Inquisitor (Expansion) -->
+      <section class="bg-yellow-900 bg-opacity-30 p-4 rounded border border-yellow-600">
+        <h2 class="text-3xl font-bold text-yellow-400 mb-3">Inquisitor (Expansion)</h2>
+        <p class="text-gray-300 mb-3">
+          The Inquisitor replaces the Ambassador when the expansion is enabled.
+        </p>
+        <div class="bg-gray-700 p-4 rounded">
+          <h3 class="text-xl font-bold text-purple-400 mb-2">Inquisitor</h3>
+          <p class="text-gray-300"><strong>Action:</strong> Exchange - Draw 1 card, choose to keep it or your current card</p>
+          <p class="text-gray-300"><strong>Action:</strong> Examine - Look at one of another player's cards. You may force them to exchange it</p>
+          <p class="text-gray-300"><strong>Blocks:</strong> Stealing</p>
+        </div>
+      </section>
+
+      <!-- Actions -->
+      <section>
+        <h2 class="text-3xl font-bold text-red-400 mb-3">General Actions</h2>
+        <p class="text-gray-300 mb-3">These actions are available to all players, regardless of their influence cards:</p>
+        
+        <div class="space-y-3">
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-lg font-bold text-green-400">Income</h3>
+            <p class="text-gray-300">Take 1 coin from the treasury. Cannot be blocked or challenged.</p>
+          </div>
+          
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-lg font-bold text-blue-400">Foreign Aid</h3>
+            <p class="text-gray-300">Take 2 coins from the treasury. Can be blocked by the Duke.</p>
+          </div>
+          
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-lg font-bold text-red-500">Coup</h3>
+            <p class="text-gray-300">Pay 7 coins to force a player to lose influence. Cannot be blocked or challenged.</p>
+            <p class="text-yellow-300 mt-2"><strong>Required at 10+ coins:</strong> You MUST perform a Coup if you have 10 or more coins.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Challenge and Block -->
+      <section>
+        <h2 class="text-3xl font-bold text-red-400 mb-3">Challenge & Block</h2>
+        
+        <div class="space-y-4">
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-xl font-bold text-red-300 mb-2">Challenge</h3>
+            <p class="text-gray-300 mb-2">
+              When a player claims a character action, any other player may challenge them.
+            </p>
+            <p class="text-gray-300 mb-2">
+              <strong>If the challenge succeeds:</strong> The player didn't have the character they claimed. 
+              They lose one influence and the action fails.
+            </p>
+            <p class="text-gray-300">
+              <strong>If the challenge fails:</strong> The player reveals the character card they claimed, 
+              returns it to the deck, draws a new card, and the challenger loses one influence. 
+              The action then proceeds.
+            </p>
+          </div>
+          
+          <div class="bg-gray-700 p-4 rounded">
+            <h3 class="text-xl font-bold text-blue-300 mb-2">Block</h3>
+            <p class="text-gray-300 mb-2">
+              When certain actions are taken, players can claim to block them with the appropriate character.
+            </p>
+            <p class="text-gray-300 mb-2">
+              <strong>Targeted blocks (Steal, Assassinate):</strong> Only the target of the action can block.
+            </p>
+            <p class="text-gray-300 mb-2">
+              <strong>Untargeted blocks (Foreign Aid):</strong> Any player can block.
+            </p>
+            <p class="text-gray-300">
+              <strong>Challenging blocks:</strong> Any player can challenge a block. The challenge works the same way as challenging an action.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Turn Order -->
+      <section>
+        <h2 class="text-3xl font-bold text-red-400 mb-3">Turn Order</h2>
+        <ol class="list-decimal list-inside space-y-2 text-gray-300">
+          <li>On your turn, choose one action to perform</li>
+          <li>If the action can be challenged, other players may challenge</li>
+          <li>If the action can be blocked, the target (or any player for Foreign Aid) may block</li>
+          <li>If a block is claimed, any player may challenge the block</li>
+          <li>The action resolves if not successfully challenged or blocked</li>
+          <li>Play passes to the next player</li>
+        </ol>
+      </section>
+
+      <!-- Losing Influence -->
+      <section>
+        <h2 class="text-3xl font-bold text-red-400 mb-3">Losing Influence</h2>
+        <p class="text-gray-300 mb-2">
+          When you lose influence, you must choose one of your face-down cards to reveal. 
+          That card is now out of play.
+        </p>
+        <p class="text-gray-300">
+          When both your cards are revealed, you're eliminated from the game.
+        </p>
+      </section>
+
+      <!-- Winning -->
+      <section>
+        <h2 class="text-3xl font-bold text-red-400 mb-3">Winning</h2>
+        <p class="text-gray-300">
+          The last player with at least one face-down influence card wins!
+        </p>
+      </section>
+
+      <!-- Tips -->
+      <section class="bg-blue-900 bg-opacity-30 p-4 rounded border border-blue-600">
+        <h2 class="text-3xl font-bold text-blue-400 mb-3">Strategy Tips</h2>
+        <ul class="list-disc list-inside space-y-2 text-gray-300">
+          <li>You can claim any character action, even if you don't have that card (but you risk being challenged!)</li>
+          <li>Bluffing is a key part of the game</li>
+          <li>Pay attention to what other players claim and what they've been challenged on</li>
+          <li>Sometimes it's worth challenging even if you're not sure</li>
+          <li>Save coins for a Coup when other players are getting too powerful</li>
+          <li>Remember: you MUST Coup at 10 coins</li>
+        </ul>
+      </section>
+    </div>
+
+    <div class="text-center mt-8">
+      <a href="/" class="bg-red-600 hover:bg-red-700 px-8 py-4 rounded text-xl font-bold inline-block">
+        Start Playing
+      </a>
+    </div>
+  </div>
+</body>
+</html>

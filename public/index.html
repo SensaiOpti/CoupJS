@@ -47,6 +47,161 @@
     // Spectator card reveal tracking
     let spectatorRevealedCards = {}; // Format: "playerId-cardIndex": true/false
 
+    let shouldAutoScroll = true; // Track if we should auto-scroll
+
+    // Sound effects system
+    let audioContext = null;
+    let soundEnabled = true;
+
+    function initAudioContext() {
+      if (!audioContext) {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      }
+      // Resume context if it's suspended
+      if (audioContext.state === 'suspended') {
+        audioContext.resume();
+      }
+    }
+
+    function playSound(type) {
+      if (!soundEnabled) return;
+      
+      try {
+        initAudioContext();
+        
+        const now = audioContext.currentTime;
+        const oscillator = audioContext.createOscillator();
+        const gainNode = audioContext.createGain();
+        
+        oscillator.connect(gainNode);
+        gainNode.connect(audioContext.destination);
+        
+        switch(type) {
+          case 'your-turn':
+            oscillator.frequency.setValueAtTime(440, now);
+            oscillator.frequency.setValueAtTime(554, now + 0.1);
+            oscillator.frequency.setValueAtTime(659, now + 0.2);
+            gainNode.gain.setValueAtTime(0.3, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+            oscillator.start(now);
+            oscillator.stop(now + 0.4);
+            break;
+            
+          case 'action':
+            oscillator.frequency.setValueAtTime(330, now);
+            gainNode.gain.setValueAtTime(0.2, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            oscillator.start(now);
+            oscillator.stop(now + 0.15);
+            break;
+            
+          case 'challenge':
+            oscillator.frequency.setValueAtTime(800, now);
+            oscillator.frequency.exponentialRampToValueAtTime(200, now + 0.3);
+            gainNode.gain.setValueAtTime(0.3, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+            oscillator.start(now);
+            oscillator.stop(now + 0.3);
+            break;
+            
+          case 'block':
+            oscillator.frequency.setValueAtTime(250, now);
+            oscillator.frequency.setValueAtTime(350, now + 0.1);
+            gainNode.gain.setValueAtTime(0.25, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.2);
+            oscillator.start(now);
+            oscillator.stop(now + 0.2);
+            break;
+            
+          case 'success':
+            oscillator.frequency.setValueAtTime(523, now);
+            oscillator.frequency.setValueAtTime(659, now + 0.1);
+            oscillator.frequency.setValueAtTime(784, now + 0.2);
+            gainNode.gain.setValueAtTime(0.2, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+            oscillator.start(now);
+            oscillator.stop(now + 0.4);
+            break;
+            
+          case 'fail':
+            oscillator.frequency.setValueAtTime(400, now);
+            oscillator.frequency.setValueAtTime(350, now + 0.15);
+            oscillator.frequency.setValueAtTime(300, now + 0.3);
+            gainNode.gain.setValueAtTime(0.2, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
+            oscillator.start(now);
+            oscillator.stop(now + 0.4);
+            break;
+            
+          case 'lose-influence':
+            oscillator.frequency.setValueAtTime(150, now);
+            oscillator.frequency.exponentialRampToValueAtTime(100, now + 0.5);
+            gainNode.gain.setValueAtTime(0.25, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
+            oscillator.start(now);
+            oscillator.stop(now + 0.5);
+            break;
+            
+          case 'coins':
+            oscillator.frequency.setValueAtTime(800, now);
+            oscillator.frequency.setValueAtTime(1000, now + 0.05);
+            gainNode.gain.setValueAtTime(0.15, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            oscillator.start(now);
+            oscillator.stop(now + 0.1);
+            break;
+            
+          case 'notification':
+            oscillator.frequency.setValueAtTime(440, now);
+            gainNode.gain.setValueAtTime(0.15, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+            oscillator.start(now);
+            oscillator.stop(now + 0.1);
+            break;
+        }
+      } catch (error) {
+        console.error('Error playing sound:', error);
+      }
+    }
+
+    function toggleSound() {
+      soundEnabled = !soundEnabled;
+      localStorage.setItem('coupSoundEnabled', soundEnabled);
+      
+      // Play a test sound when enabling
+      if (soundEnabled) {
+        playSound('notification');
+      }
+      
+      render();
+    }
+
+    // Load sound preference
+    if (localStorage.getItem('coupSoundEnabled') !== null) {
+      soundEnabled = localStorage.getItem('coupSoundEnabled') === 'true';
+    }
+
+    function scrollGameLogToBottom() {
+      const logContainer = document.getElementById('gameLogContainer');
+      if (logContainer && shouldAutoScroll) {
+        // Small delay to ensure DOM is fully rendered
+        setTimeout(() => {
+          if (logContainer) {
+            logContainer.scrollTop = logContainer.scrollHeight;
+          }
+        }, 0);
+      }
+    }
+
+    function checkScrollPosition() {
+      const logContainer = document.getElementById('gameLogContainer');
+      if (logContainer) {
+        // Check if user is near bottom (within 50px)
+        const isNearBottom = logContainer.scrollHeight - logContainer.scrollTop - logContainer.clientHeight < 50;
+        shouldAutoScroll = isNearBottom;
+      }
+    }
+
     const ACTIONS = {
       income: { name: 'Income', coins: 1, blockable: false, challengeable: false },
       foreignAid: { name: 'Foreign Aid', coins: 2, blockable: true, blocker: ['Duke'], challengeable: false },
@@ -72,9 +227,19 @@
       });
 
       socket.on('gameState', (state) => {
-        console.log('Game state update:', state);
+        // Store old values before updating
+        const oldGameLog = gameLog;
+        const wasMyTurn = currentPlayerId === myPlayerId;
+        const oldGameState = gameState;
         
+        console.log('=== GAME STATE UPDATE ===');
+        console.log('Old log length:', oldGameLog.length, 'New log length:', state.gameLog ? state.gameLog.length : 0);
+        console.log('Old game state:', oldGameState, 'New game state:', state.state);
+        console.log('Sound enabled:', soundEnabled);
+        
+        // Only ignore if we're in menu AND we have no room code
         if (gameState === 'menu' && !roomCode && !state.roomCode) {
+          console.log('Ignoring state update - in menu');
           return;
         }
         
@@ -111,6 +276,7 @@
           }
         }
         
+        // Update state first
         players = state.players;
         spectators = state.spectators || [];
         myPlayerId = state.myPlayerId;
@@ -124,12 +290,57 @@
         } else if (state.state === 'playing') {
           const wasPlaying = gameState === 'playing';
           gameState = 'playing';
-          // If we just entered playing state, enable auto-scroll
           if (!wasPlaying) {
             shouldAutoScroll = true;
           }
         } else if (state.state === 'ended') {
           gameState = 'ended';
+        }
+        
+        // NOW trigger sound effects
+        console.log('Checking sound triggers - log diff:', gameLog.length - oldGameLog.length);
+        if (gameLog.length > oldGameLog.length) {
+          const newLogs = gameLog.slice(oldGameLog.length);
+          console.log('New logs detected:', newLogs);
+          newLogs.forEach(log => {
+            console.log('Processing log - type:', log.type, 'message:', log.message);
+            if (log.type === 'action') {
+              console.log('Playing action sound');
+              playSound('action');
+            }
+            else if (log.type === 'challenge') {
+              console.log('Playing challenge sound');
+              playSound('challenge');
+            }
+            else if (log.type === 'block') {
+              console.log('Playing block sound');
+              playSound('block');
+            }
+            else if (log.type === 'success') {
+              console.log('Playing success/coins sound');
+              if (log.character === 'Income' || log.character === 'ForeignAid' || log.character === 'Duke') {
+                playSound('coins');
+              } else {
+                playSound('success');
+              }
+            }
+            else if (log.type === 'fail') {
+              console.log('Playing fail sound');
+              playSound('fail');
+            }
+            else if (log.message.includes('loses') || log.message.includes('eliminated')) {
+              console.log('Playing lose-influence sound');
+              playSound('lose-influence');
+            }
+          });
+        }
+        
+        // Check if it's now your turn
+        const isNowMyTurn = currentPlayerId === myPlayerId;
+        console.log('Turn check - was my turn:', wasMyTurn, 'is now my turn:', isNowMyTurn, 'is spectator:', isSpectator);
+        if (!wasMyTurn && isNowMyTurn && !isSpectator) {
+          console.log('Playing your-turn sound');
+          playSound('your-turn');
         }
         
         render();
@@ -199,7 +410,6 @@
           spectators = previewData.spectators;
           useInquisitor = previewData.useInquisitor;
           allowSpectators = previewData.allowSpectators;
-          // Show lobby preview regardless of actual game state
           gameState = 'lobby';
           render();
         } else {
@@ -374,7 +584,6 @@
     function copyRoomCode() {
       const code = previewMode ? previewRoomCode : roomCode;
       navigator.clipboard.writeText(code).then(() => {
-        // Show feedback
         const button = document.getElementById('copyButton');
         if (button) {
           const originalText = button.innerHTML;
@@ -442,14 +651,12 @@
       
       let result = message;
       
-      // Highlight characters
       characters.forEach(char => {
         const color = getCharacterColor(char);
         const regex = new RegExp(`\\b${char}\\b`, 'gi');
         result = result.replace(regex, `<span class="${color} font-bold">${char}</span>`);
       });
       
-      // Highlight key action words with their character colors
       const actionColors = {
         'Tax': 'text-purple-400',
         'assassinate': 'text-gray-300',
@@ -528,29 +735,6 @@
       countdown = null;
     }
 
-    let shouldAutoScroll = true; // Track if we should auto-scroll
-
-    function scrollGameLogToBottom() {
-      const logContainer = document.getElementById('gameLogContainer');
-      if (logContainer && shouldAutoScroll) {
-        // Small delay to ensure DOM is fully rendered
-        setTimeout(() => {
-          if (logContainer) {
-            logContainer.scrollTop = logContainer.scrollHeight;
-          }
-        }, 0);
-      }
-    }
-
-    function checkScrollPosition() {
-      const logContainer = document.getElementById('gameLogContainer');
-      if (logContainer) {
-        // Check if user is near bottom (within 50px)
-        const isNearBottom = logContainer.scrollHeight - logContainer.scrollTop - logContainer.clientHeight < 50;
-        shouldAutoScroll = isNearBottom;
-      }
-    }
-
     function render() {
       const app = document.getElementById('app');
       
@@ -585,9 +769,14 @@
           <div class="max-w-md mx-auto">
             <div class="flex justify-between items-center mb-8">
               <h1 class="text-5xl font-bold text-red-500">COUP</h1>
-              <a href="/rules.html" target="_blank" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">
-                📖 Rules
-              </a>
+              <div class="flex gap-3">
+                <button onclick="toggleSound()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
+                  ${soundEnabled ? '🔊' : '🔇'}
+                </button>
+                <a href="/rules.html" target="_blank" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">
+                  📖 Rules
+                </a>
+              </div>
             </div>
             
             <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
@@ -664,9 +853,14 @@
           <div class="max-w-4xl mx-auto">
             <div class="flex justify-between items-center mb-6">
               <h1 class="text-3xl font-bold text-red-500">COUP</h1>
-              <button onclick="${previewMode ? 'cancelPreview' : 'leaveRoom'}()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
-                ${previewMode ? 'Cancel' : 'Leave Room'}
-              </button>
+              <div class="flex gap-3">
+                <button onclick="toggleSound()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
+                  ${soundEnabled ? '🔊' : '🔇'}
+                </button>
+                <button onclick="${previewMode ? 'cancelPreview' : 'leaveRoom'}()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
+                  ${previewMode ? 'Cancel' : 'Leave Room'}
+                </button>
+              </div>
             </div>
 
             <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
@@ -807,6 +1001,9 @@
                 ${isSpectator ? '<span class="bg-blue-600 px-3 py-1 rounded text-sm">👁️ SPECTATING</span>' : ''}
               </div>
               <div class="flex gap-4 items-center">
+                <button onclick="toggleSound()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm flex items-center gap-2">
+                  ${soundEnabled ? '🔊 Sound On' : '🔇 Sound Off'}
+                </button>
                 <div class="text-gray-400">Room: ${roomCode}</div>
                 <button onclick="leaveRoom()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">
                   Leave

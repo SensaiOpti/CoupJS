@@ -122,7 +122,12 @@
         if (state.state === 'lobby') {
           gameState = 'lobby';
         } else if (state.state === 'playing') {
+          const wasPlaying = gameState === 'playing';
           gameState = 'playing';
+          // If we just entered playing state, enable auto-scroll
+          if (!wasPlaying) {
+            shouldAutoScroll = true;
+          }
         } else if (state.state === 'ended') {
           gameState = 'ended';
         }
@@ -194,6 +199,7 @@
           spectators = previewData.spectators;
           useInquisitor = previewData.useInquisitor;
           allowSpectators = previewData.allowSpectators;
+          // Show lobby preview regardless of actual game state
           gameState = 'lobby';
           render();
         } else {
@@ -522,6 +528,29 @@
       countdown = null;
     }
 
+    let shouldAutoScroll = true; // Track if we should auto-scroll
+
+    function scrollGameLogToBottom() {
+      const logContainer = document.getElementById('gameLogContainer');
+      if (logContainer && shouldAutoScroll) {
+        // Small delay to ensure DOM is fully rendered
+        setTimeout(() => {
+          if (logContainer) {
+            logContainer.scrollTop = logContainer.scrollHeight;
+          }
+        }, 0);
+      }
+    }
+
+    function checkScrollPosition() {
+      const logContainer = document.getElementById('gameLogContainer');
+      if (logContainer) {
+        // Check if user is near bottom (within 50px)
+        const isNearBottom = logContainer.scrollHeight - logContainer.scrollTop - logContainer.clientHeight < 50;
+        shouldAutoScroll = isNearBottom;
+      }
+    }
+
     function render() {
       const app = document.getElementById('app');
       
@@ -533,6 +562,7 @@
         app.innerHTML = renderLobby();
       } else if (gameState === 'playing') {
         app.innerHTML = renderGame();
+        scrollGameLogToBottom();
       } else if (gameState === 'ended') {
         app.innerHTML = renderEndGame();
       }
@@ -627,6 +657,7 @@
 
     function renderLobby() {
       const displayRoomCode = previewMode ? previewRoomCode : roomCode;
+      const roomIsPlaying = previewMode && previewData && previewData.state === 'playing';
       
       return `
         <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-8">
@@ -652,6 +683,7 @@
                   </button>
                 </div>
                 <p class="text-sm text-gray-500 mt-2">${previewMode ? 'Preview - Not yet joined' : 'Share this code with your friends'}</p>
+                ${roomIsPlaying ? '<p class="text-sm text-yellow-500 mt-2">⚠️ Game in progress</p>' : ''}
                 <div class="flex gap-2 justify-center mt-2">
                   ${useInquisitor ? '<p class="text-sm text-yellow-500">✓ Using Inquisitor</p>' : ''}
                   ${allowSpectators ? '<p class="text-sm text-blue-500">✓ Spectators Allowed</p>' : ''}
@@ -662,7 +694,7 @@
                 <div>
                   <h3 class="text-xl mb-4 flex items-center justify-between">
                     <span>Players (${players.length}/6)</span>
-                    ${!previewMode && isSpectator ? `
+                    ${!previewMode && isSpectator && !roomIsPlaying ? `
                       <button 
                         onclick="switchToPlayer()" 
                         class="text-sm bg-red-600 hover:bg-red-700 px-3 py-1 rounded ${players.length >= 6 ? 'opacity-50 cursor-not-allowed' : ''}"
@@ -687,7 +719,7 @@
                   <div>
                     <h3 class="text-xl mb-4 flex items-center justify-between">
                       <span>Spectators (${spectators.length})</span>
-                      ${!previewMode && !isSpectator ? `
+                      ${!previewMode && !isSpectator && !roomIsPlaying ? `
                         <button 
                           onclick="switchToSpectator()" 
                           class="text-sm bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded"
@@ -711,12 +743,17 @@
 
               ${previewMode ? `
                 <div class="space-y-3">
+                  ${roomIsPlaying ? `
+                    <div class="bg-yellow-900 border border-yellow-600 rounded p-4 text-center text-yellow-200 mb-3">
+                      This game is already in progress. You can join as a spectator to watch!
+                    </div>
+                  ` : ''}
                   <button 
                     onclick="joinAsPlayer()" 
-                    class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold ${players.length >= 6 ? 'opacity-50 cursor-not-allowed' : ''}"
-                    ${players.length >= 6 ? 'disabled' : ''}
+                    class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold ${(players.length >= 6 || roomIsPlaying) ? 'opacity-50 cursor-not-allowed' : ''}"
+                    ${(players.length >= 6 || roomIsPlaying) ? 'disabled' : ''}
                   >
-                    Join as Player ${players.length >= 6 ? '(Full)' : ''}
+                    Join as Player ${roomIsPlaying ? '(Game in Progress)' : players.length >= 6 ? '(Full)' : ''}
                   </button>
                   ${allowSpectators ? `
                     <button 
@@ -728,15 +765,15 @@
                   ` : ''}
                 </div>
               ` : `
-                ${!isSpectator && players.length >= 2 ? `
+                ${!isSpectator && players.length >= 2 && !roomIsPlaying ? `
                   <button onclick="startGame()" class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold">
                     Start Game
                   </button>
-                ` : !isSpectator ? `
+                ` : !isSpectator && !roomIsPlaying ? `
                   <div class="text-center text-gray-400">Waiting for at least 2 players...</div>
-                ` : `
+                ` : !roomIsPlaying ? `
                   <div class="text-center text-blue-400">Waiting for host to start the game...</div>
-                `}
+                ` : ''}
               `}
             </div>
           </div>
@@ -754,6 +791,12 @@
       const mustExamine = myPlayer?.mustChooseExamine && !isSpectator;
       const mustShowCard = myPlayer?.mustShowCardToExaminer && !isSpectator;
       const examineTarget = mustExamine ? players.find(p => p.id === myPlayer.examineTargetId) : null;
+      
+      // Check if anyone is waiting to reveal an influence
+      const someoneRevealing = players.find(p => p.mustRevealInfluence);
+      const someoneExchanging = players.find(p => p.mustChooseExchange);
+      const someoneExamining = players.find(p => p.mustChooseExamine);
+      const someoneShowingCard = players.find(p => p.mustShowCardToExaminer);
 
       return `
         <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-4">
@@ -1001,7 +1044,7 @@
                   </div>
                 ` : ''}
 
-                ${isMyTurn && !actionInProgress && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && myPlayer?.alive ? `
+                ${isMyTurn && !actionInProgress && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && myPlayer?.alive && !someoneRevealing && !someoneExchanging && !someoneExamining && !someoneShowingCard ? `
                   <div class="bg-gray-800 rounded-lg p-6">
                     <h3 class="text-xl font-bold mb-4 text-red-400">Your Turn - Choose Action</h3>
                     
@@ -1063,6 +1106,21 @@
                   </div>
                 ` : ''}
 
+                ${!mustReveal && !mustExchange && !mustExamine && !mustShowCard && myPlayer?.alive && !isSpectator && (someoneRevealing || someoneExchanging || someoneExamining || someoneShowingCard) ? `
+                  <div class="bg-gray-800 rounded-lg p-6 text-center">
+                    <h3 class="text-xl font-bold mb-4 text-gray-400">Waiting...</h3>
+                    ${someoneRevealing ? `
+                      <p class="text-gray-300">${someoneRevealing.name} is choosing which influence to lose</p>
+                    ` : someoneExchanging ? `
+                      <p class="text-gray-300">${someoneExchanging.name} is exchanging cards</p>
+                    ` : someoneExamining ? `
+                      <p class="text-gray-300">${someoneExamining.name} is examining a card</p>
+                    ` : someoneShowingCard ? `
+                      <p class="text-gray-300">${someoneShowingCard.name} is choosing a card to show</p>
+                    ` : ''}
+                  </div>
+                ` : ''}
+
                 ${isSpectator ? `
                   <div class="bg-blue-900 border-2 border-blue-600 rounded-lg p-6 text-center">
                     <div class="text-2xl mb-2">👁️</div>
@@ -1073,7 +1131,7 @@
               </div>
 
               <div>
-                <div class="bg-gray-800 rounded-lg p-4 h-[600px] overflow-y-auto mb-4">
+                <div id="gameLogContainer" class="bg-gray-800 rounded-lg p-4 h-[600px] overflow-y-auto mb-4" onscroll="checkScrollPosition()">
                   <div class="flex justify-between items-center mb-3 sticky top-0 bg-gray-800 pb-2 border-b border-gray-700">
                     <h3 class="font-bold">Game Log</h3>
                     <div class="text-sm text-gray-400">

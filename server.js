@@ -154,7 +154,7 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     currentPlayerIndex: room.currentPlayerIndex,
     currentPlayerId: room.players[room.currentPlayerIndex]?.id,
     actionInProgress: room.actionInProgress,
-    gameLog: room.gameLog.slice(-20),
+    gameLog: room.gameLog, // Send full log instead of just last 20
     myPlayerId: player?.id || null
   };
 }
@@ -179,7 +179,7 @@ function startGame(room) {
   });
 
   const cardType = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
-  addLogToRoom(room, `🎮 Game started with ${cardType}! Each player has 2 influence cards and 2 coins.`, 'info');
+  addLogToRoom(room, `🎮 Game started! Each player has 2 influence cards and 2 coins.`, 'info');
   addLogToRoom(room, `--- ${room.players[0].name}'s turn ---`, 'info');
   return { success: true };
 }
@@ -259,12 +259,8 @@ function performAction(room, socketId, action, targetId) {
   };
 
   // Generate appropriate log message
-  if (action === 'income') {
-    addLogToRoom(room, `${player.name} takes Income (+1 coin)`, 'action', 'Income');
-  } else if (action === 'foreignAid') {
-    addLogToRoom(room, `${player.name} takes Foreign Aid (+2 coins)`, 'action', 'ForeignAid');
-  } else if (action === 'coup') {
-    addLogToRoom(room, `${player.name} launches a Coup against ${targetPlayer.name}`, 'action', 'Coup');
+  if (action === 'foreignAid') {
+    addLogToRoom(room, `${player.name} takes Foreign Aid`, 'action', 'ForeignAid');
   } else if (action === 'tax') {
     addLogToRoom(room, `${player.name} claims to be the Duke and uses Tax (+3 coins)`, 'action', 'Duke');
   } else if (action === 'assassinate') {
@@ -301,6 +297,10 @@ function performAction(room, socketId, action, targetId) {
     // Set timeout for responses (10 seconds)
     setTimeout(() => {
       if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
+        // Log that no one responded
+        if (room.actionInProgress.action === 'foreignAid') {
+          addLogToRoom(room, `No one blocked Foreign Aid`, 'info');
+        }
         resolveAction(room);
         emitToRoom(room.code, 'gameState');
       }
@@ -349,11 +349,19 @@ function respondToAction(room, socketId, response) {
       // In block phase, if someone passes, check if everyone has passed
       if (room.pendingResponses.size === 0) {
         // Everyone passed on challenging the block
-        addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', room.actionInProgress.blockCard);
+        if (room.actionInProgress.action === 'foreignAid') {
+          addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', room.actionInProgress.blockCard);
+        } else {
+          addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', room.actionInProgress.blockCard);
+        }
         room.actionInProgress = null;
         nextTurn(room);
       }
     } else if (room.pendingResponses.size === 0) {
+      // All players passed on challenging/blocking
+      if (room.actionInProgress.action === 'foreignAid') {
+        addLogToRoom(room, `No one blocked Foreign Aid`, 'info');
+      }
       resolveAction(room);
     }
   }
@@ -416,7 +424,11 @@ function handleBlock(room, blockerId, blockCard) {
   const action = room.actionInProgress;
   const blocker = getPlayerById(room, blockerId);
   
-  addLogToRoom(room, `${blocker.name} claims to be the ${blockCard} and blocks!`, 'block', blockCard);
+  if (action.action === 'foreignAid') {
+    addLogToRoom(room, `${blocker.name} claims to be the ${blockCard} and blocks Foreign Aid`, 'block', blockCard);
+  } else {
+    addLogToRoom(room, `${blocker.name} claims to be the ${blockCard} and blocks!`, 'block', blockCard);
+  }
   
   // Now the block can be challenged by ANY player
   room.actionInProgress.phase = 'block';
@@ -433,7 +445,11 @@ function handleBlock(room, blockerId, blockCard) {
   setTimeout(() => {
     if (room.actionInProgress && room.actionInProgress.phase === 'block') {
       // Block succeeded, action cancelled
-      addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', blockCard);
+      if (action.action === 'foreignAid') {
+        addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', blockCard);
+      } else {
+        addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', blockCard);
+      }
       room.actionInProgress = null;
       nextTurn(room);
       emitToRoom(room.code, 'gameState');
@@ -473,7 +489,11 @@ function challengeBlock(room, socketId) {
       addLogToRoom(room, `${blocker.name} returns the card and draws a new one`, 'info');
     }
     
-    addLogToRoom(room, `The block stands. The action is blocked!`, 'success', action.blockCard);
+    if (action.action === 'foreignAid') {
+      addLogToRoom(room, `The block stands. Foreign Aid is blocked!`, 'success', action.blockCard);
+    } else {
+      addLogToRoom(room, `The block stands. The action is blocked!`, 'success', action.blockCard);
+    }
     room.actionInProgress = null;
     nextTurn(room);
   } else {
@@ -484,12 +504,12 @@ function challengeBlock(room, socketId) {
     
     // Log the successful action before resolving
     const originalAction = action.action;
-    if (originalAction === 'assassinate') {
+    if (originalAction === 'foreignAid') {
+      addLogToRoom(room, `Foreign Aid proceeds`, 'success', 'ForeignAid');
+    } else if (originalAction === 'assassinate') {
       addLogToRoom(room, `The assassination proceeds`, 'success', 'Assassin');
     } else if (originalAction === 'steal') {
       addLogToRoom(room, `The steal proceeds`, 'success', 'Captain');
-    } else if (originalAction === 'foreignAid') {
-      addLogToRoom(room, `Foreign Aid proceeds`, 'success', 'ForeignAid');
     }
     
     resolveAction(room);
@@ -506,11 +526,6 @@ function resolveAction(room) {
   const actor = getPlayerById(room, action.playerId);
   const target = action.targetId ? getPlayerById(room, action.targetId) : null;
 
-  // Log that action is not challenged/blocked
-  if (actionData.challengeable || actionData.blockable) {
-    addLogToRoom(room, `No one challenges or blocks. The action proceeds.`, 'info');
-  }
-
   // Apply costs
   if (actionData.cost) {
     actor.coins -= actionData.cost;
@@ -520,7 +535,7 @@ function resolveAction(room) {
   switch (action.action) {
     case 'income':
       actor.coins += 1;
-      addLogToRoom(room, `${actor.name} receives 1 coin`, 'success', 'Income');
+      addLogToRoom(room, `${actor.name} takes Income and receives 1 coin`, 'success', 'Income');
       break;
     case 'foreignAid':
       actor.coins += 2;
@@ -591,7 +606,7 @@ function resolveAction(room) {
       break;
     case 'coup':
       if (target) {
-        addLogToRoom(room, `${target.name} must lose an influence from the Coup`, 'info', 'Coup');
+        addLogToRoom(room, `${actor.name} launches a Coup against ${target.name} who must lose an influence`, 'info', 'Coup');
         loseInfluence(room, target.id);
       }
       break;
@@ -843,7 +858,6 @@ function switchToPlayer(room, socketId, name) {
   };
 
   room.players.push(player);
-  addLogToRoom(room, `${player.name} joined as player`);
 
   return { success: true };
 }
@@ -873,7 +887,6 @@ function switchToSpectator(room, socketId) {
   };
 
   room.spectators.push(spectator);
-  addLogToRoom(room, `${spectator.name} is now spectating`);
 
   return { success: true };
 }
@@ -901,8 +914,6 @@ io.on('connection', (socket) => {
     room.players.push(player);
     rooms.set(roomCode, room);
     socket.join(roomCode);
-    
-    addLogToRoom(room, `${player.name} created the room`);
     
     callback({ success: true, roomCode });
     emitToRoom(roomCode, 'gameState');
@@ -964,8 +975,6 @@ io.on('connection', (socket) => {
       room.spectators.push(spectator);
       socket.join(roomCode);
       
-      addLogToRoom(room, `${spectator.name} is spectating`);
-      
       callback({ success: true, joinedAs: 'spectator' });
       emitToRoom(roomCode, 'gameState');
       return;
@@ -987,8 +996,6 @@ io.on('connection', (socket) => {
       room.spectators.push(spectator);
       socket.join(roomCode);
       
-      addLogToRoom(room, `${spectator.name} is spectating`);
-      
       callback({ success: true, joinedAs: 'spectator' });
       emitToRoom(roomCode, 'gameState');
       return;
@@ -1006,8 +1013,6 @@ io.on('connection', (socket) => {
 
     room.players.push(player);
     socket.join(roomCode);
-    
-    addLogToRoom(room, `${player.name} joined the room`);
     
     callback({ success: true, joinedAs: 'player' });
     emitToRoom(roomCode, 'gameState');
@@ -1254,7 +1259,6 @@ io.on('connection', (socket) => {
         emitToRoom(roomCode, 'gameState');
       } else {
         // In lobby, remove them completely
-        addLogToRoom(room, `${player.name} left`);
         room.players.splice(playerIndex, 1);
         
         if (room.players.length === 0 && room.spectators.length === 0) {
@@ -1268,7 +1272,6 @@ io.on('connection', (socket) => {
       spectator.hasLeft = true;
       socket.leave(roomCode);
       
-      addLogToRoom(room, `${spectator.name} stopped spectating`);
       room.spectators.splice(spectatorIndex, 1);
       
       if (room.players.length === 0 && room.spectators.length === 0) {
@@ -1321,7 +1324,6 @@ io.on('connection', (socket) => {
           emitToRoom(roomCode, 'gameState');
         } else {
           // In lobby, just remove them
-          addLogToRoom(room, `${player.name} disconnected`);
           room.players.splice(playerIndex, 1);
           
           if (room.players.length === 0 && room.spectators.length === 0) {
@@ -1334,7 +1336,6 @@ io.on('connection', (socket) => {
         const spectator = room.spectators[spectatorIndex];
         spectator.hasLeft = true;
         
-        addLogToRoom(room, `${spectator.name} disconnected`);
         room.spectators.splice(spectatorIndex, 1);
         
         if (room.players.length === 0 && room.spectators.length === 0) {

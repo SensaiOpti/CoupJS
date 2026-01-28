@@ -255,7 +255,9 @@ function performAction(room, socketId, action, targetId) {
     canBlock: actionData.blockable,
     blocker: blockers,
     responses: {},
-    phase: 'waiting'
+    phase: 'waiting',
+    totalResponders: 0,
+    respondedCount: 0
   };
 
   // Generate appropriate log message
@@ -293,6 +295,8 @@ function performAction(room, socketId, action, targetId) {
     }
     
     room.pendingResponses = new Set(eligibleResponders.map(p => p.id));
+    room.actionInProgress.totalResponders = eligibleResponders.length;
+    room.actionInProgress.respondedCount = 0;
     
     // Set timeout for responses (10 seconds)
     setTimeout(() => {
@@ -338,6 +342,11 @@ function respondToAction(room, socketId, response) {
 
   room.actionInProgress.responses[player.id] = response;
   room.pendingResponses.delete(player.id);
+  
+  // Update responded count
+  if (room.actionInProgress) {
+    room.actionInProgress.respondedCount = room.actionInProgress.totalResponders - room.pendingResponses.size;
+  }
 
   if (response.type === 'challenge') {
     handleChallenge(room, player.id);
@@ -436,11 +445,10 @@ function handleBlock(room, blockerId, blockCard) {
   room.actionInProgress.blockCard = blockCard;
   
   // All players except the blocker can challenge
-  room.pendingResponses = new Set(
-    room.players
-      .filter(p => p.alive && p.id !== blockerId)
-      .map(p => p.id)
-  );
+  const eligibleChallengersList = room.players.filter(p => p.alive && p.id !== blockerId);
+  room.pendingResponses = new Set(eligibleChallengersList.map(p => p.id));
+  room.actionInProgress.totalResponders = eligibleChallengersList.length;
+  room.actionInProgress.respondedCount = 0;
   
   setTimeout(() => {
     if (room.actionInProgress && room.actionInProgress.phase === 'block') {

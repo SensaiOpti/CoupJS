@@ -29,6 +29,7 @@
     let gameLog = [];
     let selectedTarget = null;
     let playerName = '';
+    let joinCode = '';
     let myResponse = null;
     let countdown = null;
     let countdownInterval = null;
@@ -158,6 +159,14 @@
             oscillator.start(now);
             oscillator.stop(now + 0.1);
             break;
+            
+          case 'tick':
+            oscillator.frequency.setValueAtTime(600, now);
+            gainNode.gain.setValueAtTime(0.2, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.08);
+            oscillator.start(now);
+            oscillator.stop(now + 0.08);
+            break;
         }
       } catch (error) {
         console.error('Error playing sound:', error);
@@ -165,6 +174,17 @@
     }
 
     function toggleSound() {
+      // Save current input values before re-rendering
+      const nameInput = document.getElementById('playerName');
+      if (nameInput) {
+        playerName = nameInput.value;
+      }
+      
+      const codeInput = document.getElementById('joinCode');
+      if (codeInput) {
+        joinCode = codeInput.value;
+      }
+      
       soundEnabled = !soundEnabled;
       localStorage.setItem('coupSoundEnabled', soundEnabled);
       
@@ -720,6 +740,12 @@
       
       countdownInterval = setInterval(() => {
         countdown--;
+        
+        // Play tick sound in the last 3 seconds
+        if (countdown > 0 && countdown <= 3) {
+          playSound('tick');
+        }
+        
         if (countdown <= 0) {
           stopCountdown();
         }
@@ -785,6 +811,8 @@
                 id="playerName"
                 placeholder="Enter your name"
                 class="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 text-white"
+                value="${playerName}"
+                oninput="playerName = this.value"
                 onkeypress="if(event.key==='Enter') createRoom()"
               />
               
@@ -829,6 +857,8 @@
                 id="joinCode"
                 placeholder="Enter room code"
                 class="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 text-white uppercase"
+                value="${joinCode}"
+                oninput="joinCode = this.value.toUpperCase()"
                 onkeypress="if(event.key==='Enter') previewRoom()"
               />
 
@@ -1061,9 +1091,16 @@
                     <div class="flex justify-between items-center mb-4">
                       <h3 class="text-xl font-bold text-yellow-300">Action in Progress</h3>
                       ${countdown !== null ? `
-                        <div class="bg-yellow-800 px-4 py-2 rounded-lg">
-                          <span class="text-2xl font-bold text-yellow-200">${countdown}</span>
-                          <span class="text-sm text-yellow-300 ml-1">sec</span>
+                        <div class="flex flex-col items-end gap-1">
+                          <div class="${countdown <= 3 ? 'bg-red-800 animate-pulse' : 'bg-yellow-800'} px-4 py-2 rounded-lg transition-all">
+                            <span class="text-2xl font-bold ${countdown <= 3 ? 'text-red-200' : 'text-yellow-200'}">${countdown}</span>
+                            <span class="text-sm ${countdown <= 3 ? 'text-red-300' : 'text-yellow-300'} ml-1">sec</span>
+                          </div>
+                          ${actionInProgress.totalResponders > 0 ? `
+                            <div class="text-xs text-yellow-400">
+                              ${actionInProgress.respondedCount}/${actionInProgress.totalResponders} responded
+                            </div>
+                          ` : ''}
                         </div>
                       ` : ''}
                     </div>
@@ -1106,9 +1143,16 @@
                     <div class="flex justify-between items-center mb-4">
                       <h3 class="text-xl font-bold text-blue-300">Block Declared</h3>
                       ${countdown !== null ? `
-                        <div class="bg-blue-800 px-4 py-2 rounded-lg">
-                          <span class="text-2xl font-bold text-blue-200">${countdown}</span>
-                          <span class="text-sm text-blue-300 ml-1">sec</span>
+                        <div class="flex flex-col items-end gap-1">
+                          <div class="${countdown <= 3 ? 'bg-red-800 animate-pulse' : 'bg-blue-800'} px-4 py-2 rounded-lg transition-all">
+                            <span class="text-2xl font-bold ${countdown <= 3 ? 'text-red-200' : 'text-blue-200'}">${countdown}</span>
+                            <span class="text-sm ${countdown <= 3 ? 'text-red-300' : 'text-blue-300'} ml-1">sec</span>
+                          </div>
+                          ${actionInProgress.totalResponders > 0 ? `
+                            <div class="text-xs text-blue-400">
+                              ${actionInProgress.respondedCount}/${actionInProgress.totalResponders} responded
+                            </div>
+                          ` : ''}
                         </div>
                       ` : ''}
                     </div>

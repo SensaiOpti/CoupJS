@@ -11,6 +11,118 @@
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
     }
+    
+    /* Card flip animation */
+    @keyframes cardFlip {
+      0% {
+        transform: rotateY(0deg) scale(1);
+      }
+      50% {
+        transform: rotateY(90deg) scale(1.1);
+      }
+      100% {
+        transform: rotateY(180deg) scale(1);
+      }
+    }
+    
+    @keyframes cardReveal {
+      0% {
+        transform: rotateY(180deg) scale(1);
+        opacity: 0.5;
+      }
+      100% {
+        transform: rotateY(0deg) scale(1);
+        opacity: 1;
+      }
+    }
+    
+    /* Shake animation for challenges */
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+      20%, 40%, 60%, 80% { transform: translateX(5px); }
+    }
+    
+    /* Pulse for current turn */
+    @keyframes pulse {
+      0%, 100% { 
+        box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+      }
+      50% { 
+        box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+      }
+    }
+    
+    /* Coin gain animation */
+    @keyframes coinGain {
+      0% {
+        transform: translateY(-20px) scale(0.5);
+        opacity: 0;
+      }
+      50% {
+        transform: translateY(-10px) scale(1.2);
+        opacity: 1;
+      }
+      100% {
+        transform: translateY(0) scale(1);
+        opacity: 1;
+      }
+    }
+    
+    /* Fade in animation */
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    /* Eliminate player animation */
+    @keyframes eliminate {
+      0% {
+        opacity: 1;
+        transform: scale(1);
+      }
+      50% {
+        transform: scale(0.95);
+      }
+      100% {
+        opacity: 0.5;
+        transform: scale(1);
+      }
+    }
+    
+    .card-flip {
+      animation: cardFlip 0.6s ease-in-out;
+    }
+    
+    .card-reveal {
+      animation: cardReveal 0.4s ease-out;
+    }
+    
+    .shake {
+      animation: shake 0.5s ease-in-out;
+    }
+    
+    .pulse-ring {
+      animation: pulse 2s ease-in-out infinite;
+    }
+    
+    .coin-gain {
+      animation: coinGain 0.5s ease-out;
+    }
+    
+    .fade-in {
+      animation: fadeIn 0.3s ease-out;
+    }
+    
+    .eliminate {
+      animation: eliminate 0.8s ease-out forwards;
+    }
   </style>
 </head>
 <body>
@@ -49,6 +161,7 @@
     let spectatorRevealedCards = {}; // Format: "playerId-cardIndex": true/false
 
     let shouldAutoScroll = true; // Track if we should auto-scroll
+    let lastActionSignature = null; // Track which action panel is showing to prevent re-animation
 
     // Sound effects system
     let audioContext = null;
@@ -193,7 +306,16 @@
         playSound('notification');
       }
       
-      render();
+      // Update all sound buttons without re-rendering
+      const soundButtons = document.querySelectorAll('.sound-toggle-btn');
+      soundButtons.forEach(btn => {
+        btn.textContent = soundEnabled ? '🔊' : '🔇';
+      });
+      
+      const soundButtonsWithText = document.querySelectorAll('.sound-toggle-btn-text');
+      soundButtonsWithText.forEach(btn => {
+        btn.textContent = soundEnabled ? '🔊 Sound On' : '🔇 Sound Off';
+      });
     }
 
     // Load sound preference
@@ -749,8 +871,34 @@
         if (countdown <= 0) {
           stopCountdown();
         }
-        render();
+        
+        // Only update countdown display, don't re-render entire page
+        updateCountdownDisplay();
       }, 1000);
+    }
+    
+    function updateCountdownDisplay() {
+      // Update all countdown displays without re-rendering
+      const countdownTimers = document.querySelectorAll('.countdown-timer');
+      countdownTimers.forEach((timer, index) => {
+        const isWarning = countdown <= 3;
+        const isBlueTimer = timer.classList.contains('bg-blue-800') || timer.parentElement.closest('.bg-blue-900');
+        
+        // Update background color based on timer type
+        timer.className = `countdown-timer ${isWarning ? 'bg-red-800 animate-pulse' : (isBlueTimer ? 'bg-blue-800' : 'bg-yellow-800')} px-4 py-2 rounded-lg transition-all`;
+        
+        const numberSpan = timer.querySelector('.countdown-number');
+        const labelSpan = timer.querySelector('.countdown-label');
+        
+        if (numberSpan) {
+          numberSpan.textContent = countdown;
+          numberSpan.className = `countdown-number text-2xl font-bold ${isWarning ? 'text-red-200' : (isBlueTimer ? 'text-blue-200' : 'text-yellow-200')}`;
+        }
+        
+        if (labelSpan) {
+          labelSpan.className = `countdown-label text-sm ${isWarning ? 'text-red-300' : (isBlueTimer ? 'text-blue-300' : 'text-yellow-300')} ml-1`;
+        }
+      });
     }
 
     function stopCountdown() {
@@ -796,7 +944,7 @@
             <div class="flex justify-between items-center mb-8">
               <h1 class="text-5xl font-bold text-red-500">COUP</h1>
               <div class="flex gap-3">
-                <button onclick="toggleSound()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
+                <button onclick="toggleSound()" class="sound-toggle-btn bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
                   ${soundEnabled ? '🔊' : '🔇'}
                 </button>
                 <a href="/rules.html" target="_blank" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">
@@ -884,7 +1032,7 @@
             <div class="flex justify-between items-center mb-6">
               <h1 class="text-3xl font-bold text-red-500">COUP</h1>
               <div class="flex gap-3">
-                <button onclick="toggleSound()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
+                <button onclick="toggleSound()" class="sound-toggle-btn bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
                   ${soundEnabled ? '🔊' : '🔇'}
                 </button>
                 <button onclick="${previewMode ? 'cancelPreview' : 'leaveRoom'}()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
@@ -1021,6 +1169,16 @@
       const someoneExchanging = players.find(p => p.mustChooseExchange);
       const someoneExamining = players.find(p => p.mustChooseExamine);
       const someoneShowingCard = players.find(p => p.mustShowCardToExaminer);
+      
+      // Track if action panel is new (for animations)
+      const currentActionSignature = actionInProgress ? 
+        `${actionInProgress.action}-${actionInProgress.playerId}-${actionInProgress.phase}` : 
+        null;
+      const isNewAction = currentActionSignature !== lastActionSignature;
+      if (isNewAction) {
+        lastActionSignature = currentActionSignature;
+      }
+      const actionAnimationClass = isNewAction ? 'shake fade-in' : '';
 
       return `
         <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-4">
@@ -1031,7 +1189,7 @@
                 ${isSpectator ? '<span class="bg-blue-600 px-3 py-1 rounded text-sm">👁️ SPECTATING</span>' : ''}
               </div>
               <div class="flex gap-4 items-center">
-                <button onclick="toggleSound()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm flex items-center gap-2">
+                <button onclick="toggleSound()" class="sound-toggle-btn-text bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm flex items-center gap-2">
                   ${soundEnabled ? '🔊 Sound On' : '🔇 Sound Off'}
                 </button>
                 <div class="text-gray-400">Room: ${roomCode}</div>
@@ -1045,7 +1203,7 @@
               <div class="lg:col-span-2">
                 <div class="grid grid-cols-2 gap-4 mb-6">
                   ${players.map(player => `
-                    <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500' : ''} ${!player.alive ? 'opacity-50' : ''}">
+                    <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500 pulse-ring' : ''} ${!player.alive ? 'eliminate' : ''}">
                       <div class="flex justify-between items-start mb-3">
                         <div>
                           <h3 class="font-bold text-lg">
@@ -1067,7 +1225,7 @@
                           const shouldShowCard = influence.revealed || player.isMe || (isSpectator && spectatorRevealed);
                           
                           return `
-                            <div class="relative flex-1 ${influence.revealed ? 'bg-red-900 border-2 border-red-600' : 'bg-gray-700'} rounded p-3 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
+                            <div class="relative flex-1 ${influence.revealed ? 'bg-red-900 border-2 border-red-600 card-reveal' : 'bg-gray-700'} rounded p-3 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
                               ${influence.revealed ? `
                                 <div class="text-xs font-bold text-red-300 line-through">${influence.card}</div>
                                 <div class="text-xs text-red-500 mt-1">LOST</div>
@@ -1087,14 +1245,14 @@
                 </div>
 
                 ${canIRespond && actionInProgress.phase === 'waiting' ? `
-                  <div class="mb-6 bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6">
+                  <div class="mb-6 bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 ${actionAnimationClass}">
                     <div class="flex justify-between items-center mb-4">
                       <h3 class="text-xl font-bold text-yellow-300">Action in Progress</h3>
                       ${countdown !== null ? `
                         <div class="flex flex-col items-end gap-1">
-                          <div class="${countdown <= 3 ? 'bg-red-800 animate-pulse' : 'bg-yellow-800'} px-4 py-2 rounded-lg transition-all">
-                            <span class="text-2xl font-bold ${countdown <= 3 ? 'text-red-200' : 'text-yellow-200'}">${countdown}</span>
-                            <span class="text-sm ${countdown <= 3 ? 'text-red-300' : 'text-yellow-300'} ml-1">sec</span>
+                          <div class="countdown-timer ${countdown <= 3 ? 'bg-red-800 animate-pulse' : 'bg-yellow-800'} px-4 py-2 rounded-lg transition-all">
+                            <span class="countdown-number text-2xl font-bold ${countdown <= 3 ? 'text-red-200' : 'text-yellow-200'}">${countdown}</span>
+                            <span class="countdown-label text-sm ${countdown <= 3 ? 'text-red-300' : 'text-yellow-300'} ml-1">sec</span>
                           </div>
                           ${actionInProgress.totalResponders > 0 ? `
                             <div class="text-xs text-yellow-400">
@@ -1113,11 +1271,9 @@
                       </div>
                     ` : `
                       <div class="space-y-3">
-                        ${actionInProgress.canChallenge ? `
-                          <button onclick="respondToAction('challenge')" class="w-full bg-red-600 hover:bg-red-700 p-4 rounded font-bold">
-                            Challenge
-                          </button>
-                        ` : ''}
+                        <button onclick="respondToAction('pass')" class="w-full bg-green-600 hover:bg-green-700 p-4 rounded font-bold">
+                          Allow
+                        </button>
                         ${actionInProgress.canBlock && (!actionInProgress.targetId || actionInProgress.targetId === myPlayerId) ? `
                           <div>
                             <p class="text-yellow-200 mb-2 font-bold">Block with:</p>
@@ -1130,23 +1286,25 @@
                             </div>
                           </div>
                         ` : ''}
-                        <button onclick="respondToAction('pass')" class="w-full bg-green-600 hover:bg-green-700 p-4 rounded font-bold">
-                          Allow
-                        </button>
+                        ${actionInProgress.canChallenge ? `
+                          <button onclick="respondToAction('challenge')" class="w-full bg-red-600 hover:bg-red-700 p-4 rounded font-bold">
+                            Challenge
+                          </button>
+                        ` : ''}
                       </div>
                     `}
                   </div>
                 ` : ''}
 
                 ${canIChallengeBlock ? `
-                  <div class="mb-6 bg-blue-900 border-2 border-blue-600 rounded-lg p-6">
+                  <div class="mb-6 bg-blue-900 border-2 border-blue-600 rounded-lg p-6 ${actionAnimationClass}">
                     <div class="flex justify-between items-center mb-4">
                       <h3 class="text-xl font-bold text-blue-300">Block Declared</h3>
                       ${countdown !== null ? `
                         <div class="flex flex-col items-end gap-1">
-                          <div class="${countdown <= 3 ? 'bg-red-800 animate-pulse' : 'bg-blue-800'} px-4 py-2 rounded-lg transition-all">
-                            <span class="text-2xl font-bold ${countdown <= 3 ? 'text-red-200' : 'text-blue-200'}">${countdown}</span>
-                            <span class="text-sm ${countdown <= 3 ? 'text-red-300' : 'text-blue-300'} ml-1">sec</span>
+                          <div class="countdown-timer ${countdown <= 3 ? 'bg-red-800 animate-pulse' : 'bg-blue-800'} px-4 py-2 rounded-lg transition-all">
+                            <span class="countdown-number text-2xl font-bold ${countdown <= 3 ? 'text-red-200' : 'text-blue-200'}">${countdown}</span>
+                            <span class="countdown-label text-sm ${countdown <= 3 ? 'text-red-300' : 'text-blue-300'} ml-1">sec</span>
                           </div>
                           ${actionInProgress.totalResponders > 0 ? `
                             <div class="text-xs text-blue-400">
@@ -1167,11 +1325,11 @@
                       </div>
                     ` : `
                       <div class="flex gap-3">
-                        <button onclick="challengeBlock()" class="bg-red-600 hover:bg-red-700 p-3 rounded flex-1 font-bold">
-                          Challenge Block
-                        </button>
                         <button onclick="respondToAction('pass')" class="bg-green-600 hover:bg-green-700 p-3 rounded flex-1 font-bold">
                           Accept Block
+                        </button>
+                        <button onclick="challengeBlock()" class="bg-red-600 hover:bg-red-700 p-3 rounded flex-1 font-bold">
+                          Challenge Block
                         </button>
                       </div>
                     `}
@@ -1179,7 +1337,7 @@
                 ` : ''}
 
                 ${mustReveal ? `
-                  <div class="mb-6 bg-red-900 border-2 border-red-600 rounded-lg p-6">
+                  <div class="mb-6 bg-red-900 border-2 border-red-600 rounded-lg p-6 shake">
                     <h3 class="text-xl font-bold mb-4 text-red-300">Choose a Card to Reveal</h3>
                     <p class="mb-4 text-red-100">You must reveal ${myPlayer.influencesToLose || 1} influence${(myPlayer.influencesToLose || 1) > 1 ? 's' : ''}.</p>
                     <div class="flex gap-3 justify-center">
@@ -1259,7 +1417,7 @@
                     <h3 class="text-xl font-bold mb-4 text-purple-300">Examine ${examineTarget.name}'s Card</h3>
                     ${myPlayer.examinedCard ? `
                       <p class="mb-4 text-purple-100">You see one of ${examineTarget.name}'s cards:</p>
-                      <div class="bg-purple-800 rounded p-6 mb-4 text-center">
+                      <div class="bg-purple-800 rounded p-6 mb-4 text-center card-reveal">
                         <div class="text-4xl font-bold text-purple-200">
                           ${myPlayer.examinedCard}
                         </div>

@@ -29,6 +29,8 @@ app.get('/rules.html', (req, res) => {
 
 // Game state storage
 const rooms = new Map();
+const disconnectionTimers = new Map(); // Map of playerId -> timeout
+const DISCONNECTION_GRACE_PERIOD = 30000; // 30 seconds
 
 // Card definitions
 const CARDS = ['Duke', 'Assassin', 'Captain', 'Ambassador', 'Contessa'];
@@ -133,6 +135,7 @@ function getPublicGameState(room, socketId, isSpectator = false) {
       name: p.name,
       coins: p.coins,
       influenceCount: p.influences.length,
+      disconnected: p.disconnected || false,
       // Spectators can see all cards, players can only see their own cards
       influences: (p.socketId === socketId && !isSpectator) || isSpectator ? p.influences : p.influences.map(inf => inf.revealed ? inf : { revealed: false }),
       alive: p.alive,
@@ -164,6 +167,9 @@ function startGame(room) {
     return { success: false, error: 'Need 2-6 players' };
   }
 
+  // Randomize player order
+  room.players.sort(() => Math.random() - 0.5);
+
   room.deck = shuffleDeck(room.useInquisitor);
   room.state = 'playing';
   room.currentPlayerIndex = 0;
@@ -180,6 +186,7 @@ function startGame(room) {
 
   const cardType = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
   addLogToRoom(room, `🎮 Game started! Each player has 2 influence cards and 2 coins.`, 'info');
+  addLogToRoom(room, `🎲 ${room.players[0].name} will go first!`, 'info');
   addLogToRoom(room, `--- ${room.players[0].name}'s turn ---`, 'info');
   return { success: true };
 }
@@ -284,31 +291,39 @@ function performAction(room, socketId, action, targetId) {
     if (actionData.blockable && targetId) {
       // For targeted blockable actions (steal, assassinate), only the target can block
       // But anyone can still challenge
-      eligibleResponders = room.players.filter(p => p.alive && p.id !== player.id);
+      eligibleResponders = room.players.filter(p => p.alive && p.id !== player.id && !p.disconnected);
       
       // Mark who can actually block vs who can only challenge
       room.actionInProgress.blockableByTarget = true;
       room.actionInProgress.targetCanBlock = targetId;
     } else {
       // For non-targeted actions (foreign aid, tax, etc), anyone can respond
-      eligibleResponders = room.players.filter(p => p.alive && p.id !== player.id);
+      eligibleResponders = room.players.filter(p => p.alive && p.id !== player.id && !p.disconnected);
     }
     
     room.pendingResponses = new Set(eligibleResponders.map(p => p.id));
     room.actionInProgress.totalResponders = eligibleResponders.length;
     room.actionInProgress.respondedCount = 0;
     
-    // Set timeout for responses (10 seconds)
-    setTimeout(() => {
-      if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
-        // Log that no one responded
-        if (room.actionInProgress.action === 'foreignAid') {
-          addLogToRoom(room, `No one blocked Foreign Aid`, 'info');
+    // Check if target is disconnected (for blockable actions)
+    const targetIsDisconnected = targetPlayer && targetPlayer.disconnected;
+    
+    if (targetIsDisconnected) {
+      room.actionInProgress.pausedForDisconnection = true;
+      addLogToRoom(room, `⚠️ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
+    } else {
+      // Set timeout for responses (10 seconds)
+      room.actionInProgress.responseTimeout = setTimeout(() => {
+        if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
+          // Log that no one responded
+          if (room.actionInProgress.action === 'foreignAid') {
+            addLogToRoom(room, `No one blocked Foreign Aid`, 'info');
+          }
+          resolveAction(room);
+          emitToRoom(room.code, 'gameState');
         }
-        resolveAction(room);
-        emitToRoom(room.code, 'gameState');
-      }
-    }, 12000); // 12 seconds to account for network latency
+      }, 12000); // 12 seconds to account for network latency
+    }
   } else {
     // No responses needed, resolve immediately
     resolveAction(room);
@@ -445,24 +460,36 @@ function handleBlock(room, blockerId, blockCard) {
   room.actionInProgress.blockCard = blockCard;
   
   // All players except the blocker can challenge
-  const eligibleChallengersList = room.players.filter(p => p.alive && p.id !== blockerId);
+  const eligibleChallengersList = room.players.filter(p => p.alive && p.id !== blockerId && !p.disconnected);
   room.pendingResponses = new Set(eligibleChallengersList.map(p => p.id));
   room.actionInProgress.totalResponders = eligibleChallengersList.length;
   room.actionInProgress.respondedCount = 0;
   
-  setTimeout(() => {
-    if (room.actionInProgress && room.actionInProgress.phase === 'block') {
-      // Block succeeded, action cancelled
-      if (action.action === 'foreignAid') {
-        addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', blockCard);
-      } else {
-        addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', blockCard);
+  // Check if there are any disconnected players who could challenge
+  const hasDisconnectedChallengers = room.players.some(p => p.alive && p.id !== blockerId && p.disconnected);
+  
+  if (hasDisconnectedChallengers) {
+    room.actionInProgress.pausedForDisconnection = true;
+    const disconnectedNames = room.players
+      .filter(p => p.alive && p.id !== blockerId && p.disconnected)
+      .map(p => p.name)
+      .join(', ');
+    addLogToRoom(room, `⚠️ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
+  } else {
+    room.actionInProgress.responseTimeout = setTimeout(() => {
+      if (room.actionInProgress && room.actionInProgress.phase === 'block') {
+        // Block succeeded, action cancelled
+        if (action.action === 'foreignAid') {
+          addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', blockCard);
+        } else {
+          addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', blockCard);
+        }
+        room.actionInProgress = null;
+        nextTurn(room);
+        emitToRoom(room.code, 'gameState');
       }
-      room.actionInProgress = null;
-      nextTurn(room);
-      emitToRoom(room.code, 'gameState');
-    }
-  }, 12000); // 12 seconds to account for network latency
+    }, 12000); // 12 seconds to account for network latency
+  }
 }
 
 function challengeBlock(room, socketId) {
@@ -838,7 +865,7 @@ function nextTurn(room) {
   addLogToRoom(room, `--- ${room.players[next].name}'s turn ---`, 'info');
 }
 
-function switchToPlayer(room, socketId, name) {
+function switchToPlayer(room, socketId, name, persistentPlayerId) {
   const spectator = getSpectatorBySocketId(room, socketId);
   if (!spectator) {
     return { success: false, error: 'Spectator not found' };
@@ -857,12 +884,14 @@ function switchToPlayer(room, socketId, name) {
 
   // Add to players
   const player = {
-    id: socketId,
+    id: persistentPlayerId || socketId,
+    persistentId: persistentPlayerId || socketId,
     socketId: socketId,
     name: name || spectator.name,
     coins: 2,
     influences: [],
-    alive: true
+    alive: true,
+    disconnected: false
   };
 
   room.players.push(player);
@@ -911,12 +940,14 @@ io.on('connection', (socket) => {
     });
     
     const player = {
-      id: socket.id,
+      id: data.persistentPlayerId || socket.id,
+      persistentId: data.persistentPlayerId || socket.id,
       socketId: socket.id,
       name: data.playerName || 'Player',
       coins: 2,
       influences: [],
-      alive: true
+      alive: true,
+      disconnected: false
     };
 
     room.players.push(player);
@@ -959,12 +990,21 @@ io.on('connection', (socket) => {
   });
 
   socket.on('joinRoom', (data, callback) => {
-    const { roomCode, playerName, asSpectator } = data;
+    const { roomCode, playerName, asSpectator, persistentPlayerId } = data;
     const room = rooms.get(roomCode);
 
     if (!room) {
       callback({ success: false, error: 'Room not found' });
       return;
+    }
+
+    // Check if this persistent ID is already connected in this room
+    if (persistentPlayerId) {
+      const existingPlayer = room.players.find(p => p.persistentId === persistentPlayerId && !p.hasLeft);
+      if (existingPlayer && existingPlayer.socketId !== socket.id) {
+        callback({ success: false, error: 'You are already connected in another tab/window' });
+        return;
+      }
     }
 
     if (room.state !== 'lobby') {
@@ -1011,12 +1051,14 @@ io.on('connection', (socket) => {
 
     // Join as player
     const player = {
-      id: socket.id,
+      id: persistentPlayerId || socket.id,
+      persistentId: persistentPlayerId || socket.id,
       socketId: socket.id,
       name: playerName || `Player ${room.players.length + 1}`,
       coins: 2,
       influences: [],
-      alive: true
+      alive: true,
+      disconnected: false
     };
 
     room.players.push(player);
@@ -1026,8 +1068,8 @@ io.on('connection', (socket) => {
     emitToRoom(roomCode, 'gameState');
   });
 
-  socket.on('switchToPlayer', (data, callback) => {
-    const { roomCode } = data;
+  socket.on('attemptReconnect', (data, callback) => {
+    const { roomCode, persistentPlayerId } = data;
     const room = rooms.get(roomCode);
 
     if (!room) {
@@ -1035,7 +1077,110 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const result = switchToPlayer(room, socket.id, data.name);
+    // Find player by persistent ID
+    const player = room.players.find(p => p.persistentId === persistentPlayerId);
+    
+    if (!player) {
+      callback({ success: false, error: 'Player not found in this room' });
+      return;
+    }
+
+    if (player.hasLeft) {
+      callback({ success: false, error: 'You have left this game' });
+      return;
+    }
+
+    // Cancel disconnection timer if exists
+    const timerKey = `${roomCode}-${persistentPlayerId}`;
+    if (disconnectionTimers.has(timerKey)) {
+      clearTimeout(disconnectionTimers.get(timerKey));
+      disconnectionTimers.delete(timerKey);
+    }
+
+    // Update socket ID and mark as reconnected
+    player.socketId = socket.id;
+    player.disconnected = false;
+    socket.join(roomCode);
+
+    addLogToRoom(room, `✅ ${player.name} reconnected!`, 'info');
+    
+    // Check if there's an action paused waiting for this player
+    if (room.actionInProgress && room.actionInProgress.pausedForDisconnection) {
+      if (room.actionInProgress.phase === 'waiting') {
+        const targetId = room.actionInProgress.targetId;
+        if (targetId === player.id) {
+          // Check if all disconnected responders are now connected
+          const stillDisconnected = room.players.some(p => 
+            p.alive && 
+            p.id !== room.actionInProgress.playerId && 
+            p.disconnected &&
+            (!room.actionInProgress.targetId || p.id === room.actionInProgress.targetId)
+          );
+          
+          if (!stillDisconnected) {
+            // Resume the action - start countdown
+            room.actionInProgress.pausedForDisconnection = false;
+            addLogToRoom(room, `Action resumed - waiting for responses...`, 'info');
+            
+            // Start the timeout now
+            room.actionInProgress.responseTimeout = setTimeout(() => {
+              if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
+                if (room.actionInProgress.action === 'foreignAid') {
+                  addLogToRoom(room, `No one blocked Foreign Aid`, 'info');
+                }
+                resolveAction(room);
+                emitToRoom(room.code, 'gameState');
+              }
+            }, 12000);
+          }
+        }
+      } else if (room.actionInProgress.phase === 'block') {
+        // Check if all disconnected challengers are now connected
+        const blockerId = room.actionInProgress.blockerId;
+        const stillDisconnected = room.players.some(p => 
+          p.alive && 
+          p.id !== blockerId && 
+          p.disconnected
+        );
+        
+        if (!stillDisconnected) {
+          // Resume the block challenge phase
+          room.actionInProgress.pausedForDisconnection = false;
+          addLogToRoom(room, `Block challenge resumed - waiting for responses...`, 'info');
+          
+          const action = room.actionInProgress;
+          const blockCard = room.actionInProgress.blockCard;
+          
+          room.actionInProgress.responseTimeout = setTimeout(() => {
+            if (room.actionInProgress && room.actionInProgress.phase === 'block') {
+              if (action.action === 'foreignAid') {
+                addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', blockCard);
+              } else {
+                addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', blockCard);
+              }
+              room.actionInProgress = null;
+              nextTurn(room);
+              emitToRoom(room.code, 'gameState');
+            }
+          }, 12000);
+        }
+      }
+    }
+    
+    callback({ success: true, gameState: room.state });
+    emitToRoom(roomCode, 'gameState');
+  });
+
+  socket.on('switchToPlayer', (data, callback) => {
+    const { roomCode, persistentPlayerId } = data;
+    const room = rooms.get(roomCode);
+
+    if (!room) {
+      callback({ success: false, error: 'Room not found' });
+      return;
+    }
+
+    const result = switchToPlayer(room, socket.id, data.name, persistentPlayerId);
     callback(result);
     
     if (result.success) {
@@ -1301,37 +1446,56 @@ io.on('connection', (socket) => {
       if (playerIndex !== -1) {
         const player = room.players[playerIndex];
         
-        // Mark as left so they don't get updates
-        player.hasLeft = true;
-        
-        if (room.state === 'playing') {
-          // Player forfeits - reveal all influences and eliminate
-          player.influences.forEach(inf => {
-            if (!inf.revealed) {
-              inf.revealed = true;
+        if (room.state === 'playing' && !player.hasLeft) {
+          // Start grace period for reconnection
+          player.disconnected = true;
+          addLogToRoom(room, `⚠️ ${player.name} disconnected. Waiting 30 seconds to reconnect...`, 'info');
+          
+          const timerKey = `${roomCode}-${player.persistentId}`;
+          const forfeitTimer = setTimeout(() => {
+            // Grace period expired - forfeit
+            console.log(`Grace period expired for ${player.name} in room ${roomCode}`);
+            
+            // Check if player is still disconnected
+            const currentPlayer = room.players[playerIndex];
+            if (currentPlayer && currentPlayer.disconnected) {
+              currentPlayer.hasLeft = true;
+              
+              // Forfeit - reveal all influences and eliminate
+              currentPlayer.influences.forEach(inf => {
+                if (!inf.revealed) {
+                  inf.revealed = true;
+                }
+              });
+              currentPlayer.alive = false;
+              currentPlayer.mustRevealInfluence = false;
+              currentPlayer.mustChooseExchange = false;
+              currentPlayer.mustChooseExamine = false;
+              currentPlayer.mustShowCardToExaminer = false;
+              currentPlayer.influencesToLose = 0;
+              
+              addLogToRoom(room, `${currentPlayer.name} failed to reconnect and forfeits all influence!`, 'info');
+              
+              // Check win condition
+              checkWinCondition(room);
+              
+              // If it was their turn, advance to next player
+              if (room.currentPlayerIndex === playerIndex) {
+                room.actionInProgress = null;
+                nextTurn(room);
+              }
+              
+              emitToRoom(roomCode, 'gameState');
             }
-          });
-          player.alive = false;
-          player.mustRevealInfluence = false;
-          player.mustChooseExchange = false;
-          player.mustChooseExamine = false;
-          player.mustShowCardToExaminer = false;
-          player.influencesToLose = 0;
+            
+            disconnectionTimers.delete(timerKey);
+          }, DISCONNECTION_GRACE_PERIOD);
           
-          addLogToRoom(room, `${player.name} disconnected and forfeits all influence!`, 'info');
-          
-          // Check win condition
-          checkWinCondition(room);
-          
-          // If it was their turn, advance to next player
-          if (room.currentPlayerIndex === playerIndex) {
-            room.actionInProgress = null;
-            nextTurn(room);
-          }
-          
+          disconnectionTimers.set(timerKey, forfeitTimer);
           emitToRoom(roomCode, 'gameState');
         } else {
           // In lobby, just remove them
+          player.hasLeft = true;
           room.players.splice(playerIndex, 1);
           
           if (room.players.length === 0 && room.spectators.length === 0) {

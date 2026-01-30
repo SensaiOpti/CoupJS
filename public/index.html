@@ -162,10 +162,23 @@
 
     let shouldAutoScroll = true; // Track if we should auto-scroll
     let lastActionSignature = null; // Track which action panel is showing to prevent re-animation
+    let persistentPlayerId = null; // Persistent ID for reconnection
 
     // Sound effects system
     let audioContext = null;
     let soundEnabled = true;
+
+    // Get or create persistent player ID
+    function getOrCreatePlayerId() {
+      if (!persistentPlayerId) {
+        persistentPlayerId = localStorage.getItem('coupPlayerId');
+        if (!persistentPlayerId) {
+          persistentPlayerId = 'player_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+          localStorage.setItem('coupPlayerId', persistentPlayerId);
+        }
+      }
+      return persistentPlayerId;
+    }
 
     function initAudioContext() {
       if (!audioContext) {
@@ -360,6 +373,30 @@
       
       socket.on('connect', () => {
         console.log('Connected to server');
+        
+        // Check if we were in a room before disconnecting
+        const storedRoomCode = localStorage.getItem('coupCurrentRoom');
+        const storedIsSpectator = localStorage.getItem('coupIsSpectator') === 'true';
+        
+        if (storedRoomCode && !storedIsSpectator) {
+          // Attempt to reconnect to previous game
+          socket.emit('attemptReconnect', {
+            roomCode: storedRoomCode,
+            persistentPlayerId: getOrCreatePlayerId()
+          }, (response) => {
+            if (response.success) {
+              console.log('Successfully reconnected to game!');
+              roomCode = storedRoomCode;
+              isSpectator = false;
+              gameState = response.gameState;
+            } else {
+              console.log('Could not reconnect:', response.error);
+              // Clear stored room if reconnection failed
+              localStorage.removeItem('coupCurrentRoom');
+            }
+          });
+        }
+        
         render();
       });
 
@@ -517,11 +554,14 @@
       socket.emit('createRoom', { 
         playerName: name, 
         useInquisitor, 
-        allowSpectators 
+        allowSpectators,
+        persistentPlayerId: getOrCreatePlayerId()
       }, (response) => {
         if (response.success) {
           roomCode = response.roomCode;
           isSpectator = false;
+          localStorage.setItem('coupCurrentRoom', roomCode);
+          localStorage.setItem('coupIsSpectator', 'false');
         } else {
           alert(response.error);
         }
@@ -564,7 +604,8 @@
       socket.emit('joinRoom', { 
         roomCode: previewRoomCode, 
         playerName: playerName, 
-        asSpectator: false 
+        asSpectator: false,
+        persistentPlayerId: getOrCreatePlayerId()
       }, (response) => {
         if (response.success) {
           roomCode = previewRoomCode;
@@ -572,6 +613,11 @@
           previewMode = false;
           previewRoomCode = '';
           previewData = null;
+          
+          if (!isSpectator) {
+            localStorage.setItem('coupCurrentRoom', roomCode);
+            localStorage.setItem('coupIsSpectator', 'false');
+          }
         } else {
           alert(response.error);
         }
@@ -597,7 +643,10 @@
     }
 
     function switchToPlayer() {
-      socket.emit('switchToPlayer', { roomCode }, (response) => {
+      socket.emit('switchToPlayer', { 
+        roomCode,
+        persistentPlayerId: getOrCreatePlayerId()
+      }, (response) => {
         if (!response.success) {
           alert(response.error);
         }
@@ -828,6 +877,10 @@
         leftRooms.add(roomCode);
         socket.emit('leaveRoom', { roomCode });
       }
+      
+      // Clear stored room
+      localStorage.removeItem('coupCurrentRoom');
+      localStorage.removeItem('coupIsSpectator');
       
       stopCountdown();
       gameState = 'menu';
@@ -1203,12 +1256,13 @@
               <div class="lg:col-span-2">
                 <div class="grid grid-cols-2 gap-4 mb-6">
                   ${players.map(player => `
-                    <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500 pulse-ring' : ''} ${!player.alive ? 'eliminate' : ''}">
+                    <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500 pulse-ring' : ''} ${!player.alive ? 'eliminate' : ''} ${player.disconnected ? 'opacity-75' : ''}">
                       <div class="flex justify-between items-start mb-3">
                         <div>
                           <h3 class="font-bold text-lg">
                             ${player.name}
                             ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
+                            ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
                           </h3>
                           ${player.id === currentPlayerId ? '<span class="text-xs text-red-500">CURRENT TURN</span>' : ''}
                         </div>
@@ -1248,7 +1302,11 @@
                   <div class="mb-6 bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 ${actionAnimationClass}">
                     <div class="flex justify-between items-center mb-4">
                       <h3 class="text-xl font-bold text-yellow-300">Action in Progress</h3>
-                      ${countdown !== null ? `
+                      ${actionInProgress.pausedForDisconnection ? `
+                        <div class="bg-yellow-800 px-4 py-2 rounded-lg">
+                          <span class="text-sm text-yellow-200">⏸️ Paused - Waiting for reconnection</span>
+                        </div>
+                      ` : countdown !== null ? `
                         <div class="flex flex-col items-end gap-1">
                           <div class="countdown-timer ${countdown <= 3 ? 'bg-red-800 animate-pulse' : 'bg-yellow-800'} px-4 py-2 rounded-lg transition-all">
                             <span class="countdown-number text-2xl font-bold ${countdown <= 3 ? 'text-red-200' : 'text-yellow-200'}">${countdown}</span>
@@ -1300,7 +1358,11 @@
                   <div class="mb-6 bg-blue-900 border-2 border-blue-600 rounded-lg p-6 ${actionAnimationClass}">
                     <div class="flex justify-between items-center mb-4">
                       <h3 class="text-xl font-bold text-blue-300">Block Declared</h3>
-                      ${countdown !== null ? `
+                      ${actionInProgress.pausedForDisconnection ? `
+                        <div class="bg-blue-800 px-4 py-2 rounded-lg">
+                          <span class="text-sm text-blue-200">⏸️ Paused - Waiting for reconnection</span>
+                        </div>
+                      ` : countdown !== null ? `
                         <div class="flex flex-col items-end gap-1">
                           <div class="countdown-timer ${countdown <= 3 ? 'bg-red-800 animate-pulse' : 'bg-blue-800'} px-4 py-2 rounded-lg transition-all">
                             <span class="countdown-number text-2xl font-bold ${countdown <= 3 ? 'text-red-200' : 'text-blue-200'}">${countdown}</span>
@@ -1456,8 +1518,8 @@
                         <div class="grid grid-cols-2 gap-2 mt-3">
                           ${players.filter(p => p.id !== myPlayerId && p.alive).map(player => `
                             <button onclick="performAction('${selectedTarget}', '${player.id}')" 
-                              class="bg-gray-600 hover:bg-gray-500 p-3 rounded">
-                              ${player.name} (${player.coins} 💰)
+                              class="bg-gray-600 hover:bg-gray-500 p-3 rounded ${player.disconnected ? 'opacity-75' : ''}">
+                              ${player.name} (${player.coins} 💰)${player.disconnected ? ' ⚠️' : ''}
                             </button>
                           `).join('')}
                         </div>
@@ -1517,6 +1579,17 @@
                     ` : someoneShowingCard ? `
                       <p class="text-gray-300">${someoneShowingCard.name} is choosing a card to show</p>
                     ` : ''}
+                  </div>
+                ` : !isMyTurn && !canIRespond && !canIChallengeBlock && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && actionInProgress && actionInProgress.pausedForDisconnection && myPlayer?.alive && !isSpectator ? `
+                  <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
+                    <h3 class="text-xl font-bold mb-4 text-yellow-300">⏸️ Action Paused</h3>
+                    <p class="text-yellow-100">Waiting for disconnected player(s) to reconnect...</p>
+                  </div>
+                ` : !isMyTurn && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && !actionInProgress && myPlayer?.alive && !isSpectator && players[currentPlayerId]?.disconnected ? `
+                  <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
+                    <h3 class="text-xl font-bold mb-4 text-yellow-300">⚠️ Game Paused</h3>
+                    <p class="text-yellow-100">${players.find(p => p.id === currentPlayerId)?.name} is disconnected</p>
+                    <p class="text-yellow-200 text-sm mt-2">Waiting for them to reconnect...</p>
                   </div>
                 ` : ''}
 

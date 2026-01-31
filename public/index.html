@@ -157,6 +157,7 @@
     let isSpectator = false;
     let leftRooms = new Set();
     let deckSize = 0;
+    let chatMode = 'separate'; // 'separate', 'unified', 'none'
 
     // Room preview state
     let previewRoomCode = '';
@@ -436,6 +437,10 @@
           allowSpectators = state.allowSpectators;
         }
 
+        if (state.chatMode !== undefined) {
+          chatMode = state.chatMode;
+        }
+
         if (state.isSpectator !== undefined) {
           isSpectator = state.isSpectator;
         }
@@ -557,10 +562,14 @@
       const spectatorsCheckbox = document.getElementById('allowSpectators');
       allowSpectators = spectatorsCheckbox ? spectatorsCheckbox.checked : true;
       
+      const chatModeSelect = document.getElementById('chatMode');
+      const chatMode = chatModeSelect ? chatModeSelect.value : 'separate';
+      
       socket.emit('createRoom', { 
         playerName: name, 
         useInquisitor, 
         allowSpectators,
+        chatMode,
         persistentPlayerId: getOrCreatePlayerId()
       }, (response) => {
         if (response.success) {
@@ -598,6 +607,7 @@
           spectators = previewData.spectators;
           useInquisitor = previewData.useInquisitor;
           allowSpectators = previewData.allowSpectators;
+          chatMode = previewData.chatMode || 'separate';
           gameState = 'lobby';
           render();
         } else {
@@ -904,6 +914,23 @@
       render();
     }
 
+    function sendChatMessage(event) {
+      event.preventDefault();
+      
+      const input = document.getElementById('chatInput');
+      const message = input.value.trim();
+      
+      if (!message || !socket || !roomCode) return;
+      
+      // Check if chat is disabled
+      if (chatMode === 'none') {
+        return;
+      }
+      
+      socket.emit('sendChatMessage', { roomCode, message });
+      input.value = '';
+    }
+
     function cancelPreview() {
       gameState = 'menu';
       previewRoomCode = '';
@@ -1048,6 +1075,14 @@
                     <div class="text-sm text-gray-400">Let others watch the game</div>
                   </div>
                 </label>
+                <div>
+                  <label class="font-bold block mb-2">Chat Mode</label>
+                  <select id="chatMode" class="w-full p-2 bg-gray-600 rounded border border-gray-500 text-white cursor-pointer">
+                    <option value="separate">Separate Chats (Players & Spectators)</option>
+                    <option value="unified">Unified Chat (Everyone)</option>
+                    <option value="none">No Chat (Disabled)</option>
+                  </select>
+                </div>
               </div>
               
               <button
@@ -1115,9 +1150,10 @@
                 </div>
                 <p class="text-sm text-gray-500 mt-2">${previewMode ? 'Preview - Not yet joined' : 'Share this code with your friends'}</p>
                 ${roomIsPlaying ? '<p class="text-sm text-yellow-500 mt-2">⚠️ Game in progress</p>' : ''}
-                <div class="flex gap-2 justify-center mt-2">
+                <div class="flex gap-2 justify-center mt-2 flex-wrap">
                   ${useInquisitor ? '<p class="text-sm text-yellow-500">✓ Using Inquisitor</p>' : ''}
                   ${allowSpectators ? '<p class="text-sm text-blue-500">✓ Spectators Allowed</p>' : ''}
+                  ${chatMode === 'unified' ? '<p class="text-sm text-green-500">💬 Unified Chat</p>' : chatMode === 'separate' ? '<p class="text-sm text-green-500">💬 Separate Chats</p>' : '<p class="text-sm text-gray-500">💬 Chat Disabled</p>'}
                 </div>
               </div>
               
@@ -1621,16 +1657,50 @@
                   </div>
                   <div class="space-y-2">
                     ${gameLog.map(log => {
-                      const style = getLogStyle(log);
-                      const highlighted = highlightCharactersInLog(log.message);
-                      return `
-                        <div class="text-sm ${style.textColor} border-l-2 ${style.borderColor} ${style.bgColor} pl-3 py-1 rounded-r">
-                          ${highlighted}
-                        </div>
-                      `;
+                      if (log.type === 'chat') {
+                        // Chat message styling
+                        const isSpectatorChat = log.isSpectator;
+                        const chatColor = isSpectatorChat ? 'border-blue-500 bg-blue-900 bg-opacity-20' : 'border-green-500 bg-green-900 bg-opacity-20';
+                        const badge = isSpectatorChat ? '<span class="text-xs bg-blue-600 px-1 rounded">SPEC</span>' : '';
+                        return `
+                          <div class="text-sm text-gray-200 border-l-2 ${chatColor} pl-3 py-1 rounded-r">
+                            <span class="font-bold">${log.playerName}</span> ${badge}: ${log.message}
+                          </div>
+                        `;
+                      } else {
+                        // Game log styling
+                        const style = getLogStyle(log);
+                        const highlighted = highlightCharactersInLog(log.message);
+                        return `
+                          <div class="text-sm ${style.textColor} border-l-2 ${style.borderColor} ${style.bgColor} pl-3 py-1 rounded-r">
+                            ${highlighted}
+                          </div>
+                        `;
+                      }
                     }).join('')}
                   </div>
                 </div>
+
+                <!-- Chat Input -->
+                ${chatMode !== 'none' ? `
+                  <div class="bg-gray-800 rounded-lg p-3">
+                    <form onsubmit="sendChatMessage(event)" class="flex gap-2">
+                      <input 
+                        type="text" 
+                        id="chatInput"
+                        placeholder="${chatMode === 'separate' ? (isSpectator ? 'Chat with spectators...' : 'Chat with players...') : 'Chat with everyone...'}"
+                        class="flex-1 p-2 bg-gray-700 rounded border border-gray-600 text-white text-sm"
+                        maxlength="200"
+                      />
+                      <button 
+                        type="submit"
+                        class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm font-bold"
+                      >
+                        Send
+                      </button>
+                    </form>
+                  </div>
+                ` : ''}
 
                 ${spectators.length > 0 ? `
                   <div class="bg-gray-800 rounded-lg p-4">

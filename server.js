@@ -75,7 +75,8 @@ function createRoom(roomCode, options = {}) {
     gameLog: [],
     pendingResponses: new Set(),
     useInquisitor: options.useInquisitor || false,
-    allowSpectators: options.allowSpectators !== false // Default to true
+    allowSpectators: options.allowSpectators !== false, // Default to true
+    chatMode: options.chatMode || 'separate' // Default to separate
   };
 }
 
@@ -135,6 +136,7 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     state: room.state,
     useInquisitor: room.useInquisitor,
     allowSpectators: room.allowSpectators,
+    chatMode: room.chatMode,
     deckSize: room.deck.length,
     isSpectator: isSpectator,
     players: room.players.map(p => ({
@@ -164,7 +166,26 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     currentPlayerIndex: room.currentPlayerIndex,
     currentPlayerId: room.players[room.currentPlayerIndex]?.id,
     actionInProgress: cleanActionInProgress,
-    gameLog: room.gameLog, // Send full log instead of just last 20
+    gameLog: room.gameLog.filter(log => {
+      // Always show non-chat messages
+      if (log.type !== 'chat') return true;
+      
+      // If chat is disabled, don't show chat messages
+      if (room.chatMode === 'none') return false;
+      
+      // If unified chat, show all messages
+      if (room.chatMode === 'unified') return true;
+      
+      // Separate chat mode: filter by sender/receiver type
+      if (room.chatMode === 'separate') {
+        // Spectators only see spectator chat
+        if (isSpectator) return log.isSpectator === true;
+        // Players only see player chat
+        return log.isSpectator === false;
+      }
+      
+      return true;
+    }),
     myPlayerId: player?.id || null
   };
 }
@@ -988,7 +1009,8 @@ io.on('connection', (socket) => {
     const roomCode = generateRoomCode();
     const room = createRoom(roomCode, { 
       useInquisitor: data.useInquisitor || false,
-      allowSpectators: data.allowSpectators !== false // Default to true
+      allowSpectators: data.allowSpectators !== false, // Default to true
+      chatMode: data.chatMode || 'separate'
     });
     
     const player = {
@@ -1027,6 +1049,7 @@ io.on('connection', (socket) => {
         state: room.state,
         useInquisitor: room.useInquisitor,
         allowSpectators: room.allowSpectators,
+        chatMode: room.chatMode,
         players: room.players.map(p => ({
           id: p.id,
           name: p.name,
@@ -1569,6 +1592,59 @@ io.on('connection', (socket) => {
         }
       }
     });
+  });
+
+  socket.on('sendChatMessage', (data) => {
+    const { roomCode, message } = data;
+    const room = rooms.get(roomCode);
+    
+    if (!room) return;
+    
+    // Check if chat is disabled
+    if (room.chatMode === 'none') return;
+    
+    // Find if sender is player or spectator
+    const player = getPlayerBySocketId(room, socket.id);
+    const spectator = getSpectatorBySocketId(room, socket.id);
+    
+    if (!player && !spectator) return;
+    
+    const senderName = player ? player.name : spectator.name;
+    const isSpectatorMessage = !!spectator;
+    
+    // Add message to game log
+    const chatLog = {
+      time: Date.now(),
+      type: 'chat',
+      playerName: senderName,
+      message: message,
+      isSpectator: isSpectatorMessage
+    };
+    
+    room.gameLog.push(chatLog);
+    
+    // Emit based on chat mode
+    if (room.chatMode === 'unified') {
+      // Everyone sees all messages
+      emitToRoom(roomCode, 'gameState');
+    } else if (room.chatMode === 'separate') {
+      // Players see player chat, spectators see spectator chat
+      if (isSpectatorMessage) {
+        // Send to all spectators
+        room.spectators.forEach(s => {
+          if (!s.hasLeft) {
+            io.to(s.socketId).emit('gameState', getPublicGameState(room, s.socketId, true));
+          }
+        });
+      } else {
+        // Send to all players
+        room.players.forEach(p => {
+          if (!p.hasLeft) {
+            io.to(p.socketId).emit('gameState', getPublicGameState(room, p.socketId, false));
+          }
+        });
+      }
+    }
   });
 });
 

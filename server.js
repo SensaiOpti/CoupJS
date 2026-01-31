@@ -123,6 +123,13 @@ function getPublicGameState(room, socketId, isSpectator = false) {
   const player = getPlayerBySocketId(room, socketId);
   const spectator = getSpectatorBySocketId(room, socketId);
   
+  // Clean up actionInProgress for sending to client (remove timeout reference)
+  let cleanActionInProgress = null;
+  if (room.actionInProgress) {
+    const { responseTimeout, ...cleanAction } = room.actionInProgress;
+    cleanActionInProgress = cleanAction;
+  }
+  
   return {
     roomCode: room.code,
     state: room.state,
@@ -156,7 +163,7 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     })),
     currentPlayerIndex: room.currentPlayerIndex,
     currentPlayerId: room.players[room.currentPlayerIndex]?.id,
-    actionInProgress: room.actionInProgress,
+    actionInProgress: cleanActionInProgress,
     gameLog: room.gameLog, // Send full log instead of just last 20
     myPlayerId: player?.id || null
   };
@@ -312,7 +319,7 @@ function performAction(room, socketId, action, targetId) {
       room.actionInProgress.pausedForDisconnection = true;
       addLogToRoom(room, `⚠️ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
     } else {
-      // Set timeout for responses (10 seconds)
+      // Set timeout for responses (12 seconds)
       room.actionInProgress.responseTimeout = setTimeout(() => {
         if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
           // Log that no one responded
@@ -322,7 +329,7 @@ function performAction(room, socketId, action, targetId) {
           resolveAction(room);
           emitToRoom(room.code, 'gameState');
         }
-      }, 12000); // 12 seconds to account for network latency
+      }, 12000); // 12 seconds
     }
   } else {
     // No responses needed, resolve immediately
@@ -368,25 +375,70 @@ function respondToAction(room, socketId, response) {
   } else if (response.type === 'block') {
     handleBlock(room, player.id, response.blockCard);
   } else if (response.type === 'pass') {
-    // Check if all players have responded or if we're in block phase
+    // Check if all CONNECTED players have responded
     if (room.actionInProgress.phase === 'block') {
-      // In block phase, if someone passes, check if everyone has passed
+      // In block phase, if everyone who can respond has passed
       if (room.pendingResponses.size === 0) {
-        // Everyone passed on challenging the block
-        if (room.actionInProgress.action === 'foreignAid') {
-          addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', room.actionInProgress.blockCard);
+        // Check if there are disconnected players who could have challenged
+        const hasDisconnectedChallengers = room.players.some(p => 
+          p.alive && 
+          p.id !== room.actionInProgress.blockerId && 
+          p.disconnected
+        );
+        
+        if (!hasDisconnectedChallengers) {
+          // No disconnected players waiting - resolve
+          if (room.actionInProgress.action === 'foreignAid') {
+            addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', room.actionInProgress.blockCard);
+          } else {
+            addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', room.actionInProgress.blockCard);
+          }
+          room.actionInProgress = null;
+          nextTurn(room);
         } else {
-          addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', room.actionInProgress.blockCard);
+          // Still waiting for disconnected players - pause
+          if (!room.actionInProgress.pausedForDisconnection) {
+            room.actionInProgress.pausedForDisconnection = true;
+            const disconnectedNames = room.players
+              .filter(p => p.alive && p.id !== room.actionInProgress.blockerId && p.disconnected)
+              .map(p => p.name)
+              .join(', ');
+            addLogToRoom(room, `⚠️ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
+            
+            // Clear any existing timeout
+            if (room.actionInProgress.responseTimeout) {
+              clearTimeout(room.actionInProgress.responseTimeout);
+              room.actionInProgress.responseTimeout = null;
+            }
+          }
         }
-        room.actionInProgress = null;
-        nextTurn(room);
       }
     } else if (room.pendingResponses.size === 0) {
-      // All players passed on challenging/blocking
-      if (room.actionInProgress.action === 'foreignAid') {
-        addLogToRoom(room, `No one blocked Foreign Aid`, 'info');
+      // All connected players passed on challenging/blocking in action phase
+      // Check if target is disconnected (for blockable actions)
+      const targetPlayer = room.actionInProgress.targetId ? 
+        getPlayerById(room, room.actionInProgress.targetId) : null;
+      const targetIsDisconnected = targetPlayer && targetPlayer.disconnected;
+      
+      if (!targetIsDisconnected) {
+        // No disconnected target - resolve action
+        if (room.actionInProgress.action === 'foreignAid') {
+          addLogToRoom(room, `No one blocked Foreign Aid`, 'info');
+        }
+        resolveAction(room);
+      } else {
+        // Target is disconnected - pause and wait
+        if (!room.actionInProgress.pausedForDisconnection) {
+          room.actionInProgress.pausedForDisconnection = true;
+          addLogToRoom(room, `⚠️ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
+          
+          // Clear any existing timeout
+          if (room.actionInProgress.responseTimeout) {
+            clearTimeout(room.actionInProgress.responseTimeout);
+            room.actionInProgress.responseTimeout = null;
+          }
+        }
       }
-      resolveAction(room);
     }
   }
 
@@ -488,7 +540,7 @@ function handleBlock(room, blockerId, blockCard) {
         nextTurn(room);
         emitToRoom(room.code, 'gameState');
       }
-    }, 12000); // 12 seconds to account for network latency
+    }, 12000); // 12 seconds
   }
 }
 
@@ -1131,7 +1183,7 @@ io.on('connection', (socket) => {
                 resolveAction(room);
                 emitToRoom(room.code, 'gameState');
               }
-            }, 12000);
+            }, 12000); // 12 seconds
           }
         }
       } else if (room.actionInProgress.phase === 'block') {
@@ -1162,7 +1214,7 @@ io.on('connection', (socket) => {
               nextTurn(room);
               emitToRoom(room.code, 'gameState');
             }
-          }, 12000);
+          }, 12000); // 12 seconds
         }
       }
     }

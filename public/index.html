@@ -123,6 +123,12 @@
     .eliminate {
       animation: eliminate 0.8s ease-out forwards;
     }
+    
+    /* Card image styling */
+    img[src^="/images/cards/"] {
+      image-rendering: crisp-edges;
+      image-rendering: -webkit-optimize-contrast;
+    }
   </style>
 </head>
 <body>
@@ -449,7 +455,7 @@
           
           if (state.actionInProgress && 
               (state.actionInProgress.phase === 'waiting' || state.actionInProgress.phase === 'block')) {
-            startCountdown(10);
+            startCountdown(12);
           } else {
             stopCountdown();
           }
@@ -1277,18 +1283,21 @@
                           const key = `${player.id}-${idx}`;
                           const spectatorRevealed = spectatorRevealedCards[key];
                           const shouldShowCard = influence.revealed || player.isMe || (isSpectator && spectatorRevealed);
+                          const cardName = influence.card ? influence.card.toLowerCase() : 'back';
                           
                           return `
-                            <div class="relative flex-1 ${influence.revealed ? 'bg-red-900 border-2 border-red-600 card-reveal' : 'bg-gray-700'} rounded p-3 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
+                            <div class="relative flex-1 ${influence.revealed ? 'bg-red-900 border-2 border-red-600 card-reveal' : 'bg-gray-700'} rounded p-2 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
                               ${influence.revealed ? `
-                                <div class="text-xs font-bold text-red-300 line-through">${influence.card}</div>
-                                <div class="text-xs text-red-500 mt-1">LOST</div>
+                                <img src="/images/cards/${cardName}.png" alt="${influence.card}" class="w-full h-auto rounded opacity-50" />
+                                <div class="absolute inset-0 flex items-center justify-center">
+                                  <div class="text-xs font-bold text-red-300 bg-red-900 bg-opacity-90 px-2 py-1 rounded">LOST</div>
+                                </div>
                               ` : shouldShowCard ? `
-                                <div class="text-xs font-bold">${influence.card}</div>
-                                ${isSpectator && spectatorRevealed ? '<div class="text-xs text-blue-400 mt-1">👁️</div>' : ''}
+                                <img src="/images/cards/${cardName}.png" alt="${influence.card}" class="w-full h-auto rounded" />
+                                ${isSpectator && spectatorRevealed ? '<div class="absolute top-1 right-1 text-blue-400 text-xs">👁️</div>' : ''}
                               ` : `
-                                <div class="text-2xl">🂠</div>
-                                ${isSpectator ? '<div class="text-xs text-gray-400 mt-1">Click to peek</div>' : ''}
+                                <img src="/images/cards/back.png" alt="Hidden card" class="w-full h-auto rounded" />
+                                ${isSpectator ? '<div class="absolute bottom-1 left-0 right-0 text-xs text-gray-400 text-center">Click to peek</div>' : ''}
                               `}
                             </div>
                           `;
@@ -1407,10 +1416,10 @@
                         ${!influence.revealed ? `
                           <button 
                             onclick="revealInfluence(${idx})" 
-                            class="bg-red-600 hover:bg-red-700 p-6 rounded text-center flex-1 max-w-xs"
+                            class="bg-red-600 hover:bg-red-700 p-4 rounded text-center flex-1 max-w-xs"
                           >
-                            <div class="text-2xl font-bold mb-2">${influence.card}</div>
-                            <div class="text-sm">Reveal this card</div>
+                            <img src="/images/cards/${influence.card.toLowerCase()}.png" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
+                            <div class="text-sm font-bold">Reveal this card</div>
                           </button>
                         ` : ''}
                       `).join('')}
@@ -1423,21 +1432,23 @@
                     <h3 class="text-xl font-bold mb-4 text-teal-300">Exchange Cards</h3>
                     <p class="mb-4 text-teal-100">You drew ${myPlayer.exchangeCards.length} card(s). Select ${myPlayer.influences.length} card(s) to KEEP (the rest will be returned to the deck).</p>
                     <div class="grid grid-cols-2 gap-3 mb-4">
-                      ${[...myPlayer.influences, ...myPlayer.exchangeCards].map((card, idx) => `
+                      ${[...myPlayer.influences, ...myPlayer.exchangeCards].map((card, idx) => {
+                        const cardName = (card.card || card).toLowerCase();
+                        return `
                         <button 
                           onclick="toggleExchangeCard(${idx})" 
-                          class="p-6 rounded text-center transition-all ${
+                          class="p-3 rounded text-center transition-all ${
                             selectedExchangeCards.includes(idx) 
                               ? 'bg-teal-600 ring-4 ring-teal-400' 
                               : 'bg-gray-700 hover:bg-gray-600'
                           }"
                         >
-                          <div class="text-2xl font-bold mb-2">${card.card || card}</div>
-                          <div class="text-sm">
+                          <img src="/images/cards/${cardName}.png" alt="${card.card || card}" class="w-full h-auto rounded mb-2" />
+                          <div class="text-sm font-bold">
                             ${selectedExchangeCards.includes(idx) ? '✓ Keep' : 'Click to keep'}
                           </div>
                         </button>
-                      `).join('')}
+                      `}).join('')}
                     </div>
                     <div class="text-center mb-3">
                       <span class="text-teal-200">Selected: ${selectedExchangeCards.length}/${myPlayer.influences.length}</span>
@@ -1463,10 +1474,10 @@
                         ${!influence.revealed ? `
                           <button 
                             onclick="showCardToExaminer(${idx})" 
-                            class="bg-yellow-600 hover:bg-yellow-700 p-6 rounded text-center flex-1 max-w-xs"
+                            class="bg-yellow-600 hover:bg-yellow-700 p-4 rounded text-center flex-1 max-w-xs"
                           >
-                            <div class="text-2xl font-bold mb-2">${influence.card}</div>
-                            <div class="text-sm">Show this card</div>
+                            <img src="/images/cards/${influence.card.toLowerCase()}.png" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
+                            <div class="text-sm font-bold">Show this card</div>
                           </button>
                         ` : ''}
                       `).join('')}
@@ -1479,10 +1490,8 @@
                     <h3 class="text-xl font-bold mb-4 text-purple-300">Examine ${examineTarget.name}'s Card</h3>
                     ${myPlayer.examinedCard ? `
                       <p class="mb-4 text-purple-100">You see one of ${examineTarget.name}'s cards:</p>
-                      <div class="bg-purple-800 rounded p-6 mb-4 text-center card-reveal">
-                        <div class="text-4xl font-bold text-purple-200">
-                          ${myPlayer.examinedCard}
-                        </div>
+                      <div class="bg-purple-800 rounded p-4 mb-4 text-center card-reveal max-w-xs mx-auto">
+                        <img src="/images/cards/${myPlayer.examinedCard.toLowerCase()}.png" alt="${myPlayer.examinedCard}" class="w-full h-auto rounded" />
                       </div>
                       <p class="mb-4 text-purple-100">Do you want to force ${examineTarget.name} to exchange this card for a new one from the deck?</p>
                       <div class="flex gap-3">

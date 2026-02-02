@@ -2,6 +2,8 @@ const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
+const auth = require('./auth');
+const db = require('./database');
 
 const app = express();
 const server = http.createServer(app);
@@ -13,6 +15,52 @@ const io = socketIO(server, {
 });
 
 app.use(express.json());
+
+// Authentication routes
+app.post('/api/register', (req, res) => {
+  const { username, password, email } = req.body;
+  const result = auth.register(username, password, email);
+  
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(400).json(result);
+  }
+});
+
+app.post('/api/login', (req, res) => {
+  const { username, password } = req.body;
+  const result = auth.login(username, password);
+  
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(401).json(result);
+  }
+});
+
+app.post('/api/verify', (req, res) => {
+  const { token } = req.body;
+  const result = auth.verifyToken(token);
+  
+  if (result.success) {
+    res.json(result);
+  } else {
+    res.status(401).json(result);
+  }
+});
+
+// Guest login (for backward compatibility)
+app.post('/api/guest', (req, res) => {
+  const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  res.json({
+    success: true,
+    isGuest: true,
+    guestId: guestId,
+    username: `Guest${Math.floor(Math.random() * 9999)}`
+  });
+});
+
 
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -76,7 +124,9 @@ function createRoom(roomCode, options = {}) {
     pendingResponses: new Set(),
     useInquisitor: options.useInquisitor || false,
     allowSpectators: options.allowSpectators !== false, // Default to true
-    chatMode: options.chatMode || 'separate' // Default to separate
+    chatMode: options.chatMode || 'separate', // Default to separate
+    gameStartTime: null, // Track when game starts
+    gameEndTime: null // Track when game ends
   };
 }
 
@@ -142,6 +192,10 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     players: room.players.map(p => ({
       id: p.id,
       name: p.name,
+      username: p.username || null,
+      isGuest: p.isGuest || false,
+      userId: p.userId || null,
+      stats: p.stats || null,
       coins: p.coins,
       influenceCount: p.influences.length,
       disconnected: p.disconnected || false,
@@ -201,6 +255,7 @@ function startGame(room) {
   room.deck = shuffleDeck(room.useInquisitor);
   room.state = 'playing';
   room.currentPlayerIndex = 0;
+  room.gameStartTime = new Date(); // Record game start time
 
   // Deal 2 cards to each player
   room.players.forEach((player, idx) => {
@@ -210,6 +265,44 @@ function startGame(room) {
     ];
     player.coins = 2;
     player.alive = true;
+    
+    // Initialize game stats tracking
+    player.gameStats = {
+      // Core stats
+      coinsEarned: 0,
+      coinsSpent: 0,
+      coinsLost: 0,
+      coinsStolen: 0,
+      influencesLost: 0,
+      actionsPerformed: 0,
+      
+      // Challenge/Bluff stats
+      successfulChallenges: 0,
+      failedChallenges: 0,
+      claimsDefended: 0,
+      bluffsCaught: 0,
+      bluffsSucceeded: 0,
+      
+      // Action-specific stats
+      taxSucceeded: 0,
+      taxFailed: 0,
+      foreignaidAccepted: 0,
+      foreignaidDenied: 0,
+      foreignaidblockSucceeded: 0,
+      foreignaidblockFailed: 0,
+      stealsBlocked: 0,
+      
+      // Assassination stats
+      assassinationsSucceeded: 0,
+      assassinationsFailed: 0,
+      contessaSucceeded: 0,
+      contessaFailed: 0,
+      
+      // Exchange/Examine stats
+      influenceExchanged: 0,
+      influenceExamined: 0,
+      influenceForced: 0
+    };
   });
 
   const cardType = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
@@ -408,7 +501,40 @@ function respondToAction(room, socketId, response) {
         );
         
         if (!hasDisconnectedChallengers) {
-          // No disconnected players waiting - resolve
+          // No disconnected players waiting - block succeeds
+          const blocker = getPlayerById(room, room.actionInProgress.blockerId);
+          const originalActor = getPlayerById(room, room.actionInProgress.playerId);
+          
+          if (blocker && blocker.gameStats) {
+            // Check if they actually had the blocking card
+            const hasCard = blocker.influences.some(inf => !inf.revealed && inf.card === room.actionInProgress.blockCard);
+            if (hasCard) {
+              // Had the card - successful claim defense
+              blocker.gameStats.claimsDefended += 1;
+            } else {
+              // Didn't have the card - successful bluff!
+              blocker.gameStats.bluffsSucceeded += 1;
+            }
+            
+            // Track block-specific stats
+            if (room.actionInProgress.action === 'steal') {
+              blocker.gameStats.stealsBlocked += 1;
+            } else if (room.actionInProgress.action === 'assassinate') {
+              blocker.gameStats.contessaSucceeded += 1;
+            } else if (room.actionInProgress.action === 'foreignAid') {
+              blocker.gameStats.foreignaidblockSucceeded += 1;
+            }
+          }
+          
+          // Track stats for the original actor whose action was blocked
+          if (originalActor && originalActor.gameStats) {
+            if (room.actionInProgress.action === 'foreignAid') {
+              originalActor.gameStats.foreignaidDenied += 1;
+            } else if (room.actionInProgress.action === 'assassinate') {
+              originalActor.gameStats.assassinationsFailed += 1;
+            }
+          }
+          
           if (room.actionInProgress.action === 'foreignAid') {
             addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', room.actionInProgress.blockCard);
           } else {
@@ -481,6 +607,11 @@ function handleChallenge(room, challengerId) {
     // Challenge failed - challenger loses influence
     addLogToRoom(room, `${actor.name} reveals the ${actionData.card}! The challenge fails.`, 'fail', actionData.card);
     addLogToRoom(room, `${challenger.name} loses an influence`, 'info');
+    
+    // Track stats
+    if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
+    if (actor.gameStats) actor.gameStats.claimsDefended += 1; // Successfully defended claim
+    
     loseInfluence(room, challengerId);
     
     // Actor returns card and draws new one
@@ -508,9 +639,23 @@ function handleChallenge(room, challengerId) {
     
     resolveAction(room);
   } else {
-    // Challenge succeeded - actor loses influence
+    // Challenge succeeded - actor loses influence (was bluffing)
     addLogToRoom(room, `${actor.name} doesn't have the ${actionData.card}! The challenge succeeds.`, 'success', actionData.card);
     addLogToRoom(room, `${actor.name} loses an influence and the action fails`, 'info');
+    
+    // Track stats
+    if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
+    if (actor.gameStats) {
+      actor.gameStats.bluffsCaught += 1; // Caught bluffing
+      
+      // Track action-specific failures
+      if (action.action === 'tax') {
+        actor.gameStats.taxFailed += 1;
+      } else if (action.action === 'assassinate') {
+        actor.gameStats.assassinationsFailed += 1;
+      }
+    }
+    
     loseInfluence(room, action.playerId);
     room.actionInProgress = null;
     nextTurn(room);
@@ -551,7 +696,40 @@ function handleBlock(room, blockerId, blockCard) {
   } else {
     room.actionInProgress.responseTimeout = setTimeout(() => {
       if (room.actionInProgress && room.actionInProgress.phase === 'block') {
-        // Block succeeded, action cancelled
+        // Block succeeded without being challenged
+        const blocker = getPlayerById(room, room.actionInProgress.blockerId);
+        const originalActor = getPlayerById(room, room.actionInProgress.playerId);
+        
+        if (blocker && blocker.gameStats) {
+          // Check if they actually had the blocking card
+          const hasCard = blocker.influences.some(inf => !inf.revealed && inf.card === room.actionInProgress.blockCard);
+          if (hasCard) {
+            // Had the card - successful claim defense
+            blocker.gameStats.claimsDefended += 1;
+          } else {
+            // Didn't have the card - successful bluff!
+            blocker.gameStats.bluffsSucceeded += 1;
+          }
+          
+          // Track block-specific stats
+          if (action.action === 'steal') {
+            blocker.gameStats.stealsBlocked += 1;
+          } else if (action.action === 'assassinate') {
+            blocker.gameStats.contessaSucceeded += 1;
+          } else if (action.action === 'foreignAid') {
+            blocker.gameStats.foreignaidblockSucceeded += 1;
+          }
+        }
+        
+        // Track stats for the original actor whose action was blocked
+        if (originalActor && originalActor.gameStats) {
+          if (action.action === 'foreignAid') {
+            originalActor.gameStats.foreignaidDenied += 1;
+          } else if (action.action === 'assassinate') {
+            originalActor.gameStats.assassinationsFailed += 1;
+          }
+        }
+        
         if (action.action === 'foreignAid') {
           addLogToRoom(room, `No one challenges the block. Foreign Aid is blocked!`, 'success', blockCard);
         } else {
@@ -583,9 +761,35 @@ function challengeBlock(room, socketId) {
   const hasCard = blocker.influences.some(inf => !inf.revealed && inf.card === action.blockCard);
   
   if (hasCard) {
-    // Challenge failed
+    // Challenge failed - blocker had the card
     addLogToRoom(room, `${blocker.name} reveals the ${action.blockCard}! The block challenge fails.`, 'fail', action.blockCard);
     addLogToRoom(room, `${challenger.name} loses an influence`, 'info');
+    
+    // Track stats
+    if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
+    if (blocker.gameStats) {
+      blocker.gameStats.claimsDefended += 1; // Successfully defended block claim
+      
+      // Track block-specific stats
+      if (action.action === 'steal') {
+        blocker.gameStats.stealsBlocked += 1;
+      } else if (action.action === 'assassinate') {
+        blocker.gameStats.contessaSucceeded += 1;
+      } else if (action.action === 'foreignAid') {
+        blocker.gameStats.foreignaidblockSucceeded += 1;
+      }
+    }
+    
+    // Track stats for original actor whose action was blocked
+    const originalActor = getPlayerById(room, action.playerId);
+    if (originalActor && originalActor.gameStats) {
+      if (action.action === 'foreignAid') {
+        originalActor.gameStats.foreignaidDenied += 1;
+      } else if (action.action === 'assassinate') {
+        originalActor.gameStats.assassinationsFailed += 1;
+      }
+    }
+    
     loseInfluence(room, challenger.id);
     
     // Return and redraw card
@@ -605,9 +809,23 @@ function challengeBlock(room, socketId) {
     room.actionInProgress = null;
     nextTurn(room);
   } else {
-    // Challenge succeeded
+    // Challenge succeeded - blocker was bluffing
     addLogToRoom(room, `${blocker.name} doesn't have the ${action.blockCard}! The block challenge succeeds.`, 'success', action.blockCard);
     addLogToRoom(room, `${blocker.name} loses an influence and the action proceeds`, 'info');
+    
+    // Track stats
+    if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
+    if (blocker.gameStats) {
+      blocker.gameStats.bluffsCaught += 1; // Caught bluffing on block
+      
+      // Track specific block failures
+      if (action.action === 'assassinate' && action.blockCard === 'Contessa') {
+        blocker.gameStats.contessaFailed += 1;
+      } else if (action.action === 'foreignAid' && action.blockCard === 'Duke') {
+        blocker.gameStats.foreignaidblockFailed += 1;
+      }
+    }
+    
     loseInfluence(room, action.blockerId);
     
     // Log the successful action before resolving
@@ -634,23 +852,44 @@ function resolveAction(room) {
   const actor = getPlayerById(room, action.playerId);
   const target = action.targetId ? getPlayerById(room, action.targetId) : null;
 
+  // Track successful bluffs for challengeable actions that weren't challenged
+  if (actionData.challengeable && actionData.card) {
+    const hasCard = actor.influences.some(inf => !inf.revealed && inf.card === actionData.card);
+    if (!hasCard && actor.gameStats) {
+      // They didn't have the card but weren't challenged - successful bluff!
+      actor.gameStats.bluffsSucceeded += 1;
+    } else if (hasCard && actor.gameStats) {
+      // They had the card and weren't challenged - successful claim defense
+      actor.gameStats.claimsDefended += 1;
+    }
+  }
+
   // Apply costs
   if (actionData.cost) {
     actor.coins -= actionData.cost;
+    if (actor.gameStats) actor.gameStats.coinsSpent += actionData.cost;
   }
 
   // Apply effects
   switch (action.action) {
     case 'income':
       actor.coins += 1;
+      if (actor.gameStats) actor.gameStats.coinsEarned += 1;
+      if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
       addLogToRoom(room, `${actor.name} takes Income and receives 1 coin`, 'success', 'Income');
       break;
     case 'foreignAid':
       actor.coins += 2;
+      if (actor.gameStats) actor.gameStats.coinsEarned += 2;
+      if (actor.gameStats) actor.gameStats.foreignaidAccepted += 1;
+      if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
       addLogToRoom(room, `${actor.name} receives 2 coins from Foreign Aid`, 'success', 'ForeignAid');
       break;
     case 'tax':
       actor.coins += 3;
+      if (actor.gameStats) actor.gameStats.coinsEarned += 3;
+      if (actor.gameStats) actor.gameStats.taxSucceeded += 1;
+      if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
       addLogToRoom(room, `${actor.name} receives 3 coins from Tax`, 'success', 'Duke');
       break;
     case 'steal':
@@ -658,17 +897,24 @@ function resolveAction(room) {
         const stolen = Math.min(2, target.coins);
         target.coins -= stolen;
         actor.coins += stolen;
+        if (actor.gameStats) actor.gameStats.coinsEarned += stolen;
+        if (actor.gameStats) actor.gameStats.coinsStolen += stolen;
+        if (target.gameStats) target.gameStats.coinsLost += stolen;
+        if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
         addLogToRoom(room, `${actor.name} steals ${stolen} coin${stolen !== 1 ? 's' : ''} from ${target.name}`, 'success', 'Captain');
       }
       break;
     case 'assassinate':
       if (target) {
+        if (actor.gameStats) actor.gameStats.assassinationsSucceeded += 1;
+        if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
         addLogToRoom(room, `${target.name} must lose an influence`, 'info');
         loseInfluence(room, target.id);
       }
       break;
     case 'exchange':
       // Draw cards from deck based on game mode
+      if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
       if (room.useInquisitor) {
         // Inquisitor mode: draw 1 card, choose 1 to keep
         if (room.deck.length >= 1) {
@@ -696,6 +942,7 @@ function resolveAction(room) {
       break;
     case 'examine':
       // Inquisitor power: look at another player's card and optionally force exchange
+      if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
       if (target) {
         const unrevealedCards = target.influences.filter(inf => !inf.revealed);
         if (unrevealedCards.length > 0) {
@@ -714,6 +961,7 @@ function resolveAction(room) {
       break;
     case 'coup':
       if (target) {
+        if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
         addLogToRoom(room, `${actor.name} launches a Coup against ${target.name} who must lose an influence`, 'info', 'Coup');
         loseInfluence(room, target.id);
       }
@@ -776,6 +1024,11 @@ function completeExchange(room, playerId, keepIndices) {
   player.exchangeCards = null;
   player.mustChooseExchange = false;
 
+  // Track stat
+  if (player.gameStats) {
+    player.gameStats.influenceExchanged += 1;
+  }
+
   const card = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
   addLogToRoom(room, `${player.name} completes the exchange`, 'success', card);
   nextTurn(room);
@@ -824,6 +1077,11 @@ function completeExamine(room, playerId, forceExchange) {
     return { success: false, error: 'Target not found' };
   }
 
+  // Track examine stat
+  if (player.gameStats) {
+    player.gameStats.influenceExamined += 1;
+  }
+
   if (forceExchange && room.deck.length > 0 && player.examinedCardIndex !== undefined) {
     // Force target to exchange the specific card that was shown
     const cardIndex = player.examinedCardIndex;
@@ -832,6 +1090,12 @@ function completeExamine(room, playerId, forceExchange) {
       target.influences[cardIndex].card = room.deck.pop();
       room.deck.push(oldCard);
       room.deck.sort(() => Math.random() - 0.5);
+      
+      // Track forced exchange stat
+      if (player.gameStats) {
+        player.gameStats.influenceForced += 1;
+      }
+      
       addLogToRoom(room, `${player.name} forces ${target.name} to exchange their card`, 'info', 'Inquisitor');
     }
   } else {
@@ -864,6 +1128,10 @@ function revealInfluence(room, playerId, cardIndex) {
 
   influence.revealed = true;
   player.influencesToLose = (player.influencesToLose || 1) - 1;
+  
+  // Track stat
+  if (player.gameStats) player.gameStats.influencesLost += 1;
+  
   addLogToRoom(room, `${player.name} reveals and loses their ${influence.card}`, 'info', influence.card);
 
   const stillAlive = player.influences.some(inf => !inf.revealed);
@@ -901,9 +1169,249 @@ function revealInfluence(room, playerId, cardIndex) {
 function checkWinCondition(room) {
   const alivePlayers = room.players.filter(p => p.alive);
   if (alivePlayers.length === 1) {
-    addLogToRoom(room, `🎉 ${alivePlayers[0].name} wins the game! 🎉`, 'success');
+    const winner = alivePlayers[0];
+    room.gameEndTime = new Date();
+    room.winnerId = winner.id;
+    room.winnerUserId = winner.userId; // Track user ID for stats
+    
+    addLogToRoom(room, `🎉 ${winner.name} wins the game! 🎉`, 'success');
     room.state = 'ended';
-    emitToRoom(room.code, 'gameEnded', { winner: alivePlayers[0].name });
+    
+    // Save game results to database
+    saveGameResults(room);
+    
+    emitToRoom(room.code, 'gameEnded', { 
+      winner: winner.name,
+      winnerId: winner.id,
+      winnerUserId: winner.userId
+    });
+  }
+}
+
+/**
+ * Calculate Elo rating changes using standard chess formula
+ * For multiplayer games, we compare each player against all others
+ */
+function calculateEloChanges(players, winnerId) {
+  const K_FACTOR = 32; // Standard chess K-factor
+  const eloChanges = {};
+  
+  // Get all authenticated players with current Elo
+  const authPlayers = players.filter(p => p.userId && p.stats);
+  
+  if (authPlayers.length < 2) {
+    // Not enough authenticated players to calculate Elo
+    return eloChanges;
+  }
+  
+  authPlayers.forEach(player => {
+    let totalExpected = 0;
+    let totalActual = 0;
+    let opponentCount = 0;
+    
+    // Compare against each other authenticated player
+    authPlayers.forEach(opponent => {
+      if (player.userId === opponent.userId) return;
+      
+      const playerElo = player.stats.elo_rating || 1200;
+      const opponentElo = opponent.stats.elo_rating || 1200;
+      
+      // Calculate expected score against this opponent
+      const expected = 1 / (1 + Math.pow(10, (opponentElo - playerElo) / 400));
+      totalExpected += expected;
+      
+      // Calculate actual score
+      // Win = 1, Loss = 0, but in multiplayer we use placement
+      if (player.id === winnerId) {
+        totalActual += 1; // Winner gets full point against everyone
+      } else if (opponent.id === winnerId) {
+        totalActual += 0; // Loser against winner gets 0
+      } else {
+        // Both lost - use influence count as tiebreaker
+        const playerInfluences = player.influences.filter(i => !i.revealed).length;
+        const opponentInfluences = opponent.influences.filter(i => !i.revealed).length;
+        if (playerInfluences > opponentInfluences) {
+          totalActual += 0.75; // Placed better
+        } else if (playerInfluences < opponentInfluences) {
+          totalActual += 0.25; // Placed worse
+        } else {
+          totalActual += 0.5; // Tied
+        }
+      }
+      
+      opponentCount++;
+    });
+    
+    if (opponentCount > 0) {
+      // Average the expected and actual scores
+      const avgExpected = totalExpected / opponentCount;
+      const avgActual = totalActual / opponentCount;
+      
+      // Calculate Elo change
+      const eloChange = Math.round(K_FACTOR * (avgActual - avgExpected));
+      const currentElo = player.stats.elo_rating || 1200;
+      const newElo = Math.max(100, currentElo + eloChange); // Minimum Elo of 100
+      
+      eloChanges[player.userId] = {
+        oldElo: currentElo,
+        newElo: newElo,
+        change: eloChange
+      };
+    }
+  });
+  
+  return eloChanges;
+}
+
+/**
+ * Save game results to database
+ */
+function saveGameResults(room) {
+  try {
+    if (!room.gameStartTime || !room.gameEndTime) {
+      console.log('Game start/end time not recorded, skipping save');
+      return;
+    }
+    
+    const duration = Math.floor((room.gameEndTime - room.gameStartTime) / 1000); // seconds
+    const winner = room.players.find(p => p.id === room.winnerId);
+    
+    // Calculate Elo changes
+    const eloChanges = calculateEloChanges(room.players, room.winnerId);
+    
+    // Update stats for each authenticated player
+    room.players.forEach(player => {
+      if (!player.userId || !player.gameStats) return;
+      
+      const isWinner = player.id === room.winnerId;
+      const eloChange = eloChanges[player.userId];
+      
+      // Update user_stats
+      const updateStats = db.prepare(`
+        UPDATE user_stats
+        SET games_played = games_played + 1,
+            games_won = games_won + ?,
+            elo_rating = ?,
+            
+            influences_lost = influences_lost + ?,
+            successful_challenges = successful_challenges + ?,
+            failed_challenges = failed_challenges + ?,
+            claims_defended = claims_defended + ?,
+            bluffs_caught = bluffs_caught + ?,
+            bluffs_succeeded = bluffs_succeeded + ?,
+            
+            coins_earned = coins_earned + ?,
+            coins_spent = coins_spent + ?,
+            coins_lost = coins_lost + ?,
+            coins_stolen = coins_stolen + ?,
+            
+            tax_succeeded = tax_succeeded + ?,
+            tax_failed = tax_failed + ?,
+            foreignaid_accepted = foreignaid_accepted + ?,
+            foreignaid_denied = foreignaid_denied + ?,
+            foreignaidblock_succeeded = foreignaidblock_succeeded + ?,
+            foreignaidblock_failed = foreignaidblock_failed + ?,
+            steals_blocked = steals_blocked + ?,
+            
+            assassinations_succeeded = assassinations_succeeded + ?,
+            assassinations_failed = assassinations_failed + ?,
+            contessa_succeeded = contessa_succeeded + ?,
+            contessa_failed = contessa_failed + ?,
+            
+            influence_exchanged = influence_exchanged + ?,
+            influence_examined = influence_examined + ?,
+            influence_forced = influence_forced + ?
+        WHERE user_id = ?
+      `);
+      
+      updateStats.run(
+        isWinner ? 1 : 0,
+        eloChange ? eloChange.newElo : (player.stats.elo_rating || 1200),
+        
+        player.gameStats.influencesLost,
+        player.gameStats.successfulChallenges,
+        player.gameStats.failedChallenges,
+        player.gameStats.claimsDefended,
+        player.gameStats.bluffsCaught,
+        player.gameStats.bluffsSucceeded,
+        
+        player.gameStats.coinsEarned,
+        player.gameStats.coinsSpent,
+        player.gameStats.coinsLost,
+        player.gameStats.coinsStolen,
+        
+        player.gameStats.taxSucceeded,
+        player.gameStats.taxFailed,
+        player.gameStats.foreignaidAccepted,
+        player.gameStats.foreignaidDenied,
+        player.gameStats.foreignaidblockSucceeded,
+        player.gameStats.foreignaidblockFailed,
+        player.gameStats.stealsBlocked,
+        
+        player.gameStats.assassinationsSucceeded,
+        player.gameStats.assassinationsFailed,
+        player.gameStats.contessaSucceeded,
+        player.gameStats.contessaFailed,
+        
+        player.gameStats.influenceExchanged,
+        player.gameStats.influenceExamined,
+        player.gameStats.influenceForced,
+        
+        player.userId
+      );
+      
+      db.saveDatabase();
+      
+      console.log(`Updated stats for user ${player.username}:`, {
+        isWinner,
+        eloChange: eloChange ? eloChange.change : 0,
+        newElo: eloChange ? eloChange.newElo : player.stats.elo_rating
+      });
+    });
+    
+    // Prepare player data for game history
+    const playerData = room.players.map(p => ({
+      id: p.id,
+      userId: p.userId || null,
+      username: p.username || null,
+      name: p.name,
+      isGuest: p.isGuest,
+      finalCoins: p.coins,
+      influencesRemaining: p.influences.filter(i => !i.revealed).length,
+      gameStats: p.gameStats,
+      eloChange: eloChanges[p.userId] || null
+    }));
+    
+    // Save to game_history
+    const insertHistory = db.prepare(`
+      INSERT INTO game_history 
+      (room_code, winner_user_id, player_data, game_settings, started_at, ended_at, duration_seconds)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    
+    const gameSettings = {
+      useInquisitor: room.useInquisitor,
+      allowSpectators: room.allowSpectators,
+      chatMode: room.chatMode,
+      playerCount: room.players.length
+    };
+    
+    insertHistory.run(
+      room.code,
+      winner?.userId || null,
+      JSON.stringify(playerData),
+      JSON.stringify(gameSettings),
+      room.gameStartTime.toISOString(),
+      room.gameEndTime.toISOString(),
+      duration
+    );
+    
+    db.saveDatabase();
+    
+    console.log(`Game ${room.code} saved to history. Winner: ${winner?.name}, Duration: ${duration}s`);
+    
+  } catch (error) {
+    console.error('Error saving game results:', error);
   }
 }
 
@@ -1004,6 +1512,18 @@ function switchToSpectator(room, socketId) {
 // Socket.IO event handlers
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
+  
+  // Store user info from auth token (if provided)
+  let authenticatedUser = null;
+  const token = socket.handshake.auth.token;
+  
+  if (token) {
+    const verification = auth.verifyToken(token);
+    if (verification.success) {
+      authenticatedUser = verification.user;
+      console.log(`Authenticated user connected: ${authenticatedUser.username}`);
+    }
+  }
 
   socket.on('createRoom', (data, callback) => {
     const roomCode = generateRoomCode();
@@ -1013,11 +1533,21 @@ io.on('connection', (socket) => {
       chatMode: data.chatMode || 'separate'
     });
     
+    // Fetch stats if authenticated
+    let stats = null;
+    if (authenticatedUser && authenticatedUser.stats) {
+      stats = authenticatedUser.stats;
+    }
+    
     const player = {
       id: data.persistentPlayerId || socket.id,
       persistentId: data.persistentPlayerId || socket.id,
       socketId: socket.id,
       name: data.playerName || 'Player',
+      userId: authenticatedUser ? authenticatedUser.id : null,
+      username: authenticatedUser ? authenticatedUser.username : null,
+      isGuest: !authenticatedUser,
+      stats: stats,
       coins: 2,
       influences: [],
       alive: true,
@@ -1125,11 +1655,21 @@ io.on('connection', (socket) => {
     }
 
     // Join as player
+    // Fetch stats if authenticated
+    let stats = null;
+    if (authenticatedUser && authenticatedUser.stats) {
+      stats = authenticatedUser.stats;
+    }
+    
     const player = {
       id: persistentPlayerId || socket.id,
       persistentId: persistentPlayerId || socket.id,
       socketId: socket.id,
       name: playerName || `Player ${room.players.length + 1}`,
+      userId: authenticatedUser ? authenticatedUser.id : null,
+      username: authenticatedUser ? authenticatedUser.username : null,
+      isGuest: !authenticatedUser,
+      stats: stats,
       coins: 2,
       influences: [],
       alive: true,
@@ -1649,7 +2189,20 @@ io.on('connection', (socket) => {
 });
 
 const PORT = process.env.PORT || 3001;
-server.listen(PORT, () => {
-  console.log(`Coup game server running on http://localhost:${PORT}`);
-  console.log(`Open your browser to http://localhost:${PORT} to play!`);
-});
+
+// Initialize database and start server
+async function startServer() {
+  try {
+    await db.initDatabase();
+    
+    server.listen(PORT, () => {
+      console.log(`Coup game server running on http://localhost:${PORT}`);
+      console.log(`Open your browser to http://localhost:${PORT} to play!`);
+    });
+  } catch (error) {
+    console.error('Failed to initialize database:', error);
+    process.exit(1);
+  }
+}
+
+startServer();

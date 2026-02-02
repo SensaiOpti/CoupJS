@@ -1,1 +1,4 @@
-version1/
+version/
+markdowns/
+node_modules/
+coup.db

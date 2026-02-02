@@ -159,6 +159,11 @@
     let deckSize = 0;
     let chatMode = 'separate'; // 'separate', 'unified', 'none'
 
+    // Authentication state
+    let authToken = localStorage.getItem('coupAuthToken');
+    let currentUser = null;
+    let authState = 'checking'; // 'checking', 'logged-out', 'logged-in'
+
     // Room preview state
     let previewRoomCode = '';
     let previewMode = false;
@@ -376,7 +381,11 @@
     };
 
     function initSocket() {
-      socket = io();
+      socket = io({
+        auth: {
+          token: authToken
+        }
+      });
       
       socket.on('connect', () => {
         console.log('Connected to server');
@@ -549,12 +558,25 @@
     }
 
     function createRoom() {
-      const name = document.getElementById('playerName').value.trim();
-      if (!name) {
-        alert('Please enter your name');
-        return;
+      let name;
+      
+      if (currentUser) {
+        // Use authenticated username
+        name = currentUser.username;
+      } else {
+        // Guest mode - require display name
+        const nameInput = document.getElementById('playerName');
+        if (!nameInput) {
+          alert('Please enter your name');
+          return;
+        }
+        name = nameInput.value.trim();
+        if (!name) {
+          alert('Please enter your name');
+          return;
+        }
+        playerName = name;
       }
-      playerName = name;
       
       const inquisitorCheckbox = document.getElementById('useInquisitor');
       useInquisitor = inquisitorCheckbox ? inquisitorCheckbox.checked : false;
@@ -585,18 +607,29 @@
 
     function previewRoom() {
       const code = document.getElementById('joinCode').value.trim().toUpperCase();
-      const name = document.getElementById('playerName').value.trim();
       
       if (!code) {
         alert('Please enter a room code');
         return;
       }
-      if (!name) {
-        alert('Please enter your name');
-        return;
+      
+      let name;
+      if (currentUser) {
+        name = currentUser.username;
+      } else {
+        const nameInput = document.getElementById('playerName');
+        if (!nameInput) {
+          alert('Please enter your name');
+          return;
+        }
+        name = nameInput.value.trim();
+        if (!name) {
+          alert('Please enter your name');
+          return;
+        }
+        playerName = name;
       }
       
-      playerName = name;
       previewRoomCode = code;
       
       socket.emit('previewRoom', { roomCode: code }, (response) => {
@@ -931,6 +964,188 @@
       input.value = '';
     }
 
+    // Authentication functions
+    async function register(username, password) {
+      try {
+        const response = await fetch('/api/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          authToken = data.token;
+          currentUser = data.user;
+          authState = 'logged-in';
+          localStorage.setItem('coupAuthToken', authToken);
+          
+          // Reconnect socket with new token
+          if (socket) {
+            socket.disconnect();
+          }
+          initSocket();
+          render();
+          return { success: true };
+        } else {
+          return { success: false, error: data.error };
+        }
+      } catch (error) {
+        console.error('Register error:', error);
+        return { success: false, error: 'Network error' };
+      }
+    }
+
+    async function login(username, password) {
+      try {
+        const response = await fetch('/api/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          authToken = data.token;
+          currentUser = data.user;
+          authState = 'logged-in';
+          localStorage.setItem('coupAuthToken', authToken);
+          
+          // Reconnect socket with new token
+          if (socket) {
+            socket.disconnect();
+          }
+          initSocket();
+          render();
+          return { success: true };
+        } else {
+          return { success: false, error: data.error };
+        }
+      } catch (error) {
+        console.error('Login error:', error);
+        return { success: false, error: 'Network error' };
+      }
+    }
+
+    async function verifyAuthToken() {
+      if (!authToken) {
+        authState = 'logged-out';
+        render();
+        return;
+      }
+      
+      try {
+        const response = await fetch('/api/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: authToken })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          currentUser = data.user;
+          authState = 'logged-in';
+        } else {
+          // Token invalid, clear it
+          authToken = null;
+          currentUser = null;
+          authState = 'logged-out';
+          localStorage.removeItem('coupAuthToken');
+        }
+      } catch (error) {
+        console.error('Verify error:', error);
+        authState = 'logged-out';
+      }
+      
+      render();
+    }
+
+    async function logout() {
+      authToken = null;
+      currentUser = null;
+      authState = 'logged-out';
+      localStorage.removeItem('coupAuthToken');
+      
+      // Disconnect and reconnect as guest
+      if (socket) {
+        socket.disconnect();
+      }
+      initSocket();
+      
+      // Return to menu
+      gameState = 'menu';
+      render();
+    }
+
+    async function continueAsGuest() {
+      authState = 'logged-in'; // Skip auth screens
+      currentUser = null; // No authenticated user
+      gameState = 'menu';
+      render();
+    }
+
+    async function handleLoginSubmit(event) {
+      event.preventDefault();
+      
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      
+      const button = document.getElementById('loginButton');
+      button.disabled = true;
+      button.textContent = 'Logging in...';
+      
+      const result = await login(username, password);
+      
+      if (!result.success) {
+        alert(result.error || 'Login failed');
+        button.disabled = false;
+        button.textContent = 'Login';
+      }
+    }
+
+    async function handleRegisterSubmit(event) {
+      event.preventDefault();
+      
+      const username = document.getElementById('registerUsername').value.trim();
+      const password = document.getElementById('registerPassword').value;
+      const confirmPassword = document.getElementById('registerConfirmPassword').value;
+      
+      if (password !== confirmPassword) {
+        alert('Passwords do not match');
+        return;
+      }
+      
+      const button = document.getElementById('registerButton');
+      button.disabled = true;
+      button.textContent = 'Creating account...';
+      
+      const result = await register(username, password);
+      
+      if (!result.success) {
+        alert(result.error || 'Registration failed');
+        button.disabled = false;
+        button.textContent = 'Create Account';
+      }
+    }
+
+    function showLoginScreen() {
+      authState = 'login-screen';
+      render();
+    }
+
+    function showRegisterScreen() {
+      authState = 'register-screen';
+      render();
+    }
+
+    function backToAuthChoice() {
+      authState = 'logged-out';
+      render();
+    }
+
     function cancelPreview() {
       gameState = 'menu';
       previewRoomCode = '';
@@ -1000,6 +1215,14 @@
       
       if (!socket || !socket.connected) {
         app.innerHTML = renderConnecting();
+      } else if (authState === 'checking') {
+        app.innerHTML = renderConnecting();
+      } else if (authState === 'logged-out') {
+        app.innerHTML = renderAuthChoice();
+      } else if (authState === 'login-screen') {
+        app.innerHTML = renderLogin();
+      } else if (authState === 'register-screen') {
+        app.innerHTML = renderRegister();
       } else if (gameState === 'menu') {
         app.innerHTML = renderMenu();
       } else if (gameState === 'lobby') {
@@ -1023,7 +1246,187 @@
       `;
     }
 
+    function renderAuthChoice() {
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-8 flex items-center justify-center">
+          <div class="max-w-md w-full">
+            <h1 class="text-5xl font-bold text-center mb-8 text-red-500">COUP</h1>
+            
+            <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
+              <h2 class="text-2xl font-bold mb-6 text-center">Welcome!</h2>
+              
+              <div class="space-y-4">
+                <button
+                  onclick="showLoginScreen()"
+                  class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold"
+                >
+                  Login
+                </button>
+                
+                <button
+                  onclick="showRegisterScreen()"
+                  class="w-full bg-blue-600 hover:bg-blue-700 p-4 rounded text-xl font-bold"
+                >
+                  Create Account
+                </button>
+                
+                <div class="text-center text-gray-400 my-4">- OR -</div>
+                
+                <button
+                  onclick="continueAsGuest()"
+                  class="w-full bg-gray-600 hover:bg-gray-700 p-4 rounded text-lg"
+                >
+                  Continue as Guest
+                </button>
+              </div>
+              
+              <div class="mt-6 p-4 bg-gray-700 rounded">
+                <h3 class="font-bold mb-2">Why create an account?</h3>
+                <ul class="text-sm text-gray-300 space-y-1">
+                  <li>📊 Track your stats and Elo rating</li>
+                  <li>🏆 Compete on leaderboards</li>
+                  <li>📈 View your match history</li>
+                  <li>⭐ Build your reputation</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderLogin() {
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-8 flex items-center justify-center">
+          <div class="max-w-md w-full">
+            <h1 class="text-5xl font-bold text-center mb-8 text-red-500">COUP</h1>
+            
+            <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
+              <h2 class="text-2xl font-bold mb-6">Login</h2>
+              
+              <form onsubmit="handleLoginSubmit(event)" class="space-y-4">
+                <div>
+                  <label class="block text-sm font-bold mb-2">Username</label>
+                  <input
+                    type="text"
+                    id="loginUsername"
+                    required
+                    class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+                    autocomplete="username"
+                  />
+                </div>
+                
+                <div>
+                  <label class="block text-sm font-bold mb-2">Password</label>
+                  <input
+                    type="password"
+                    id="loginPassword"
+                    required
+                    class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+                    autocomplete="current-password"
+                  />
+                </div>
+                
+                <button
+                  type="submit"
+                  id="loginButton"
+                  class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold"
+                >
+                  Login
+                </button>
+              </form>
+              
+              <div class="mt-6 text-center">
+                <button
+                  onclick="backToAuthChoice()"
+                  class="text-gray-400 hover:text-white"
+                >
+                  ← Back
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function renderRegister() {
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-8 flex items-center justify-center">
+          <div class="max-w-md w-full">
+            <h1 class="text-5xl font-bold text-center mb-8 text-red-500">COUP</h1>
+            
+            <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
+              <h2 class="text-2xl font-bold mb-6">Create Account</h2>
+              
+              <form onsubmit="handleRegisterSubmit(event)" class="space-y-4">
+                <div>
+                  <label class="block text-sm font-bold mb-2">Username</label>
+                  <input
+                    type="text"
+                    id="registerUsername"
+                    required
+                    minlength="3"
+                    maxlength="20"
+                    pattern="[a-zA-Z0-9_]+"
+                    class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+                    autocomplete="username"
+                  />
+                  <div class="text-xs text-gray-400 mt-1">3-20 characters, letters/numbers/underscores only</div>
+                </div>
+                
+                <div>
+                  <label class="block text-sm font-bold mb-2">Password</label>
+                  <input
+                    type="password"
+                    id="registerPassword"
+                    required
+                    minlength="6"
+                    class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+                    autocomplete="new-password"
+                  />
+                  <div class="text-xs text-gray-400 mt-1">At least 6 characters</div>
+                </div>
+                
+                <div>
+                  <label class="block text-sm font-bold mb-2">Confirm Password</label>
+                  <input
+                    type="password"
+                    id="registerConfirmPassword"
+                    required
+                    minlength="6"
+                    class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+                    autocomplete="new-password"
+                  />
+                </div>
+                
+                <button
+                  type="submit"
+                  id="registerButton"
+                  class="w-full bg-blue-600 hover:bg-blue-700 p-4 rounded text-xl font-bold"
+                >
+                  Create Account
+                </button>
+              </form>
+              
+              <div class="mt-6 text-center">
+                <button
+                  onclick="backToAuthChoice()"
+                  class="text-gray-400 hover:text-white"
+                >
+                  ← Back
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
     function renderMenu() {
+      const displayName = currentUser ? currentUser.username : (playerName || 'Guest');
+      const eloRating = currentUser && currentUser.stats ? currentUser.stats.elo_rating : null;
+      
       return `
         <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-8">
           <div class="max-w-md mx-auto">
@@ -1039,16 +1442,36 @@
               </div>
             </div>
             
+            ${currentUser ? `
+              <div class="bg-gray-800 rounded-lg p-6 mb-6 shadow-2xl">
+                <div class="flex justify-between items-center">
+                  <div>
+                    <div class="text-sm text-gray-400">Logged in as</div>
+                    <div class="text-2xl font-bold text-red-400">${currentUser.username}</div>
+                    ${eloRating ? `<div class="text-sm text-yellow-500">⭐ Elo: ${eloRating}</div>` : ''}
+                  </div>
+                  <button
+                    onclick="logout()"
+                    class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm"
+                  >
+                    Logout
+                  </button>
+                </div>
+              </div>
+            ` : ''}
+            
             <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
-              <input
-                type="text"
-                id="playerName"
-                placeholder="Enter your name"
-                class="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 text-white"
-                value="${playerName}"
-                oninput="playerName = this.value"
-                onkeypress="if(event.key==='Enter') createRoom()"
-              />
+              ${!currentUser ? `
+                <input
+                  type="text"
+                  id="playerName"
+                  placeholder="Enter your display name"
+                  class="w-full p-3 mb-4 bg-gray-700 rounded border border-gray-600 text-white"
+                  value="${playerName}"
+                  oninput="playerName = this.value"
+                  onkeypress="if(event.key==='Enter') createRoom()"
+                />
+              ` : ''}
               
               <div class="mb-4 bg-gray-700 rounded p-4 space-y-3">
                 <h3 class="text-lg font-bold mb-3">Game Options</h3>
@@ -1172,12 +1595,20 @@
                     ` : ''}
                   </h3>
                   <div class="space-y-2">
-                    ${players.map(player => `
-                      <div class="bg-gray-700 p-3 rounded flex items-center justify-between">
-                        <span>${player.name}</span>
-                        ${player.isMe ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">YOU</span>' : ''}
-                      </div>
-                    `).join('')}
+                    ${players.map(player => {
+                      const isAuth = player.username && !player.isGuest;
+                      const eloRating = player.stats ? player.stats.elo_rating : null;
+                      return `
+                        <div class="bg-gray-700 p-3 rounded flex items-center justify-between">
+                          <div class="flex items-center gap-2">
+                            <span>${player.name}</span>
+                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">⭐ USER</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">👤 GUEST</span>`}
+                            ${isAuth && eloRating ? `<span class="text-xs text-yellow-400">Elo: ${eloRating}</span>` : ''}
+                          </div>
+                          ${player.isMe ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">YOU</span>' : ''}
+                        </div>
+                      `;
+                    }).join('')}
                     ${players.length === 0 ? '<div class="text-gray-500 text-center py-4">No players yet</div>' : ''}
                   </div>
                 </div>
@@ -1297,16 +1728,26 @@
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
               <div class="lg:col-span-2">
                 <div class="grid grid-cols-2 gap-4 mb-6">
-                  ${players.map(player => `
+                  ${players.map(player => {
+                    const isAuth = player.username && !player.isGuest;
+                    const eloRating = player.stats ? player.stats.elo_rating : null;
+                    
+                    return `
                     <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500 pulse-ring' : ''} ${!player.alive ? 'eliminate' : ''} ${player.disconnected ? 'opacity-75' : ''}">
                       <div class="flex justify-between items-start mb-3">
-                        <div>
-                          <h3 class="font-bold text-lg">
-                            ${player.name}
-                            ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
-                            ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
-                          </h3>
-                          ${player.id === currentPlayerId ? '<span class="text-xs text-red-500">CURRENT TURN</span>' : ''}
+                        <div class="flex-1">
+                          <div class="flex items-center gap-2 mb-1">
+                            <h3 class="font-bold text-lg">
+                              ${player.name}
+                              ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
+                              ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
+                            </h3>
+                          </div>
+                          <div class="flex items-center gap-2 flex-wrap">
+                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">⭐</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">👤</span>`}
+                            ${isAuth && eloRating ? `<span class="text-xs text-yellow-400 font-semibold">${eloRating}</span>` : ''}
+                            ${player.id === currentPlayerId ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">TURN</span>' : ''}
+                          </div>
                         </div>
                         <div class="flex items-center gap-1 text-yellow-500">
                           <span>💰</span>
@@ -1340,7 +1781,7 @@
                         }).join('')}
                       </div>
                     </div>
-                  `).join('')}
+                  `}).join('')}
                 </div>
 
                 ${canIRespond && actionInProgress.phase === 'waiting' ? `
@@ -1741,9 +2182,12 @@
       `;
     }
 
-    window.onload = () => {
+    window.onload = async () => {
+      // Verify auth token first
+      await verifyAuthToken();
+      
+      // Then initialize socket
       initSocket();
-      render();
     };
   </script>
 </body>

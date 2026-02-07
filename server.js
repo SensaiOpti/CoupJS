@@ -2,8 +2,11 @@ const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
+const jwt = require('jsonwebtoken');
 const auth = require('./auth');
 const db = require('./database');
+
+const JWT_SECRET = process.env.JWT_SECRET || 'coup-secret-key-change-in-production';
 
 const app = express();
 const server = http.createServer(app);
@@ -275,6 +278,9 @@ function startGame(room) {
       coinsStolen: 0,
       influencesLost: 0,
       actionsPerformed: 0,
+      incomeTaken: 0,
+      coupsEnacted: 0,
+      playersEliminated: 0,
       
       // Challenge/Bluff stats
       successfulChallenges: 0,
@@ -612,7 +618,7 @@ function handleChallenge(room, challengerId) {
     if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
     if (actor.gameStats) actor.gameStats.claimsDefended += 1; // Successfully defended claim
     
-    loseInfluence(room, challengerId);
+    loseInfluence(room, challengerId, 1, action.playerId);
     
     // Actor returns card and draws new one
     const cardIndex = actor.influences.findIndex(inf => !inf.revealed && inf.card === actionData.card);
@@ -656,7 +662,7 @@ function handleChallenge(room, challengerId) {
       }
     }
     
-    loseInfluence(room, action.playerId);
+    loseInfluence(room, action.playerId, 1, challengerId);
     room.actionInProgress = null;
     nextTurn(room);
   }
@@ -790,7 +796,7 @@ function challengeBlock(room, socketId) {
       }
     }
     
-    loseInfluence(room, challenger.id);
+    loseInfluence(room, challenger.id, 1, action.blockerId);
     
     // Return and redraw card
     const cardIndex = blocker.influences.findIndex(inf => !inf.revealed && inf.card === action.blockCard);
@@ -826,7 +832,7 @@ function challengeBlock(room, socketId) {
       }
     }
     
-    loseInfluence(room, action.blockerId);
+    loseInfluence(room, action.blockerId, 1, challenger.id);
     
     // Log the successful action before resolving
     const originalAction = action.action;
@@ -875,6 +881,7 @@ function resolveAction(room) {
     case 'income':
       actor.coins += 1;
       if (actor.gameStats) actor.gameStats.coinsEarned += 1;
+      if (actor.gameStats) actor.gameStats.incomeTaken += 1;
       if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
       addLogToRoom(room, `${actor.name} takes Income and receives 1 coin`, 'success', 'Income');
       break;
@@ -909,7 +916,7 @@ function resolveAction(room) {
         if (actor.gameStats) actor.gameStats.assassinationsSucceeded += 1;
         if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
         addLogToRoom(room, `${target.name} must lose an influence`, 'info');
-        loseInfluence(room, target.id);
+        loseInfluence(room, target.id, 1, action.playerId);
       }
       break;
     case 'exchange':
@@ -962,8 +969,9 @@ function resolveAction(room) {
     case 'coup':
       if (target) {
         if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
+        if (actor.gameStats) actor.gameStats.coupsEnacted += 1;
         addLogToRoom(room, `${actor.name} launches a Coup against ${target.name} who must lose an influence`, 'info', 'Coup');
-        loseInfluence(room, target.id);
+        loseInfluence(room, target.id, 1, actor.id);
       }
       break;
   }
@@ -972,7 +980,7 @@ function resolveAction(room) {
   nextTurn(room);
 }
 
-function loseInfluence(room, playerId, count = 1) {
+function loseInfluence(room, playerId, count = 1, causedByPlayerId = null) {
   const player = getPlayerById(room, playerId);
   if (!player) return;
 
@@ -981,6 +989,7 @@ function loseInfluence(room, playerId, count = 1) {
     // Set how many influences need to be lost
     player.influencesToLose = (player.influencesToLose || 0) + count;
     player.mustRevealInfluence = true;
+    player.influenceLossCausedBy = causedByPlayerId; // Track who caused this
     emitToRoom(room.code, 'gameState');
   }
 }
@@ -1139,6 +1148,15 @@ function revealInfluence(room, playerId, cardIndex) {
     player.alive = false;
     player.mustRevealInfluence = false;
     player.influencesToLose = 0;
+    
+    // Track who eliminated this player
+    if (player.influenceLossCausedBy) {
+      const eliminator = getPlayerById(room, player.influenceLossCausedBy);
+      if (eliminator && eliminator.gameStats) {
+        eliminator.gameStats.playersEliminated += 1;
+      }
+    }
+    
     addLogToRoom(room, `${player.name} is eliminated from the game!`, 'info');
     checkWinCondition(room);
     return { success: true };
@@ -1294,6 +1312,9 @@ function saveGameResults(room) {
             elo_rating = ?,
             
             influences_lost = influences_lost + ?,
+            income_taken = income_taken + ?,
+            coups_enacted = coups_enacted + ?,
+            players_eliminated = players_eliminated + ?,
             successful_challenges = successful_challenges + ?,
             failed_challenges = failed_challenges + ?,
             claims_defended = claims_defended + ?,
@@ -1329,6 +1350,9 @@ function saveGameResults(room) {
         eloChange ? eloChange.newElo : (player.stats.elo_rating || 1200),
         
         player.gameStats.influencesLost,
+        player.gameStats.incomeTaken,
+        player.gameStats.coupsEnacted,
+        player.gameStats.playersEliminated,
         player.gameStats.successfulChallenges,
         player.gameStats.failedChallenges,
         player.gameStats.claimsDefended,
@@ -1508,6 +1532,605 @@ function switchToSpectator(room, socketId) {
 
   return { success: true };
 }
+
+// ==========================================
+// PROFILE & LEADERBOARD API ROUTES
+// ==========================================
+
+// Helper: Calculate playstyle archetype
+function calculatePlaystyle(stats) {
+  const archetypes = [];
+  
+  // Conservative (high income, low aggression)
+  if (stats.income_taken > stats.games_played * 3 && 
+      stats.coups_enacted + stats.assassinations_succeeded < stats.games_played) {
+    archetypes.push({
+      name: 'The Conservative',
+      icon: '🛡️',
+      description: 'Plays it safe, prefers Income over risky moves',
+      score: stats.income_taken / (stats.games_played || 1)
+    });
+  }
+  
+  // The Brute (high coups)
+  if (stats.coups_enacted > stats.games_played * 0.8) {
+    archetypes.push({
+      name: 'The Brute',
+      icon: '💪',
+      description: 'Solves problems with overwhelming force',
+      score: stats.coups_enacted / (stats.games_played || 1)
+    });
+  }
+  
+  // The Assassin (high assassinations)
+  if (stats.assassinations_succeeded > stats.games_played * 0.5) {
+    archetypes.push({
+      name: 'The Assassin',
+      icon: '🗡️',
+      description: 'Eliminates threats efficiently and quietly',
+      score: stats.assassinations_succeeded / (stats.games_played || 1)
+    });
+  }
+  
+  // The Deceiver (high bluffs)
+  if (stats.bluffs_succeeded > stats.games_played * 2) {
+    archetypes.push({
+      name: 'The Deceiver',
+      icon: '🎭',
+      description: 'Master of deception and misdirection',
+      score: stats.bluffs_succeeded / (stats.games_played || 1)
+    });
+  }
+  
+  // The Tax Collector (high tax)
+  if (stats.tax_succeeded > stats.games_played * 2) {
+    archetypes.push({
+      name: 'The Tax Collector',
+      icon: '💰',
+      description: 'Controls the economy through taxation',
+      score: stats.tax_succeeded / (stats.games_played || 1)
+    });
+  }
+  
+  // The Finisher (high kill efficiency)
+  const finishingPower = stats.games_won > 0 ? stats.players_eliminated / stats.games_won : 0;
+  if (finishingPower > 2) {
+    archetypes.push({
+      name: 'The Finisher',
+      icon: '🎯',
+      description: 'Closes out games with lethal precision',
+      score: finishingPower
+    });
+  }
+  
+  // The Truth Teller (high claims defended, low bluffs)
+  if (stats.claims_defended > stats.bluffs_succeeded && stats.claims_defended > stats.games_played) {
+    archetypes.push({
+      name: 'The Truth Teller',
+      icon: '⚖️',
+      description: 'Rarely bluffs, earns trust through honesty',
+      score: stats.claims_defended / (stats.games_played || 1)
+    });
+  }
+  
+  // Sort by score and return top archetype
+  archetypes.sort((a, b) => b.score - a.score);
+  return archetypes[0] || {
+    name: 'The Novice',
+    icon: '🌱',
+    description: 'Still learning the ways of the coup',
+    score: 0
+  };
+}
+
+// Helper: Calculate achievements
+function calculateAchievements(stats) {
+  const achievements = [];
+  
+  // Master Bluffer
+  if (stats.bluffs_succeeded >= 50) {
+    achievements.push({
+      id: 'master_bluffer',
+      name: 'Master Bluffer',
+      icon: '🃏',
+      description: 'Successfully bluffed 50+ times',
+      unlocked: true
+    });
+  }
+  
+  // Duke's Domain
+  if (stats.tax_succeeded >= 100) {
+    achievements.push({
+      id: 'dukes_domain',
+      name: "Duke's Domain",
+      icon: '💎',
+      description: 'Collected tax 100+ times',
+      unlocked: true
+    });
+  }
+  
+  // Assassin's Creed
+  if (stats.assassinations_succeeded >= 25) {
+    achievements.push({
+      id: 'assassins_creed',
+      name: "Assassin's Creed",
+      icon: '⚔️',
+      description: 'Successfully assassinated 25+ players',
+      unlocked: true
+    });
+  }
+  
+  // Iron Wall
+  if ((stats.steals_blocked + stats.contessa_succeeded) >= 50) {
+    achievements.push({
+      id: 'iron_wall',
+      name: 'Iron Wall',
+      icon: '🛡️',
+      description: 'Blocked 50+ attacks',
+      unlocked: true
+    });
+  }
+  
+  // Coup Master
+  if (stats.games_won >= 10) {
+    achievements.push({
+      id: 'coup_master',
+      name: 'Coup Master',
+      icon: '👑',
+      description: 'Won 10+ games',
+      unlocked: true
+    });
+  }
+  
+  // Sharpshooter
+  const challengeAccuracy = stats.successful_challenges + stats.failed_challenges > 0 
+    ? stats.successful_challenges / (stats.successful_challenges + stats.failed_challenges)
+    : 0;
+  if (challengeAccuracy >= 0.75 && stats.successful_challenges >= 20) {
+    achievements.push({
+      id: 'sharpshooter',
+      name: 'Sharpshooter',
+      icon: '🎯',
+      description: '75%+ challenge accuracy (20+ challenges)',
+      unlocked: true
+    });
+  }
+  
+  // Robber Baron
+  if (stats.coins_stolen >= 500) {
+    achievements.push({
+      id: 'robber_baron',
+      name: 'Robber Baron',
+      icon: '💰',
+      description: 'Stolen 500+ coins',
+      unlocked: true
+    });
+  }
+  
+  // The Untouchable
+  if (stats.games_won >= 5 && stats.influences_lost / stats.games_played < 1.5) {
+    achievements.push({
+      id: 'untouchable',
+      name: 'The Untouchable',
+      icon: '✨',
+      description: 'Win 5+ games while losing few influences',
+      unlocked: true
+    });
+  }
+  
+  // Economic Powerhouse
+  if (stats.coins_earned >= 1000) {
+    achievements.push({
+      id: 'economic_powerhouse',
+      name: 'Economic Powerhouse',
+      icon: '💵',
+      description: 'Earned 1000+ coins',
+      unlocked: true
+    });
+  }
+  
+  // Rising Star
+  if (stats.elo_rating >= 1500) {
+    achievements.push({
+      id: 'rising_star',
+      name: 'Rising Star',
+      icon: '⭐',
+      description: 'Reached 1500+ Elo',
+      unlocked: true
+    });
+  }
+  
+  return achievements;
+}
+
+// GET /api/profile/:identifier - Get user profile
+app.get('/api/profile/:identifier', (req, res) => {
+  const { identifier } = req.params;
+  
+  try {
+    // Try to find by username first, then by userId
+    let user;
+    if (isNaN(identifier)) {
+      // It's a username
+      user = db.prepare('SELECT * FROM users WHERE username = ?').get(identifier);
+    } else {
+      // It's a userId
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(parseInt(identifier));
+    }
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Get stats
+    const stats = db.prepare('SELECT * FROM user_stats WHERE user_id = ?').get(user.id);
+    
+    if (!stats) {
+      return res.status(404).json({ error: 'User stats not found' });
+    }
+    
+    // Calculate derived metrics
+    const winRate = stats.games_played > 0 ? (stats.games_won / stats.games_played * 100).toFixed(1) : 0;
+    const kdRatio = stats.influences_lost > 0 ? (stats.players_eliminated / stats.influences_lost).toFixed(2) : stats.players_eliminated;
+    const challengeAccuracy = (stats.successful_challenges + stats.failed_challenges) > 0
+      ? (stats.successful_challenges / (stats.successful_challenges + stats.failed_challenges) * 100).toFixed(1)
+      : 0;
+    const bluffSuccessRate = (stats.bluffs_succeeded + stats.bluffs_caught) > 0
+      ? (stats.bluffs_succeeded / (stats.bluffs_succeeded + stats.bluffs_caught) * 100).toFixed(1)
+      : 0;
+    
+    // Get rank
+    const rankData = db.prepare(`
+      SELECT COUNT(*) + 1 as rank 
+      FROM user_stats 
+      WHERE elo_rating > ? AND games_played >= 5
+    `).get(stats.elo_rating);
+    
+    // Get total ranked players
+    const totalPlayers = db.prepare('SELECT COUNT(*) as count FROM user_stats WHERE games_played >= 5').get();
+    
+    // Calculate playstyle
+    const playstyle = calculatePlaystyle(stats);
+    
+    // Calculate achievements
+    const achievements = calculateAchievements(stats);
+    
+    res.json({
+      user: {
+        id: user.id,
+        username: user.username,
+        createdAt: user.created_at
+      },
+      stats: {
+        ...stats,
+        win_rate: parseFloat(winRate),
+        kd_ratio: parseFloat(kdRatio),
+        challenge_accuracy: parseFloat(challengeAccuracy),
+        bluff_success_rate: parseFloat(bluffSuccessRate)
+      },
+      rank: {
+        current: rankData.rank,
+        total: totalPlayers.count,
+        percentile: totalPlayers.count > 0 ? ((1 - (rankData.rank / totalPlayers.count)) * 100).toFixed(1) : 0
+      },
+      playstyle,
+      achievements
+    });
+    
+  } catch (error) {
+    console.error('Error fetching profile:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/profile/:identifier/matches - Get match history
+app.get('/api/profile/:identifier/matches', (req, res) => {
+  const { identifier } = req.params;
+  const limit = parseInt(req.query.limit) || 20;
+  
+  try {
+    // Find user
+    let user;
+    if (isNaN(identifier)) {
+      user = db.prepare('SELECT * FROM users WHERE username = ?').get(identifier);
+    } else {
+      user = db.prepare('SELECT * FROM users WHERE id = ?').get(parseInt(identifier));
+    }
+    
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Get match history
+    const matches = db.prepare(`
+      SELECT * FROM game_history 
+      WHERE player_data LIKE ? 
+      ORDER BY ended_at DESC 
+      LIMIT ?
+    `).all(`%"userId":${user.id}%`, limit);
+    
+    // Parse and format matches
+    const formattedMatches = matches.map(match => {
+      const playerData = JSON.parse(match.player_data);
+      const myData = playerData.find(p => p.userId === user.id);
+      const winner = playerData.find(p => p.userId === match.winner_id);
+      
+      // Determine placement
+      const sortedPlayers = playerData.sort((a, b) => {
+        if (a.influencesRemaining !== b.influencesRemaining) {
+          return b.influencesRemaining - a.influencesRemaining;
+        }
+        return b.finalCoins - a.finalCoins;
+      });
+      const placement = sortedPlayers.findIndex(p => p.userId === user.id) + 1;
+      
+      return {
+        gameId: match.id,
+        roomCode: match.room_code,
+        endedAt: match.ended_at,
+        placement,
+        totalPlayers: playerData.length,
+        isWinner: match.winner_id === user.id,
+        finalCoins: myData?.finalCoins || 0,
+        influencesRemaining: myData?.influencesRemaining || 0,
+        eloChange: myData?.eloChange || null,
+        players: playerData.map(p => ({
+          username: p.username || p.name,
+          isMe: p.userId === user.id,
+          isWinner: p.userId === match.winner_id,
+          finalCoins: p.finalCoins,
+          influencesRemaining: p.influencesRemaining
+        })),
+        stats: myData?.gameStats || {}
+      };
+    });
+    
+    res.json({ matches: formattedMatches });
+    
+  } catch (error) {
+    console.error('Error fetching match history:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/leaderboards/:type - Get leaderboard
+app.get('/api/leaderboards/:type', (req, res) => {
+  const { type } = req.params;
+  const limit = parseInt(req.query.limit) || 100;
+  const minGames = parseInt(req.query.minGames) || 5;
+  const timeFilter = req.query.time || 'all'; // all, month, week
+  
+  try {
+    let query;
+    let orderBy;
+    
+    switch (type) {
+      case 'elo':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.elo_rating DESC, s.games_won DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'winrate':
+        query = `
+          SELECT u.id, u.username, s.*,
+                 (CAST(s.games_won AS FLOAT) / s.games_played * 100) as win_rate
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY win_rate DESC, s.games_won DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'kd':
+        query = `
+          SELECT u.id, u.username, s.*,
+                 (CAST(s.players_eliminated AS FLOAT) / NULLIF(s.influences_lost, 0)) as kd_ratio
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ? AND s.influences_lost > 0
+          ORDER BY kd_ratio DESC, s.players_eliminated DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'wins':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.games_won DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'bluffer':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.bluffs_succeeded DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'tax':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.tax_succeeded DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'assassin':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.assassinations_succeeded DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'finisher':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.players_eliminated DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'economist':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.coins_earned DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      default:
+        return res.status(400).json({ error: 'Invalid leaderboard type' });
+    }
+    
+    const results = db.prepare(query).all(minGames, limit);
+    
+    // Calculate derived metrics for each player
+    const leaderboard = results.map((player, index) => {
+      const winRate = player.games_played > 0 ? (player.games_won / player.games_played * 100).toFixed(1) : 0;
+      const kdRatio = player.influences_lost > 0 ? (player.players_eliminated / player.influences_lost).toFixed(2) : player.players_eliminated;
+      
+      return {
+        rank: index + 1,
+        userId: player.id,
+        username: player.username,
+        primaryStat: type === 'elo' ? player.elo_rating :
+                     type === 'winrate' ? parseFloat(winRate) :
+                     type === 'kd' ? parseFloat(kdRatio) :
+                     type === 'wins' ? player.games_won :
+                     type === 'bluffer' ? player.bluffs_succeeded :
+                     type === 'tax' ? player.tax_succeeded :
+                     type === 'assassin' ? player.assassinations_succeeded :
+                     type === 'finisher' ? player.players_eliminated :
+                     type === 'economist' ? player.coins_earned : 0,
+        secondaryStats: {
+          gamesPlayed: player.games_played,
+          gamesWon: player.games_won,
+          winRate: parseFloat(winRate),
+          elo: player.elo_rating
+        }
+      };
+    });
+    
+    res.json({ 
+      type,
+      leaderboard,
+      minGames,
+      timeFilter
+    });
+    
+  } catch (error) {
+    console.error('Error fetching leaderboard:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// GET /api/leaderboards/me/:type - Get my rank in leaderboard
+app.get('/api/leaderboards/me/:type', (req, res) => {
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!token) {
+    return res.status(401).json({ error: 'Not authenticated' });
+  }
+  
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    const { type } = req.params;
+    const minGames = parseInt(req.query.minGames) || 5;
+    
+    // Get user's stats
+    const userStats = db.prepare('SELECT * FROM user_stats WHERE user_id = ?').get(decoded.userId);
+    if (!userStats) {
+      return res.status(404).json({ error: 'Stats not found' });
+    }
+    
+    // Calculate rank based on type
+    let rankQuery;
+    let userValue;
+    
+    switch (type) {
+      case 'elo':
+        rankQuery = `
+          SELECT COUNT(*) + 1 as rank 
+          FROM user_stats 
+          WHERE elo_rating > ? AND games_played >= ?
+        `;
+        userValue = userStats.elo_rating;
+        break;
+        
+      case 'winrate':
+        const userWinRate = userStats.games_played > 0 ? (userStats.games_won / userStats.games_played) : 0;
+        rankQuery = `
+          SELECT COUNT(*) + 1 as rank 
+          FROM user_stats 
+          WHERE (CAST(games_won AS FLOAT) / games_played) > ? AND games_played >= ?
+        `;
+        userValue = userWinRate;
+        break;
+        
+      case 'kd':
+        const userKD = userStats.influences_lost > 0 ? (userStats.players_eliminated / userStats.influences_lost) : userStats.players_eliminated;
+        rankQuery = `
+          SELECT COUNT(*) + 1 as rank 
+          FROM user_stats 
+          WHERE (CAST(players_eliminated AS FLOAT) / NULLIF(influences_lost, 0)) > ? AND games_played >= ?
+        `;
+        userValue = userKD;
+        break;
+        
+      case 'wins':
+        rankQuery = `
+          SELECT COUNT(*) + 1 as rank 
+          FROM user_stats 
+          WHERE games_won > ? AND games_played >= ?
+        `;
+        userValue = userStats.games_won;
+        break;
+        
+      default:
+        return res.status(400).json({ error: 'Invalid leaderboard type' });
+    }
+    
+    const rankData = db.prepare(rankQuery).get(userValue, minGames);
+    const totalPlayers = db.prepare('SELECT COUNT(*) as count FROM user_stats WHERE games_played >= ?').get(minGames);
+    
+    res.json({
+      rank: rankData.rank,
+      total: totalPlayers.count,
+      value: userValue
+    });
+    
+  } catch (error) {
+    console.error('Error fetching my rank:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
 
 // Socket.IO event handlers
 io.on('connection', (socket) => {

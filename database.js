@@ -45,6 +45,9 @@ async function initDatabase() {
       coins_lost INTEGER DEFAULT 0,
       coins_stolen INTEGER DEFAULT 0,
       influences_lost INTEGER DEFAULT 0,
+      income_taken INTEGER DEFAULT 0,
+      coups_enacted INTEGER DEFAULT 0,
+      players_eliminated INTEGER DEFAULT 0,
       
       -- Challenge/Bluff stats
       successful_challenges INTEGER DEFAULT 0,

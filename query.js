@@ -15,7 +15,7 @@ async function runQuery() {
            
            -- Core stats
            s.coins_earned, s.coins_spent, s.coins_lost, s.coins_stolen,
-           s.influences_lost,
+           s.influences_lost, s.income_taken, s.coups_enacted, s.players_eliminated,
            
            -- Challenge/Bluff stats
            s.successful_challenges, s.failed_challenges,

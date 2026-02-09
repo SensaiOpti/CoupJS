@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Login - Coup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
+  <div class="max-w-md mx-auto p-8">
+    <!-- Header -->
+    <div class="text-center mb-8 mt-12">
+      <h1 class="text-5xl font-bold text-red-500 mb-2">COUP</h1>
+      <p class="text-gray-400">Login or create an account</p>
+    </div>
+
+    <!-- Tabs -->
+    <div class="bg-gray-800 rounded-lg overflow-hidden mb-6">
+      <div class="flex">
+        <button id="loginTab" onclick="showLogin()" class="flex-1 p-4 font-bold bg-red-600">
+          Login
+        </button>
+        <button id="registerTab" onclick="showRegister()" class="flex-1 p-4 font-bold bg-gray-700 hover:bg-gray-600">
+          Register
+        </button>
+      </div>
+    </div>
+
+    <!-- Login Form -->
+    <div id="loginForm" class="bg-gray-800 rounded-lg p-8 shadow-2xl">
+      <h2 class="text-2xl font-bold mb-6">Welcome Back!</h2>
+      
+      <div id="loginError" class="hidden bg-red-900 border border-red-600 rounded p-3 mb-4 text-sm"></div>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-bold mb-2">Username</label>
+        <input
+          type="text"
+          id="loginUsername"
+          class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+          placeholder="Enter your username"
+        />
+      </div>
+      
+      <div class="mb-6">
+        <label class="block text-sm font-bold mb-2">Password</label>
+        <input
+          type="password"
+          id="loginPassword"
+          class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+          placeholder="Enter your password"
+        />
+      </div>
+      
+      <button
+        onclick="login()"
+        class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold mb-4"
+      >
+        Login
+      </button>
+      
+      <div class="text-center">
+        <a href="/" class="text-gray-400 hover:text-white text-sm">
+          ← Back to game
+        </a>
+      </div>
+    </div>
+
+    <!-- Register Form -->
+    <div id="registerForm" class="hidden bg-gray-800 rounded-lg p-8 shadow-2xl">
+      <h2 class="text-2xl font-bold mb-6">Create Account</h2>
+      
+      <div id="registerError" class="hidden bg-red-900 border border-red-600 rounded p-3 mb-4 text-sm"></div>
+      <div id="registerSuccess" class="hidden bg-green-900 border border-green-600 rounded p-3 mb-4 text-sm"></div>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-bold mb-2">Username</label>
+        <input
+          type="text"
+          id="registerUsername"
+          class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+          placeholder="Choose a username (3-20 characters)"
+        />
+      </div>
+      
+      <div class="mb-4">
+        <label class="block text-sm font-bold mb-2">Password</label>
+        <input
+          type="password"
+          id="registerPassword"
+          class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+          placeholder="Choose a password (6+ characters)"
+        />
+      </div>
+      
+      <div class="mb-6">
+        <label class="block text-sm font-bold mb-2">Email (optional)</label>
+        <input
+          type="email"
+          id="registerEmail"
+          class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+          placeholder="your@email.com"
+        />
+      </div>
+      
+      <button
+        onclick="register()"
+        class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold mb-4"
+      >
+        Create Account
+      </button>
+      
+      <div class="text-center">
+        <a href="/" class="text-gray-400 hover:text-white text-sm">
+          ← Back to game
+        </a>
+      </div>
+    </div>
+
+    <!-- Info Box -->
+    <div class="bg-blue-900 border border-blue-600 rounded-lg p-6 mt-6">
+      <h3 class="font-bold mb-2">Why create an account?</h3>
+      <ul class="text-sm space-y-1 text-gray-300">
+        <li>✓ Track your wins, losses, and stats</li>
+        <li>✓ Earn achievements and badges</li>
+        <li>✓ Climb the global leaderboards</li>
+        <li>✓ View your match history</li>
+        <li>✓ Compare stats with friends</li>
+      </ul>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+
+    function showLogin() {
+      document.getElementById('loginForm').classList.remove('hidden');
+      document.getElementById('registerForm').classList.add('hidden');
+      document.getElementById('loginTab').classList.add('bg-red-600');
+      document.getElementById('loginTab').classList.remove('bg-gray-700', 'hover:bg-gray-600');
+      document.getElementById('registerTab').classList.remove('bg-red-600');
+      document.getElementById('registerTab').classList.add('bg-gray-700', 'hover:bg-gray-600');
+    }
+
+    function showRegister() {
+      document.getElementById('loginForm').classList.add('hidden');
+      document.getElementById('registerForm').classList.remove('hidden');
+      document.getElementById('registerTab').classList.add('bg-red-600');
+      document.getElementById('registerTab').classList.remove('bg-gray-700', 'hover:bg-gray-600');
+      document.getElementById('loginTab').classList.remove('bg-red-600');
+      document.getElementById('loginTab').classList.add('bg-gray-700', 'hover:bg-gray-600');
+    }
+
+    async function login() {
+      const username = document.getElementById('loginUsername').value.trim();
+      const password = document.getElementById('loginPassword').value;
+      
+      if (!username || !password) {
+        showError('loginError', 'Please enter username and password');
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${API_BASE}/api/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          // Save auth data to localStorage
+          localStorage.setItem('authToken', data.token);
+          localStorage.setItem('currentUser', JSON.stringify({
+            id: data.user.id,
+            username: data.user.username
+          }));
+          
+          // Redirect to main page
+          window.location.href = '/';
+        } else {
+          showError('loginError', data.error || 'Login failed');
+        }
+      } catch (error) {
+        showError('loginError', 'Connection error. Please try again.');
+      }
+    }
+
+    async function register() {
+      const username = document.getElementById('registerUsername').value.trim();
+      const password = document.getElementById('registerPassword').value;
+      const email = document.getElementById('registerEmail').value.trim();
+      
+      if (!username || !password) {
+        showError('registerError', 'Please enter username and password');
+        return;
+      }
+      
+      if (username.length < 3 || username.length > 20) {
+        showError('registerError', 'Username must be 3-20 characters');
+        return;
+      }
+      
+      if (password.length < 6) {
+        showError('registerError', 'Password must be at least 6 characters');
+        return;
+      }
+      
+      try {
+        const response = await fetch(`${API_BASE}/api/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password, email: email || null })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+          // Show success message
+          showSuccess('registerSuccess', 'Account created! Logging you in...');
+          
+          // Save auth data
+          localStorage.setItem('authToken', data.token);
+          localStorage.setItem('currentUser', JSON.stringify({
+            id: data.user.id,
+            username: data.user.username
+          }));
+          
+          // Redirect after a short delay
+          setTimeout(() => {
+            window.location.href = '/';
+          }, 1000);
+        } else {
+          showError('registerError', data.error || 'Registration failed');
+        }
+      } catch (error) {
+        showError('registerError', 'Connection error. Please try again.');
+      }
+    }
+
+    function showError(elementId, message) {
+      const element = document.getElementById(elementId);
+      element.textContent = message;
+      element.classList.remove('hidden');
+      
+      // Hide success if showing error
+      if (elementId === 'registerError') {
+        document.getElementById('registerSuccess').classList.add('hidden');
+      }
+    }
+
+    function showSuccess(elementId, message) {
+      const element = document.getElementById(elementId);
+      element.textContent = message;
+      element.classList.remove('hidden');
+      
+      // Hide error if showing success
+      document.getElementById('registerError').classList.add('hidden');
+    }
+
+    // Handle Enter key
+    document.addEventListener('DOMContentLoaded', () => {
+      document.getElementById('loginPassword').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') login();
+      });
+      
+      document.getElementById('registerEmail').addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') register();
+      });
+    });
+  </script>
+</body>
+</html>

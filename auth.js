@@ -114,7 +114,7 @@ function login(username, password) {
 
   // Get user
   const getUserByUsername = dbModule.prepare(`
-    SELECT id, username, password_hash, display_name, created_at, last_login
+    SELECT id, username, password_hash, display_name, deck_preference, created_at, last_login
     FROM users
     WHERE username = ? COLLATE NOCASE
   `);
@@ -160,6 +160,7 @@ function login(username, password) {
       id: user.id,
       username: user.username,
       display_name: user.display_name,
+      deck_preference: user.deck_preference || 'default',
       created_at: user.created_at,
       stats: stats
     }
@@ -175,7 +176,7 @@ function verifyToken(token) {
     
     // Get user data
     const getUserById = dbModule.prepare(`
-      SELECT id, username, display_name, created_at, last_login
+      SELECT id, username, display_name, deck_preference, created_at, last_login
       FROM users
       WHERE id = ?
     `);
@@ -198,6 +199,7 @@ function verifyToken(token) {
         id: user.id,
         username: user.username,
         display_name: user.display_name,
+        deck_preference: user.deck_preference || 'default',
         created_at: user.created_at,
         stats: stats
       }

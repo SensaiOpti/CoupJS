@@ -64,6 +64,42 @@ app.post('/api/guest', (req, res) => {
   });
 });
 
+// Update user deck preference
+app.post('/api/user/deck-preference', (req, res) => {
+  const { token, deckPreference } = req.body;
+  
+  // Verify token
+  const verification = auth.verifyToken(token);
+  if (!verification.success) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  // Validate deck preference
+  const validDecks = ['default', 'anime', 'pixel', 'minimalist'];
+  if (!validDecks.includes(deckPreference)) {
+    return res.status(400).json({ error: 'Invalid deck preference' });
+  }
+  
+  try {
+    // Update deck preference
+    const updateDeck = db.prepare(`
+      UPDATE users
+      SET deck_preference = ?
+      WHERE id = ?
+    `);
+    updateDeck.run(deckPreference, verification.user.id);
+    db.saveDatabase();
+    
+    res.json({
+      success: true,
+      deck_preference: deckPreference
+    });
+  } catch (error) {
+    console.error('Error updating deck preference:', error);
+    res.status(500).json({ error: 'Failed to update deck preference' });
+  }
+});
+
 
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -76,6 +112,11 @@ app.get('/', (req, res) => {
 // Serve the rules page
 app.get('/rules.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'rules.html'));
+});
+
+// Serve the lobby page
+app.get('/lobby.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'lobby.html'));
 });
 
 // Game state storage
@@ -312,8 +353,8 @@ function startGame(room) {
   });
 
   const cardType = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
-  addLogToRoom(room, `🎮 Game started! Each player has 2 influence cards and 2 coins.`, 'info');
-  addLogToRoom(room, `🎲 ${room.players[0].name} will go first!`, 'info');
+  addLogToRoom(room, `ðŸŽ® Game started! Each player has 2 influence cards and 2 coins.`, 'info');
+  addLogToRoom(room, `ðŸŽ² ${room.players[0].name} will go first!`, 'info');
   addLogToRoom(room, `--- ${room.players[0].name}'s turn ---`, 'info');
   return { success: true };
 }
@@ -437,7 +478,7 @@ function performAction(room, socketId, action, targetId) {
     
     if (targetIsDisconnected) {
       room.actionInProgress.pausedForDisconnection = true;
-      addLogToRoom(room, `⚠️ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
+      addLogToRoom(room, `âš ï¸ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
     } else {
       // Set timeout for responses (12 seconds)
       room.actionInProgress.responseTimeout = setTimeout(() => {
@@ -556,7 +597,7 @@ function respondToAction(room, socketId, response) {
               .filter(p => p.alive && p.id !== room.actionInProgress.blockerId && p.disconnected)
               .map(p => p.name)
               .join(', ');
-            addLogToRoom(room, `⚠️ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
+            addLogToRoom(room, `âš ï¸ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
             
             // Clear any existing timeout
             if (room.actionInProgress.responseTimeout) {
@@ -583,7 +624,7 @@ function respondToAction(room, socketId, response) {
         // Target is disconnected - pause and wait
         if (!room.actionInProgress.pausedForDisconnection) {
           room.actionInProgress.pausedForDisconnection = true;
-          addLogToRoom(room, `⚠️ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
+          addLogToRoom(room, `âš ï¸ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
           
           // Clear any existing timeout
           if (room.actionInProgress.responseTimeout) {
@@ -698,7 +739,7 @@ function handleBlock(room, blockerId, blockCard) {
       .filter(p => p.alive && p.id !== blockerId && p.disconnected)
       .map(p => p.name)
       .join(', ');
-    addLogToRoom(room, `⚠️ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
+    addLogToRoom(room, `âš ï¸ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
   } else {
     room.actionInProgress.responseTimeout = setTimeout(() => {
       if (room.actionInProgress && room.actionInProgress.phase === 'block') {
@@ -1192,7 +1233,7 @@ function checkWinCondition(room) {
     room.winnerId = winner.id;
     room.winnerUserId = winner.userId; // Track user ID for stats
     
-    addLogToRoom(room, `🎉 ${winner.name} wins the game! 🎉`, 'success');
+    addLogToRoom(room, `ðŸŽ‰ ${winner.name} wins the game! ðŸŽ‰`, 'success');
     room.state = 'ended';
     
     // Save game results to database
@@ -1540,81 +1581,289 @@ function switchToSpectator(room, socketId) {
 // Helper: Calculate playstyle archetype
 function calculatePlaystyle(stats) {
   const archetypes = [];
+  const gamesPlayed = stats.games_played || 1;
   
-  // Conservative (high income, low aggression)
-  if (stats.income_taken > stats.games_played * 3 && 
-      stats.coups_enacted + stats.assassinations_succeeded < stats.games_played) {
+  // Aggressive Archetypes
+  
+  // The Hit Man (assassinate specialist - very high assassination rate)
+  if (stats.assassinations_succeeded > gamesPlayed * 1.2) {
     archetypes.push({
-      name: 'The Conservative',
-      icon: '🛡️',
-      description: 'Plays it safe, prefers Income over risky moves',
-      score: stats.income_taken / (stats.games_played || 1)
+      name: 'The Hit Man',
+      icon: '🎯',
+      description: 'Professional eliminator, strikes with deadly precision',
+      score: (stats.assassinations_succeeded / gamesPlayed) * 10
     });
   }
   
-  // The Brute (high coups)
-  if (stats.coups_enacted > stats.games_played * 0.8) {
+  // The Warlord (high eliminations overall)
+  if (stats.players_eliminated > gamesPlayed * 2.5) {
+    archetypes.push({
+      name: 'The Warlord',
+      icon: '⚔️',
+      description: 'Leaves a trail of fallen opponents',
+      score: (stats.players_eliminated / gamesPlayed) * 8
+    });
+  }
+  
+  // The Brute (coup specialist)
+  if (stats.coups_enacted > gamesPlayed * 1.0) {
     archetypes.push({
       name: 'The Brute',
       icon: '💪',
       description: 'Solves problems with overwhelming force',
-      score: stats.coups_enacted / (stats.games_played || 1)
+      score: (stats.coups_enacted / gamesPlayed) * 9
     });
   }
   
-  // The Assassin (high assassinations)
-  if (stats.assassinations_succeeded > stats.games_played * 0.5) {
+  // The Phantom (stealthy assassin - high assassinations, low coups)
+  if (stats.assassinations_succeeded > stats.coups_enacted * 2 && stats.assassinations_succeeded > gamesPlayed * 0.7) {
     archetypes.push({
-      name: 'The Assassin',
-      icon: '🗡️',
-      description: 'Eliminates threats efficiently and quietly',
-      score: stats.assassinations_succeeded / (stats.games_played || 1)
+      name: 'The Phantom',
+      icon: '👻',
+      description: 'Strikes from the shadows, avoids direct confrontation',
+      score: (stats.assassinations_succeeded / (stats.coups_enacted + 1)) * 7
+    });
+  }
+  
+  // Deception Archetypes
+  
+  // The Master of Lies (extremely high bluff rate)
+  if (stats.bluffs_succeeded > gamesPlayed * 3) {
+    archetypes.push({
+      name: 'The Master of Lies',
+      icon: '🃏',
+      description: 'Weaves intricate webs of deception',
+      score: (stats.bluffs_succeeded / gamesPlayed) * 11
     });
   }
   
   // The Deceiver (high bluffs)
-  if (stats.bluffs_succeeded > stats.games_played * 2) {
+  if (stats.bluffs_succeeded > gamesPlayed * 1.5) {
     archetypes.push({
       name: 'The Deceiver',
       icon: '🎭',
-      description: 'Master of deception and misdirection',
-      score: stats.bluffs_succeeded / (stats.games_played || 1)
+      description: 'Master of misdirection and false claims',
+      score: (stats.bluffs_succeeded / gamesPlayed) * 8
     });
   }
   
-  // The Tax Collector (high tax)
-  if (stats.tax_succeeded > stats.games_played * 2) {
+  // The Gambler (bluffs often but gets caught sometimes)
+  const totalBluffAttempts = stats.bluffs_succeeded + stats.bluffs_caught;
+  if (totalBluffAttempts > gamesPlayed * 2 && stats.bluffs_caught > gamesPlayed * 0.5) {
     archetypes.push({
-      name: 'The Tax Collector',
-      icon: '💰',
-      description: 'Controls the economy through taxation',
-      score: stats.tax_succeeded / (stats.games_played || 1)
+      name: 'The Gambler',
+      icon: '🎲',
+      description: 'Takes big risks, wins big or loses big',
+      score: (totalBluffAttempts / gamesPlayed) * 6
     });
   }
   
-  // The Finisher (high kill efficiency)
-  const finishingPower = stats.games_won > 0 ? stats.players_eliminated / stats.games_won : 0;
-  if (finishingPower > 2) {
-    archetypes.push({
-      name: 'The Finisher',
-      icon: '🎯',
-      description: 'Closes out games with lethal precision',
-      score: finishingPower
-    });
-  }
+  // Honesty Archetypes
   
-  // The Truth Teller (high claims defended, low bluffs)
-  if (stats.claims_defended > stats.bluffs_succeeded && stats.claims_defended > stats.games_played) {
+  // The Truth Teller (rarely bluffs, high claims defended)
+  const honestyRatio = stats.claims_defended / (stats.bluffs_succeeded + 1);
+  if (honestyRatio > 2 && stats.claims_defended > gamesPlayed) {
     archetypes.push({
       name: 'The Truth Teller',
       icon: '⚖️',
       description: 'Rarely bluffs, earns trust through honesty',
-      score: stats.claims_defended / (stats.games_played || 1)
+      score: honestyRatio * 7
+    });
+  }
+  
+  // The Saint (extremely honest, very low bluff rate)
+  if (stats.bluffs_succeeded < gamesPlayed * 0.3 && stats.claims_defended > gamesPlayed * 1.5) {
+    archetypes.push({
+      name: 'The Saint',
+      icon: '😇',
+      description: 'Plays with unwavering integrity',
+      score: (stats.claims_defended / (stats.bluffs_succeeded + 1)) * 10
+    });
+  }
+  
+  // Challenge Archetypes
+  
+  // The Detective (high challenge accuracy)
+  const challengeAccuracy = (stats.successful_challenges + stats.failed_challenges) > 0
+    ? stats.successful_challenges / (stats.successful_challenges + stats.failed_challenges)
+    : 0;
+  if (challengeAccuracy > 0.7 && stats.successful_challenges > gamesPlayed * 0.8) {
+    archetypes.push({
+      name: 'The Detective',
+      icon: '🔍',
+      description: 'Spots lies with uncanny accuracy',
+      score: challengeAccuracy * stats.successful_challenges
+    });
+  }
+  
+  // The Skeptic (challenges often)
+  if ((stats.successful_challenges + stats.failed_challenges) > gamesPlayed * 1.5) {
+    archetypes.push({
+      name: 'The Skeptic',
+      icon: '🤔',
+      description: 'Questions everything and everyone',
+      score: ((stats.successful_challenges + stats.failed_challenges) / gamesPlayed) * 6
+    });
+  }
+  
+  // Economic Archetypes
+  
+  // The Tax Collector (duke specialist)
+  if (stats.tax_succeeded > gamesPlayed * 2.5) {
+    archetypes.push({
+      name: 'The Tax Collector',
+      icon: '👑',
+      description: 'Controls the economy through taxation',
+      score: (stats.tax_succeeded / gamesPlayed) * 9
+    });
+  }
+  
+  // The Economist (high coins earned overall)
+  if (stats.coins_earned > gamesPlayed * 20) {
+    archetypes.push({
+      name: 'The Economist',
+      icon: '💼',
+      description: 'Builds wealth through strategic accumulation',
+      score: (stats.coins_earned / gamesPlayed) / 3
+    });
+  }
+  
+  // The Thief (captain specialist)
+  if (stats.coins_stolen > gamesPlayed * 6) {
+    archetypes.push({
+      name: 'The Thief',
+      icon: '🦹',
+      description: 'Takes what belongs to others',
+      score: (stats.coins_stolen / gamesPlayed) * 8
+    });
+  }
+  
+  // The Miser (takes income often)
+  if (stats.income_taken > gamesPlayed * 5 && stats.coups_enacted + stats.assassinations_succeeded < gamesPlayed * 0.5) {
+    archetypes.push({
+      name: 'The Miser',
+      icon: '🪙',
+      description: 'Hoards coins carefully, avoids spending',
+      score: (stats.income_taken / gamesPlayed) * 7
+    });
+  }
+  
+  // Defensive Archetypes
+  
+  // The Guardian (blocks often)
+  const totalBlocks = stats.steals_blocked + stats.contessa_succeeded + stats.foreignaidblock_succeeded;
+  if (totalBlocks > gamesPlayed * 1.5) {
+    archetypes.push({
+      name: 'The Guardian',
+      icon: '🛡️',
+      description: 'Protects themselves and disrupts opponents',
+      score: (totalBlocks / gamesPlayed) * 8
+    });
+  }
+  
+  // The Diplomat (foreign aid specialist)
+  if (stats.foreignaid_accepted > gamesPlayed * 2 && stats.foreignaidblock_succeeded > gamesPlayed * 0.5) {
+    archetypes.push({
+      name: 'The Diplomat',
+      icon: '🤝',
+      description: 'Navigates politics and blocks aid strategically',
+      score: ((stats.foreignaid_accepted + stats.foreignaidblock_succeeded) / gamesPlayed) * 6
+    });
+  }
+  
+  // The Survivor (low death rate, decent win rate)
+  const survivalRatio = gamesPlayed / (stats.influences_lost + 1);
+  if (survivalRatio > 0.8 && stats.games_won > gamesPlayed * 0.2) {
+    archetypes.push({
+      name: 'The Survivor',
+      icon: '🧗',
+      description: 'Outlasts opponents through careful play',
+      score: survivalRatio * 8
+    });
+  }
+  
+  // Performance Archetypes
+  
+  // The Champion (high win rate)
+  const winRate = stats.games_won / gamesPlayed;
+  if (winRate > 0.5 && stats.games_played >= 10) {
+    archetypes.push({
+      name: 'The Champion',
+      icon: '🏆',
+      description: 'Dominates the competition consistently',
+      score: winRate * 15
+    });
+  }
+  
+  // The Finisher (high eliminations per win)
+  const finishingPower = stats.games_won > 0 ? stats.players_eliminated / stats.games_won : 0;
+  if (finishingPower > 2.5) {
+    archetypes.push({
+      name: 'The Finisher',
+      icon: '⚡',
+      description: 'Closes out games with lethal precision',
+      score: finishingPower * 7
+    });
+  }
+  
+  // The Underdog (wins despite losses)
+  if (winRate > 0.2 && winRate < 0.4 && stats.games_played >= 15) {
+    archetypes.push({
+      name: 'The Underdog',
+      icon: '🐕',
+      description: 'Pulls off unlikely victories',
+      score: stats.games_won * 2
+    });
+  }
+  
+  // Balanced Archetypes
+  
+  // The Strategist (balanced stats across the board)
+  const balanceScore = (
+    (stats.tax_succeeded > gamesPlayed * 0.5 ? 1 : 0) +
+    (stats.assassinations_succeeded > gamesPlayed * 0.3 ? 1 : 0) +
+    (stats.bluffs_succeeded > gamesPlayed * 0.5 ? 1 : 0) +
+    (stats.successful_challenges > gamesPlayed * 0.3 ? 1 : 0) +
+    (totalBlocks > gamesPlayed * 0.5 ? 1 : 0)
+  );
+  if (balanceScore >= 4 && stats.games_played >= 10) {
+    archetypes.push({
+      name: 'The Strategist',
+      icon: '♟️',
+      description: 'Adapts tactics to any situation',
+      score: balanceScore * 4
+    });
+  }
+  
+  // The Wildcard (unpredictable stats)
+  const varianceScore = Math.abs(stats.coups_enacted - stats.assassinations_succeeded) +
+                        Math.abs(stats.bluffs_succeeded - stats.claims_defended);
+  if (varianceScore > gamesPlayed * 2 && stats.games_played >= 8) {
+    archetypes.push({
+      name: 'The Wildcard',
+      icon: '🌪️',
+      description: 'Unpredictable and impossible to read',
+      score: (varianceScore / gamesPlayed) * 5
+    });
+  }
+  
+  // Conservative Archetype
+  
+  // The Pacifist (avoids violence)
+  const violenceScore = stats.coups_enacted + stats.assassinations_succeeded;
+  if (violenceScore < gamesPlayed * 0.5 && stats.games_played >= 5) {
+    archetypes.push({
+      name: 'The Pacifist',
+      icon: '☮️',
+      description: 'Wins through patience, not aggression',
+      score: gamesPlayed / (violenceScore + 1) * 6
     });
   }
   
   // Sort by score and return top archetype
   archetypes.sort((a, b) => b.score - a.score);
+  
+  // Return top archetype or default
   return archetypes[0] || {
     name: 'The Novice',
     icon: '🌱',
@@ -1632,7 +1881,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'master_bluffer',
       name: 'Master Bluffer',
-      icon: '🃏',
+      icon: 'ðŸƒ',
       description: 'Successfully bluffed 50+ times',
       unlocked: true
     });
@@ -1643,7 +1892,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'dukes_domain',
       name: "Duke's Domain",
-      icon: '💎',
+      icon: 'ðŸ’Ž',
       description: 'Collected tax 100+ times',
       unlocked: true
     });
@@ -1654,7 +1903,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'assassins_creed',
       name: "Assassin's Creed",
-      icon: '⚔️',
+      icon: 'âš”ï¸',
       description: 'Successfully assassinated 25+ players',
       unlocked: true
     });
@@ -1665,7 +1914,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'iron_wall',
       name: 'Iron Wall',
-      icon: '🛡️',
+      icon: 'ðŸ›¡ï¸',
       description: 'Blocked 50+ attacks',
       unlocked: true
     });
@@ -1676,7 +1925,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'coup_master',
       name: 'Coup Master',
-      icon: '👑',
+      icon: 'ðŸ‘‘',
       description: 'Won 10+ games',
       unlocked: true
     });
@@ -1690,7 +1939,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'sharpshooter',
       name: 'Sharpshooter',
-      icon: '🎯',
+      icon: 'ðŸŽ¯',
       description: '75%+ challenge accuracy (20+ challenges)',
       unlocked: true
     });
@@ -1701,7 +1950,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'robber_baron',
       name: 'Robber Baron',
-      icon: '💰',
+      icon: 'ðŸ’°',
       description: 'Stolen 500+ coins',
       unlocked: true
     });
@@ -1712,7 +1961,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'untouchable',
       name: 'The Untouchable',
-      icon: '✨',
+      icon: 'âœ¨',
       description: 'Win 5+ games while losing few influences',
       unlocked: true
     });
@@ -1723,7 +1972,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'economic_powerhouse',
       name: 'Economic Powerhouse',
-      icon: '💵',
+      icon: 'ðŸ’µ',
       description: 'Earned 1000+ coins',
       unlocked: true
     });
@@ -1734,7 +1983,7 @@ function calculateAchievements(stats) {
     achievements.push({
       id: 'rising_star',
       name: 'Rising Star',
-      icon: '⭐',
+      icon: 'â­',
       description: 'Reached 1500+ Elo',
       unlocked: true
     });
@@ -2132,6 +2381,70 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
   }
 });
 
+// Lobby system tracking
+const lobbySockets = new Map(); // socketId -> { username, socketId, isAuthenticated, userId, inGame }
+
+function broadcastRoomList() {
+  const roomList = Array.from(rooms.entries()).map(([code, room]) => ({
+    code: code,
+    state: room.state,
+    playerCount: room.players.length,
+    spectatorCount: room.spectators.length,
+    useInquisitor: room.useInquisitor,
+    allowSpectators: room.allowSpectators,
+    chatMode: room.chatMode
+  }));
+  
+  lobbySockets.forEach((userData, socketId) => {
+    io.to(socketId).emit('roomListUpdate', { rooms: roomList });
+  });
+}
+
+function broadcastOnlineUsers() {
+  // Get all users
+  const allUsers = Array.from(lobbySockets.values()).map(user => ({
+    username: user.username,
+    isAuthenticated: user.isAuthenticated || false,
+    inGame: user.inGame || false,
+    userId: user.userId
+  }));
+  
+  // Deduplicate users
+  const seenAuthUsers = new Set();
+  const seenGuestUsers = new Set();
+  const uniqueUsers = [];
+  
+  allUsers.forEach(user => {
+    if (user.isAuthenticated && user.userId) {
+      // For authenticated users, dedupe by userId
+      if (!seenAuthUsers.has(user.userId)) {
+        seenAuthUsers.add(user.userId);
+        uniqueUsers.push({
+          username: user.username,
+          isAuthenticated: user.isAuthenticated,
+          inGame: user.inGame
+        });
+      }
+    } else {
+      // For guests, dedupe by username
+      const guestKey = `guest_${user.username}`;
+      if (!seenGuestUsers.has(guestKey)) {
+        seenGuestUsers.add(guestKey);
+        uniqueUsers.push({
+          username: user.username,
+          isAuthenticated: user.isAuthenticated,
+          inGame: user.inGame
+        });
+      }
+    }
+  });
+  
+  // Broadcast to all lobby users
+  lobbySockets.forEach((userData, socketId) => {
+    io.to(socketId).emit('onlineUsersUpdate', { users: uniqueUsers });
+  });
+}
+
 // Socket.IO event handlers
 io.on('connection', (socket) => {
   console.log(`Client connected: ${socket.id}`);
@@ -2180,6 +2493,16 @@ io.on('connection', (socket) => {
     room.players.push(player);
     rooms.set(roomCode, room);
     socket.join(roomCode);
+    
+    // Mark user as in game in lobby
+    const lobbyUser = lobbySockets.get(socket.id);
+    if (lobbyUser) {
+      lobbyUser.inGame = true;
+      broadcastOnlineUsers();
+    }
+    
+    // Broadcast room list update
+    broadcastRoomList();
     
     callback({ success: true, roomCode });
     emitToRoom(roomCode, 'gameState');
@@ -2302,6 +2625,16 @@ io.on('connection', (socket) => {
     room.players.push(player);
     socket.join(roomCode);
     
+    // Mark user as in game in lobby
+    const lobbyUser = lobbySockets.get(socket.id);
+    if (lobbyUser) {
+      lobbyUser.inGame = true;
+      broadcastOnlineUsers();
+    }
+    
+    // Broadcast room list update
+    broadcastRoomList();
+    
     callback({ success: true, joinedAs: 'player' });
     emitToRoom(roomCode, 'gameState');
   });
@@ -2340,7 +2673,7 @@ io.on('connection', (socket) => {
     player.disconnected = false;
     socket.join(roomCode);
 
-    addLogToRoom(room, `✅ ${player.name} reconnected!`, 'info');
+    addLogToRoom(room, `âœ… ${player.name} reconnected!`, 'info');
     
     // Check if there's an action paused waiting for this player
     if (room.actionInProgress && room.actionInProgress.pausedForDisconnection) {
@@ -2457,6 +2790,8 @@ io.on('connection', (socket) => {
     
     if (result.success) {
       emitToRoom(roomCode, 'gameState');
+      // Broadcast room list update (state changed from lobby to playing)
+      broadcastRoomList();
     }
   });
 
@@ -2671,6 +3006,87 @@ io.on('connection', (socket) => {
         emitToRoom(roomCode, 'gameState');
       }
     }
+    
+    // Mark user as not in game in lobby
+    const lobbyUser = lobbySockets.get(socket.id);
+    if (lobbyUser) {
+      lobbyUser.inGame = false;
+      broadcastOnlineUsers();
+    }
+    
+    // Broadcast room list update
+    broadcastRoomList();
+  });
+
+  // Lobby events
+  socket.on('joinLobby', (data) => {
+    const username = data.username || 'Guest';
+    
+    // Remove any existing socket connections for this user (handles refreshes)
+    // For authenticated users, check by userId; for guests, check by username
+    const existingSocketsToRemove = [];
+    lobbySockets.forEach((userData, socketId) => {
+      if (socketId === socket.id) {
+        // Skip current socket
+        return;
+      }
+      
+      // Match by userId for authenticated users, or by username for guests
+      if (authenticatedUser && userData.userId === authenticatedUser.id) {
+        existingSocketsToRemove.push(socketId);
+      } else if (!authenticatedUser && userData.username === username && !userData.userId) {
+        existingSocketsToRemove.push(socketId);
+      }
+    });
+    
+    // Remove old connections
+    existingSocketsToRemove.forEach(socketId => {
+      lobbySockets.delete(socketId);
+      console.log(`Removed stale lobby connection for ${username} (socket: ${socketId})`);
+    });
+    
+    // Add new connection
+    lobbySockets.set(socket.id, {
+      username: username,
+      socketId: socket.id,
+      isAuthenticated: !!authenticatedUser,
+      userId: authenticatedUser ? authenticatedUser.id : null,
+      inGame: false
+    });
+    
+    console.log(`${username} joined lobby`);
+    
+    // Send initial room list to this user
+    broadcastRoomList();
+    
+    // Broadcast updated online users
+    broadcastOnlineUsers();
+  });
+
+  socket.on('leaveLobby', () => {
+    const userData = lobbySockets.get(socket.id);
+    if (userData) {
+      lobbySockets.delete(socket.id);
+      broadcastOnlineUsers();
+    }
+  });
+
+  socket.on('lobbyChatMessage', (data) => {
+    const userData = lobbySockets.get(socket.id);
+    if (!userData) return;
+    
+    const message = data.message.trim();
+    if (!message || message.length > 200) return;
+    
+    // Broadcast to all lobby users
+    lobbySockets.forEach((otherUserData, socketId) => {
+      io.to(socketId).emit('lobbyChatMessage', {
+        username: userData.username,
+        message: message,
+        isAuthenticated: userData.isAuthenticated,
+        timestamp: Date.now()
+      });
+    });
   });
 
   socket.on('disconnect', () => {
@@ -2687,7 +3103,7 @@ io.on('connection', (socket) => {
         if (room.state === 'playing' && !player.hasLeft) {
           // Start grace period for reconnection
           player.disconnected = true;
-          addLogToRoom(room, `⚠️ ${player.name} disconnected. Waiting 30 seconds to reconnect...`, 'info');
+          addLogToRoom(room, `âš ï¸ ${player.name} disconnected. Waiting 30 seconds to reconnect...`, 'info');
           
           const timerKey = `${roomCode}-${player.persistentId}`;
           const forfeitTimer = setTimeout(() => {
@@ -2807,6 +3223,13 @@ io.on('connection', (socket) => {
           }
         });
       }
+    }
+    
+    // Handle lobby disconnection
+    const userData = lobbySockets.get(socket.id);
+    if (userData) {
+      lobbySockets.delete(socket.id);
+      broadcastOnlineUsers();
     }
   });
 });

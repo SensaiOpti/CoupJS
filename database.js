@@ -27,10 +27,18 @@ async function initDatabase() {
       password_hash TEXT NOT NULL,
       email TEXT,
       display_name TEXT NOT NULL,
+      deck_preference TEXT DEFAULT 'default',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_login DATETIME DEFAULT CURRENT_TIMESTAMP
     );
   `);
+  
+  // Add deck_preference column if it doesn't exist (for existing databases)
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN deck_preference TEXT DEFAULT 'default'`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS user_stats (

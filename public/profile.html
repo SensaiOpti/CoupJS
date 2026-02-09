@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Player Profile - Coup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+      background: linear-gradient(to bottom right, #7f1d1d, #1f2937, #000000);
+      min-height: 100vh;
+    }
+    
+    .stat-card {
+      background: rgba(31, 41, 55, 0.8);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(75, 85, 99, 0.3);
+      transition: all 0.3s ease;
+    }
+    
+    .stat-card:hover {
+      transform: translateY(-2px);
+      border-color: rgba(239, 68, 68, 0.5);
+      box-shadow: 0 10px 30px rgba(239, 68, 68, 0.2);
+    }
+    
+    .badge {
+      animation: float 3s ease-in-out infinite;
+    }
+    
+    @keyframes float {
+      0%, 100% { transform: translateY(0px); }
+      50% { transform: translateY(-10px); }
+    }
+    
+    .progress-bar {
+      transition: width 1s ease-out;
+    }
+    
+    .match-item {
+      transition: all 0.2s ease;
+    }
+    
+    .match-item:hover {
+      background: rgba(55, 65, 81, 0.6);
+      transform: translateX(5px);
+    }
+    
+    .placement-1 { border-left: 4px solid #fbbf24; }
+    .placement-2 { border-left: 4px solid #9ca3af; }
+    .placement-3 { border-left: 4px solid #d97706; }
+    .placement-other { border-left: 4px solid #374151; }
+    
+    .skeleton {
+      background: linear-gradient(90deg, #374151 25%, #4b5563 50%, #374151 75%);
+      background-size: 200% 100%;
+      animation: loading 1.5s infinite;
+    }
+    
+    @keyframes loading {
+      0% { background-position: 200% 0; }
+      100% { background-position: -200% 0; }
+    }
+  </style>
+</head>
+<body class="text-white">
+  <div class="max-w-7xl mx-auto p-4 md:p-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <h1 class="text-4xl font-bold text-red-500">COUP</h1>
+      <div class="flex gap-3">
+        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Back to Game
+        </a>
+        <a href="/leaderboards.html" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded transition-colors">
+          Leaderboards
+        </a>
+      </div>
+    </div>
+
+    <!-- Loading State -->
+    <div id="loading" class="text-center py-20">
+      <div class="text-6xl mb-4">â³</div>
+      <div class="text-2xl">Loading profile...</div>
+    </div>
+
+    <!-- Error State -->
+    <div id="error" class="hidden bg-red-900 border border-red-600 rounded-lg p-8 text-center">
+      <div class="text-6xl mb-4">âŒ</div>
+      <div class="text-2xl mb-4">Error Loading Profile</div>
+      <div id="errorMessage" class="text-gray-300 mb-4"></div>
+      <button onclick="window.location.href='/'" class="bg-red-600 hover:bg-red-700 px-6 py-3 rounded">
+        Back to Game
+      </button>
+    </div>
+
+    <!-- Profile Content -->
+    <div id="profile" class="hidden">
+      <!-- Header Section -->
+      <div class="stat-card rounded-lg p-8 mb-6">
+        <div class="flex flex-col md:flex-row items-center md:items-start gap-6">
+          <!-- Avatar -->
+          <div class="w-32 h-32 bg-gray-700 rounded-full flex items-center justify-center text-6xl">
+            ðŸ‘¤
+          </div>
+          
+          <!-- User Info -->
+          <div class="flex-1 text-center md:text-left">
+            <h2 id="username" class="text-4xl font-bold mb-2"></h2>
+            <div id="playstyle" class="text-2xl mb-3"></div>
+            <div id="memberSince" class="text-gray-400 text-sm"></div>
+            
+            <!-- Rank Badge -->
+            <div id="rankBadge" class="inline-block bg-gradient-to-r from-red-600 to-orange-600 px-6 py-2 rounded-full mt-4">
+              <span class="font-bold"></span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Core Stats -->
+      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <!-- Elo -->
+        <div class="stat-card rounded-lg p-6 text-center">
+          <div class="text-gray-400 text-sm mb-2">ELO RATING</div>
+          <div id="elo" class="text-5xl font-bold text-yellow-500 mb-2"></div>
+          <div id="eloRank" class="text-sm text-gray-400"></div>
+        </div>
+        
+        <!-- Win Rate -->
+        <div class="stat-card rounded-lg p-6 text-center">
+          <div class="text-gray-400 text-sm mb-2">WIN RATE</div>
+          <div id="winRate" class="text-5xl font-bold text-green-500 mb-2"></div>
+          <div id="winRecord" class="text-sm text-gray-400"></div>
+          <div class="w-full bg-gray-700 rounded-full h-2 mt-3">
+            <div id="winRateBar" class="progress-bar bg-green-500 h-2 rounded-full"></div>
+          </div>
+        </div>
+        
+        <!-- K/D Ratio -->
+        <div class="stat-card rounded-lg p-6 text-center">
+          <div class="text-gray-400 text-sm mb-2">K/D RATIO</div>
+          <div id="kdRatio" class="text-5xl font-bold text-red-500 mb-2"></div>
+          <div id="kdDetails" class="text-sm text-gray-400"></div>
+        </div>
+      </div>
+
+      <!-- Featured Stats Grid -->
+      <div class="stat-card rounded-lg p-6 mb-6">
+        <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
+          <span>ðŸ“Š</span>
+          <span>Featured Stats</span>
+        </h3>
+        <div id="featuredStats" class="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Deck Preferences -->
+      <div id="deckPreferencesSection" class="hidden stat-card rounded-lg p-6 mb-6">
+        <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
+          <span>🎴</span>
+          <span>Deck Style Preferences</span>
+        </h3>
+        <p class="text-gray-400 mb-6">Choose your preferred card deck style. This will be used across all your games.</p>
+        
+        <div id="deckOptions" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <!-- Dynamically populated -->
+        </div>
+        
+        <div id="deckSaveMessage" class="hidden mt-4 p-3 rounded"></div>
+      </div>
+
+      <!-- Achievements -->
+      <div class="stat-card rounded-lg p-6 mb-6" id="achievementsSection">
+        <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
+          <span>ðŸ†</span>
+          <span>Achievements</span>
+        </h3>
+        <div id="achievements" class="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+
+      <!-- Match History -->
+      <div class="stat-card rounded-lg p-6">
+        <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
+          <span>ðŸ“œ</span>
+          <span>Recent Matches</span>
+        </h3>
+        <div id="matchHistory" class="space-y-3">
+          <!-- Dynamically populated -->
+        </div>
+        <div id="noMatches" class="hidden text-center py-8 text-gray-400">
+          No matches played yet. Start your first game!
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Get username from URL or use default
+    const urlParams = new URLSearchParams(window.location.search);
+    const username = urlParams.get('user') || localStorage.getItem('currentUsername') || 'guest';
+    
+    const API_BASE = window.location.origin;
+
+    async function loadProfile() {
+      try {
+        // Fetch profile data
+        const profileRes = await fetch(`${API_BASE}/api/profile/${username}`);
+        if (!profileRes.ok) {
+          throw new Error('Profile not found');
+        }
+        const profileData = await profileRes.json();
+        
+        // Fetch match history
+        const matchesRes = await fetch(`${API_BASE}/api/profile/${username}/matches?limit=10`);
+        const matchesData = await matchesRes.json();
+        
+        // Hide loading, show profile
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('profile').classList.remove('hidden');
+        
+        // Render profile
+        renderProfile(profileData, matchesData);
+        
+      } catch (error) {
+        console.error('Error loading profile:', error);
+        document.getElementById('loading').classList.add('hidden');
+        document.getElementById('error').classList.remove('hidden');
+        document.getElementById('errorMessage').textContent = error.message;
+      }
+    }
+
+    function renderProfile(data, matches) {
+      const { user, stats, rank, playstyle, achievements } = data;
+      
+      // Check if this is the current user's profile
+      const currentUserData = authToken ? JSON.parse(localStorage.getItem('currentUser') || '{}') : {};
+      isMyProfile = currentUserData.username === user.username;
+      
+      // User info
+      document.getElementById('username').textContent = user.username;
+      document.getElementById('playstyle').textContent = `${playstyle.icon} ${playstyle.name}`;
+      document.getElementById('playstyle').title = playstyle.description;
+      
+      const joinDate = new Date(user.createdAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      document.getElementById('memberSince').textContent = `Playing since ${joinDate}`;
+      
+      // Rank
+      const rankBadge = document.getElementById('rankBadge');
+      rankBadge.querySelector('span').textContent = `Rank #${rank.current} of ${rank.total} (Top ${rank.percentile}%)`;
+      
+      // Core stats
+      document.getElementById('elo').textContent = stats.elo_rating;
+      document.getElementById('eloRank').textContent = `Rank #${rank.current}`;
+      
+      document.getElementById('winRate').textContent = `${stats.win_rate}%`;
+      document.getElementById('winRecord').textContent = `${stats.games_won}W - ${stats.games_played - stats.games_won}L`;
+      document.getElementById('winRateBar').style.width = `${stats.win_rate}%`;
+      
+      document.getElementById('kdRatio').textContent = stats.kd_ratio;
+      document.getElementById('kdDetails').textContent = `${stats.players_eliminated} Kills / ${stats.influences_lost} Deaths`;
+      
+      // Featured stats
+      renderFeaturedStats(stats);
+      
+      // Deck preferences (only show for own profile)
+      if (isMyProfile && authToken) {
+        document.getElementById('deckPreferencesSection').classList.remove('hidden');
+        currentDeckPreference = localStorage.getItem('coupDeckPreference') || 'default';
+        renderDeckOptions();
+      }
+      
+      // Achievements
+      if (achievements.length > 0) {
+        renderAchievements(achievements);
+      } else {
+        document.getElementById('achievementsSection').classList.add('hidden');
+      }
+      
+      // Match history
+      renderMatchHistory(matches.matches);
+    }
+
+    function renderFeaturedStats(stats) {
+      const featuredStats = [
+        { label: 'Games Played', value: stats.games_played, icon: 'ðŸŽ®' },
+        { label: 'Coins Earned', value: stats.coins_earned.toLocaleString(), icon: 'ðŸ’°' },
+        { label: 'Tax Success', value: stats.tax_succeeded, icon: 'ðŸ’Ž' },
+        { label: 'Assassinations', value: stats.assassinations_succeeded, icon: 'ðŸ—¡ï¸' },
+        { label: 'Bluffs Succeeded', value: stats.bluffs_succeeded, icon: 'ðŸŽ­' },
+        { label: 'Challenges Won', value: stats.successful_challenges, icon: 'âš”ï¸' },
+        { label: 'Coups Enacted', value: stats.coups_enacted, icon: 'ðŸ’ª' },
+        { label: 'Income Taken', value: stats.income_taken, icon: 'ðŸª™' }
+      ];
+      
+      const container = document.getElementById('featuredStats');
+      container.innerHTML = featuredStats.map(stat => `
+        <div class="bg-gray-700 rounded-lg p-4 text-center hover:bg-gray-600 transition-colors">
+          <div class="text-3xl mb-2">${stat.icon}</div>
+          <div class="text-2xl font-bold text-white mb-1">${stat.value}</div>
+          <div class="text-xs text-gray-400">${stat.label}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderAchievements(achievements) {
+      const container = document.getElementById('achievements');
+      container.innerHTML = achievements.map(achievement => `
+        <div class="badge bg-gradient-to-br from-yellow-600 to-orange-600 rounded-lg p-4 text-center hover:scale-110 transition-transform cursor-pointer" title="${achievement.description}">
+          <div class="text-4xl mb-2">${achievement.icon}</div>
+          <div class="text-sm font-bold">${achievement.name}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderMatchHistory(matches) {
+      const container = document.getElementById('matchHistory');
+      const noMatches = document.getElementById('noMatches');
+      
+      if (!matches || matches.length === 0) {
+        container.classList.add('hidden');
+        noMatches.classList.remove('hidden');
+        return;
+      }
+      
+      container.innerHTML = matches.map(match => {
+        const date = new Date(match.endedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const time = new Date(match.endedAt).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+        const placementClass = match.placement === 1 ? 'placement-1' : 
+                               match.placement === 2 ? 'placement-2' : 
+                               match.placement === 3 ? 'placement-3' : 'placement-other';
+        const placementEmoji = match.placement === 1 ? 'ðŸ¥‡' : 
+                              match.placement === 2 ? 'ðŸ¥ˆ' : 
+                              match.placement === 3 ? 'ðŸ¥‰' : 'ðŸ’€';
+        const eloColor = match.eloChange > 0 ? 'text-green-400' : 
+                        match.eloChange < 0 ? 'text-red-400' : 'text-gray-400';
+        
+        return `
+          <div class="match-item ${placementClass} bg-gray-700 rounded-lg p-4">
+            <div class="flex flex-col md:flex-row md:items-center gap-3">
+              <!-- Placement -->
+              <div class="flex items-center gap-3 flex-1">
+                <div class="text-3xl">${placementEmoji}</div>
+                <div>
+                  <div class="font-bold text-lg">
+                    ${match.placement === 1 ? '1st Place' : 
+                      match.placement === 2 ? '2nd Place' : 
+                      match.placement === 3 ? '3rd Place' : 
+                      `${match.placement}th Place`}
+                  </div>
+                  <div class="text-sm text-gray-400">${date} at ${time}</div>
+                </div>
+              </div>
+              
+              <!-- Stats -->
+              <div class="flex gap-4 text-sm">
+                <div>
+                  <div class="text-gray-400">Elo</div>
+                  <div class="${eloColor} font-bold">
+                    ${match.eloChange > 0 ? '+' : ''}${match.eloChange || 0}
+                  </div>
+                </div>
+                <div>
+                  <div class="text-gray-400">Coins</div>
+                  <div class="font-bold">${match.finalCoins}</div>
+                </div>
+                <div>
+                  <div class="text-gray-400">Players</div>
+                  <div class="font-bold">${match.totalPlayers}</div>
+                </div>
+              </div>
+              
+              <!-- Quick Stats -->
+              <div class="flex gap-2 text-xs">
+                ${match.stats.playersEliminated ? `<span class="bg-red-900 px-2 py-1 rounded">ðŸ—¡ï¸ ${match.stats.playersEliminated} kills</span>` : ''}
+                ${match.stats.bluffsSucceeded ? `<span class="bg-purple-900 px-2 py-1 rounded">ðŸŽ­ ${match.stats.bluffsSucceeded} bluffs</span>` : ''}
+                ${match.stats.coinsStolen ? `<span class="bg-yellow-900 px-2 py-1 rounded">ðŸ’° ${match.stats.coinsStolen} stolen</span>` : ''}
+              </div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    // Deck selector functionality
+    const DECK_OPTIONS = [
+      {
+        id: 'default',
+        name: 'Classic',
+        description: 'Original card designs',
+        preview: '/images/cards/default/duke.png'
+      },
+      {
+        id: 'anime',
+        name: 'Anime',
+        description: 'Anime-style artwork',
+        preview: '/images/cards/anime/duke.png'
+      },
+      {
+        id: 'pixel',
+        name: 'Pixel Art',
+        description: 'Retro pixel art style',
+        preview: '/images/cards/pixel/duke.png'
+      },
+      {
+        id: 'minimalist',
+        name: 'Minimalist',
+        description: 'Clean, modern design',
+        preview: '/images/cards/minimalist/duke.png'
+      }
+    ];
+
+    let currentDeckPreference = 'default';
+    let authToken = localStorage.getItem('coupAuthToken');
+    let isMyProfile = false;
+
+    function renderDeckOptions() {
+      const container = document.getElementById('deckOptions');
+      if (!container) return;
+
+      container.innerHTML = DECK_OPTIONS.map(deck => `
+        <div 
+          onclick="selectDeck('${deck.id}')" 
+          class="bg-gray-700 rounded-lg p-4 cursor-pointer transition-all hover:bg-gray-600 ${currentDeckPreference === deck.id ? 'ring-4 ring-red-500' : ''}"
+        >
+          <div class="flex items-center gap-4">
+            <img src="${deck.preview}" alt="${deck.name}" class="w-20 h-28 object-cover rounded" onerror="this.style.display='none'">
+            <div class="flex-1">
+              <h4 class="text-lg font-bold mb-1">${deck.name}</h4>
+              <p class="text-gray-400 text-sm mb-2">${deck.description}</p>
+              ${currentDeckPreference === deck.id ? '<div class="text-green-500 font-bold text-sm">✓ Currently Selected</div>' : '<div class="text-blue-400 text-sm">Click to select</div>'}
+            </div>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    async function selectDeck(deckId) {
+      if (!isMyProfile || !authToken) {
+        showDeckMessage('You must be logged in to change deck preferences', 'error');
+        return;
+      }
+
+      currentDeckPreference = deckId;
+      localStorage.setItem('coupDeckPreference', deckId);
+
+      try {
+        const response = await fetch(`${API_BASE}/api/user/deck-preference`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            token: authToken,
+            deckPreference: deckId
+          })
+        });
+
+        const data = await response.json();
+
+        if (data.success) {
+          renderDeckOptions();
+          showDeckMessage('Deck preference saved successfully!', 'success');
+        } else {
+          showDeckMessage('Failed to save deck preference: ' + data.error, 'error');
+        }
+      } catch (error) {
+        console.error('Error saving deck preference:', error);
+        showDeckMessage('Error saving deck preference', 'error');
+      }
+    }
+
+    function showDeckMessage(message, type) {
+      const messageEl = document.getElementById('deckSaveMessage');
+      if (!messageEl) return;
+
+      messageEl.textContent = message;
+      messageEl.className = `mt-4 p-3 rounded ${type === 'success' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'}`;
+      messageEl.classList.remove('hidden');
+
+      setTimeout(() => {
+        messageEl.classList.add('hidden');
+      }, 3000);
+    }
+
+    // Load profile on page load
+    loadProfile();
+  </script>
+</body>
+</html>

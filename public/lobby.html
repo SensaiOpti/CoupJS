@@ -1,0 +1,519 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Lobby - Coup</title>
+  <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    }
+    
+    .fade-in {
+      animation: fadeIn 0.3s ease-out;
+    }
+    
+    @keyframes fadeIn {
+      from {
+        opacity: 0;
+        transform: translateY(-10px);
+      }
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+    
+    .pulse-dot {
+      animation: pulse 2s ease-in-out infinite;
+    }
+    
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    
+    #chatMessages {
+      scroll-behavior: smooth;
+    }
+    
+    .room-item {
+      transition: all 0.2s ease;
+    }
+    
+    .room-item:hover {
+      transform: translateX(4px);
+      border-color: rgba(239, 68, 68, 0.5);
+    }
+    
+    .online-user {
+      transition: all 0.2s ease;
+    }
+    
+    .online-user:hover {
+      background: rgba(55, 65, 81, 0.8);
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
+  <div class="max-w-7xl mx-auto p-4">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-6">
+      <div class="flex items-center gap-4">
+        <h1 class="text-4xl font-bold text-red-500">COUP</h1>
+        <span class="text-gray-400">|</span>
+        <h2 class="text-2xl text-gray-300">Game Lobby</h2>
+      </div>
+      <div class="flex gap-3">
+        <a href="/profile.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
+          👤 Profile
+        </a>
+        <a href="/leaderboards.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
+          🏆 Leaderboards
+        </a>
+        <a href="/rules.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
+          📖 Rules
+        </a>
+        <button id="logoutBtn" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded">
+          Logout
+        </button>
+      </div>
+    </div>
+
+    <!-- User Info Bar -->
+    <div id="userInfoBar" class="bg-gray-800 rounded-lg p-4 mb-6 flex justify-between items-center">
+      <div class="flex items-center gap-4">
+        <div class="flex items-center gap-2">
+          <div class="w-3 h-3 bg-green-500 rounded-full pulse-dot"></div>
+          <span class="text-gray-300">Connected as:</span>
+          <span id="currentUsername" class="font-bold text-white"></span>
+        </div>
+        <div id="userElo" class="hidden text-yellow-500 font-semibold"></div>
+      </div>
+      <div class="flex items-center gap-6">
+        <div class="flex items-center gap-2">
+          <span class="text-gray-400">Online:</span>
+          <span id="onlineCount" class="font-bold text-green-400">0</span>
+        </div>
+        <div class="flex items-center gap-2">
+          <span class="text-gray-400">Active Games:</span>
+          <span id="activeGamesCount" class="font-bold text-blue-400">0</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <!-- Left Column: Room List -->
+      <div class="lg:col-span-2 space-y-4">
+        <!-- Create Room Button -->
+        <button 
+          onclick="createNewRoom()"
+          class="w-full bg-red-600 hover:bg-red-700 p-6 rounded-lg text-xl font-bold shadow-lg"
+        >
+          + Create New Game
+        </button>
+
+        <!-- Filter Tabs -->
+        <div class="bg-gray-800 rounded-lg p-2 flex gap-2">
+          <button 
+            id="filterAll" 
+            onclick="setFilter('all')" 
+            class="flex-1 py-2 rounded font-bold bg-red-600"
+          >
+            All Games (<span id="countAll">0</span>)
+          </button>
+          <button 
+            id="filterWaiting" 
+            onclick="setFilter('waiting')" 
+            class="flex-1 py-2 rounded font-bold bg-gray-700 hover:bg-gray-600"
+          >
+            Waiting (<span id="countWaiting">0</span>)
+          </button>
+          <button 
+            id="filterPlaying" 
+            onclick="setFilter('playing')" 
+            class="flex-1 py-2 rounded font-bold bg-gray-700 hover:bg-gray-600"
+          >
+            In Progress (<span id="countPlaying">0</span>)
+          </button>
+        </div>
+
+        <!-- Room List -->
+        <div class="bg-gray-800 rounded-lg p-6">
+          <h3 class="text-xl font-bold mb-4">Available Games</h3>
+          <div id="roomList" class="space-y-3">
+            <!-- Rooms will be populated here -->
+          </div>
+          <div id="noRooms" class="hidden text-center py-12 text-gray-500">
+            <div class="text-6xl mb-4">🎴</div>
+            <div class="text-xl">No games available</div>
+            <div class="text-sm mt-2">Be the first to create one!</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Column: Online Users & Chat -->
+      <div class="space-y-4">
+        <!-- Online Users -->
+        <div class="bg-gray-800 rounded-lg p-4">
+          <h3 class="text-lg font-bold mb-3 flex items-center gap-2">
+            <span class="w-3 h-3 bg-green-500 rounded-full pulse-dot"></span>
+            Online Users
+          </h3>
+          <div id="onlineUsersList" class="space-y-2 max-h-64 overflow-y-auto">
+            <!-- Users will be populated here -->
+          </div>
+        </div>
+
+        <!-- Lobby Chat -->
+        <div class="bg-gray-800 rounded-lg p-4 flex flex-col" style="height: 500px;">
+          <h3 class="text-lg font-bold mb-3">💬 Lobby Chat</h3>
+          
+          <!-- Chat Messages -->
+          <div id="chatMessages" class="flex-1 overflow-y-auto space-y-2 mb-3 pr-2">
+            <!-- Messages will be populated here -->
+          </div>
+          
+          <!-- Chat Input -->
+          <form onsubmit="sendChatMessage(event)" class="flex gap-2">
+            <input 
+              type="text" 
+              id="chatInput"
+              placeholder="Type a message..."
+              class="flex-1 p-2 bg-gray-700 rounded border border-gray-600 text-white text-sm"
+              maxlength="200"
+              autocomplete="off"
+            />
+            <button 
+              type="submit"
+              class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-bold"
+            >
+              Send
+            </button>
+          </form>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // State
+    let socket = null;
+    let authToken = localStorage.getItem('coupAuthToken');
+    let currentUser = null;
+    let onlineUsers = [];
+    let rooms = [];
+    let currentFilter = 'all';
+
+    // Initialize
+    async function init() {
+      // Verify auth
+      if (authToken) {
+        const verification = await verifyAuthToken();
+        if (verification.success) {
+          currentUser = verification.user;
+          updateUserInfo();
+        }
+      }
+
+      // Set username
+      let username;
+      if (currentUser) {
+        // Authenticated user - use their username
+        username = currentUser.username;
+        // Clear any stored guest username since they're logged in
+        localStorage.removeItem('coupGuestUsername');
+      } else {
+        // Guest user - get or create persistent guest username
+        username = localStorage.getItem('coupGuestUsername');
+        if (!username) {
+          // Generate new guest username and store it
+          username = `Guest_${Math.random().toString(36).substr(2, 6)}`;
+          localStorage.setItem('coupGuestUsername', username);
+        }
+      }
+      
+      document.getElementById('currentUsername').textContent = username;
+
+      // Initialize socket
+      initSocket(username);
+    }
+
+    function updateUserInfo() {
+      if (currentUser) {
+        document.getElementById('logoutBtn').classList.remove('hidden');
+        if (currentUser.stats && currentUser.stats.elo_rating) {
+          const eloEl = document.getElementById('userElo');
+          eloEl.textContent = `⭐ Elo: ${currentUser.stats.elo_rating}`;
+          eloEl.classList.remove('hidden');
+        }
+      }
+    }
+
+    async function verifyAuthToken() {
+      try {
+        const response = await fetch('/api/verify', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: authToken })
+        });
+        
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        console.error('Verify error:', error);
+        return { success: false };
+      }
+    }
+
+    function initSocket(username) {
+      socket = io({
+        auth: {
+          token: authToken
+        }
+      });
+
+      socket.on('connect', () => {
+        console.log('Connected to server');
+        socket.emit('joinLobby', { username });
+      });
+
+      socket.on('disconnect', () => {
+        console.log('Disconnected from server');
+      });
+
+      socket.on('roomListUpdate', (data) => {
+        rooms = data.rooms;
+        updateRoomList();
+      });
+
+      socket.on('onlineUsersUpdate', (data) => {
+        onlineUsers = data.users;
+        updateOnlineUsers();
+      });
+
+      socket.on('lobbyChatMessage', (data) => {
+        addChatMessage(data);
+      });
+
+      socket.on('lobbySystemMessage', (data) => {
+        addSystemMessage(data.message);
+      });
+    }
+
+    function updateRoomList() {
+      const container = document.getElementById('roomList');
+      const noRooms = document.getElementById('noRooms');
+      
+      // Filter rooms
+      let filteredRooms = rooms;
+      if (currentFilter === 'waiting') {
+        filteredRooms = rooms.filter(r => r.state === 'lobby');
+      } else if (currentFilter === 'playing') {
+        filteredRooms = rooms.filter(r => r.state === 'playing');
+      }
+
+      // Update counts
+      document.getElementById('countAll').textContent = rooms.length;
+      document.getElementById('countWaiting').textContent = rooms.filter(r => r.state === 'lobby').length;
+      document.getElementById('countPlaying').textContent = rooms.filter(r => r.state === 'playing').length;
+      document.getElementById('activeGamesCount').textContent = rooms.length;
+
+      if (filteredRooms.length === 0) {
+        container.classList.add('hidden');
+        noRooms.classList.remove('hidden');
+        return;
+      }
+
+      container.classList.remove('hidden');
+      noRooms.classList.add('hidden');
+
+      container.innerHTML = filteredRooms.map(room => {
+        const isWaiting = room.state === 'lobby';
+        const isFull = room.playerCount >= 6;
+        const canJoin = isWaiting && !isFull;
+        const statusColor = isWaiting ? 'bg-green-600' : 'bg-blue-600';
+        const statusText = isWaiting ? 'Waiting for players' : 'Game in progress';
+
+        return `
+          <div class="room-item bg-gray-700 rounded-lg p-4 border-l-4 ${isWaiting ? 'border-green-500' : 'border-blue-500'}">
+            <div class="flex justify-between items-start mb-3">
+              <div>
+                <div class="flex items-center gap-2 mb-1">
+                  <span class="text-xl font-bold text-white">${room.code}</span>
+                  <span class="${statusColor} text-xs px-2 py-1 rounded">${statusText}</span>
+                </div>
+                <div class="text-sm text-gray-400">
+                  ${room.playerCount}/6 players
+                  ${room.spectatorCount > 0 ? `· ${room.spectatorCount} spectators` : ''}
+                </div>
+              </div>
+              <div class="flex gap-2">
+                ${canJoin ? `
+                  <button 
+                    onclick="joinRoom('${room.code}')" 
+                    class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold text-sm"
+                  >
+                    Join
+                  </button>
+                ` : isWaiting && isFull ? `
+                  <button 
+                    onclick="spectateRoom('${room.code}')" 
+                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-bold text-sm"
+                  >
+                    Spectate
+                  </button>
+                ` : `
+                  <button 
+                    onclick="spectateRoom('${room.code}')" 
+                    class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-bold text-sm"
+                  >
+                    Watch
+                  </button>
+                `}
+              </div>
+            </div>
+            
+            <!-- Room Settings -->
+            <div class="flex flex-wrap gap-2 text-xs">
+              ${room.useInquisitor ? '<span class="bg-purple-900 px-2 py-1 rounded">⚔️ Inquisitor</span>' : ''}
+              ${room.allowSpectators ? '<span class="bg-blue-900 px-2 py-1 rounded">👁️ Spectators</span>' : ''}
+              ${room.chatMode === 'unified' ? '<span class="bg-green-900 px-2 py-1 rounded">💬 Unified Chat</span>' : 
+                room.chatMode === 'separate' ? '<span class="bg-green-900 px-2 py-1 rounded">💬 Separate Chat</span>' : 
+                '<span class="bg-gray-600 px-2 py-1 rounded">🚫 No Chat</span>'}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function updateOnlineUsers() {
+      const container = document.getElementById('onlineUsersList');
+      document.getElementById('onlineCount').textContent = onlineUsers.length;
+
+      container.innerHTML = onlineUsers.map(user => {
+        const isAuth = user.isAuthenticated;
+        const statusIcon = user.inGame ? '🎮' : '💤';
+        const statusText = user.inGame ? 'In Game' : 'In Lobby';
+        
+        return `
+          <div class="online-user bg-gray-700 rounded p-2 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-lg">${statusIcon}</span>
+              <div>
+                <div class="font-semibold text-sm">${user.username}</div>
+                <div class="text-xs text-gray-400">${statusText}</div>
+              </div>
+            </div>
+            ${isAuth ? '<span class="text-xs text-green-500">⭐</span>' : '<span class="text-xs text-gray-500">👤</span>'}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function addChatMessage(data) {
+      const container = document.getElementById('chatMessages');
+      const messageEl = document.createElement('div');
+      messageEl.className = 'fade-in text-sm';
+      
+      const isAuth = data.isAuthenticated;
+      const badge = isAuth ? '<span class="text-green-500 text-xs">⭐</span>' : '';
+      
+      messageEl.innerHTML = `
+        <div class="bg-gray-700 rounded p-2">
+          <span class="font-bold text-blue-400">${data.username}</span>
+          ${badge}
+          <span class="text-gray-500 text-xs ml-2">${new Date(data.timestamp).toLocaleTimeString()}</span>
+          <div class="text-gray-200 mt-1">${escapeHtml(data.message)}</div>
+        </div>
+      `;
+      
+      container.appendChild(messageEl);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function addSystemMessage(message) {
+      const container = document.getElementById('chatMessages');
+      const messageEl = document.createElement('div');
+      messageEl.className = 'fade-in text-sm text-center';
+      
+      messageEl.innerHTML = `
+        <div class="bg-yellow-900 bg-opacity-30 rounded p-2 text-yellow-300">
+          ℹ️ ${escapeHtml(message)}
+        </div>
+      `;
+      
+      container.appendChild(messageEl);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function sendChatMessage(event) {
+      event.preventDefault();
+      
+      const input = document.getElementById('chatInput');
+      const message = input.value.trim();
+      
+      if (!message || !socket) return;
+      
+      socket.emit('lobbyChatMessage', { message });
+      input.value = '';
+    }
+
+    function setFilter(filter) {
+      currentFilter = filter;
+      
+      // Update button styles
+      ['filterAll', 'filterWaiting', 'filterPlaying'].forEach(id => {
+        const btn = document.getElementById(id);
+        if (id === `filter${filter.charAt(0).toUpperCase() + filter.slice(1)}` || 
+            (filter === 'all' && id === 'filterAll')) {
+          btn.className = 'flex-1 py-2 rounded font-bold bg-red-600';
+        } else {
+          btn.className = 'flex-1 py-2 rounded font-bold bg-gray-700 hover:bg-gray-600';
+        }
+      });
+      
+      updateRoomList();
+    }
+
+    function createNewRoom() {
+      window.location.href = '/';
+    }
+
+    function joinRoom(code) {
+      localStorage.setItem('coupJoinCode', code);
+      window.location.href = '/';
+    }
+
+    function spectateRoom(code) {
+      localStorage.setItem('coupJoinCode', code);
+      localStorage.setItem('coupJoinAsSpectator', 'true');
+      window.location.href = '/';
+    }
+
+    async function logout() {
+      authToken = null;
+      currentUser = null;
+      localStorage.removeItem('coupAuthToken');
+      localStorage.removeItem('currentUser');
+      window.location.reload();
+    }
+
+    // Event listeners
+    document.getElementById('logoutBtn').addEventListener('click', logout);
+
+    // Initialize on load
+    init();
+  </script>
+</body>
+</html>

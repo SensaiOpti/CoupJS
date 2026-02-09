@@ -164,9 +164,6 @@
     let currentUser = null;
     let authState = 'checking'; // 'checking', 'logged-out', 'logged-in'
 
-    // Deck preference
-    let deckPreference = localStorage.getItem('coupDeckPreference') || 'default';
-
     // Room preview state
     let previewRoomCode = '';
     let previewMode = false;
@@ -337,12 +334,12 @@
       // Update all sound buttons without re-rendering
       const soundButtons = document.querySelectorAll('.sound-toggle-btn');
       soundButtons.forEach(btn => {
-        btn.textContent = soundEnabled ? 'ðŸ”Š' : 'ðŸ”‡';
+        btn.textContent = soundEnabled ? '🔊' : '🔇';
       });
       
       const soundButtonsWithText = document.querySelectorAll('.sound-toggle-btn-text');
       soundButtonsWithText.forEach(btn => {
-        btn.textContent = soundEnabled ? 'ðŸ”Š Sound On' : 'ðŸ”‡ Sound Off';
+        btn.textContent = soundEnabled ? '🔊 Sound On' : '🔇 Sound Off';
       });
     }
 
@@ -830,7 +827,7 @@
         const button = document.getElementById('copyButton');
         if (button) {
           const originalText = button.innerHTML;
-          button.innerHTML = 'âœ“ Copied!';
+          button.innerHTML = '✓ Copied!';
           button.classList.add('bg-green-600');
           button.classList.remove('bg-gray-600');
           setTimeout(() => {
@@ -1032,11 +1029,6 @@
       }
     }
 
-    // Deck image path helper
-    function getCardImagePath(cardName) {
-      return `/images/cards/${deckPreference}/${cardName.toLowerCase()}.png`;
-    }
-
     async function verifyAuthToken() {
       if (!authToken) {
         authState = 'logged-out';
@@ -1056,12 +1048,6 @@
         if (data.success) {
           currentUser = data.user;
           authState = 'logged-in';
-          
-          // Load deck preference from user data
-          if (currentUser.deck_preference) {
-            deckPreference = currentUser.deck_preference;
-            localStorage.setItem('coupDeckPreference', deckPreference);
-          }
         } else {
           // Token invalid, clear it
           authToken = null;
@@ -1297,10 +1283,10 @@
               <div class="mt-6 p-4 bg-gray-700 rounded">
                 <h3 class="font-bold mb-2">Why create an account?</h3>
                 <ul class="text-sm text-gray-300 space-y-1">
-                  <li>ðŸ“Š Track your stats and Elo rating</li>
-                  <li>ðŸ† Compete on leaderboards</li>
-                  <li>ðŸ“ˆ View your match history</li>
-                  <li>â­ Build your reputation</li>
+                  <li>📊 Track your stats and Elo rating</li>
+                  <li>🏆 Compete on leaderboards</li>
+                  <li>📈 View your match history</li>
+                  <li>⭐ Build your reputation</li>
                 </ul>
               </div>
             </div>
@@ -1355,7 +1341,7 @@
                   onclick="backToAuthChoice()"
                   class="text-gray-400 hover:text-white"
                 >
-                  â† Back
+                  ← Back
                 </button>
               </div>
             </div>
@@ -1428,7 +1414,7 @@
                   onclick="backToAuthChoice()"
                   class="text-gray-400 hover:text-white"
                 >
-                  â† Back
+                  ← Back
                 </button>
               </div>
             </div>
@@ -1450,14 +1436,6 @@
                 <button onclick="toggleSound()" class="sound-toggle-btn bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
                   ${soundEnabled ? '🔊' : '🔇'}
                 </button>
-                ${currentUser ? `
-                  <a href="/profile.html?user=${currentUser.username}" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded text-sm">
-                    👤 Profile
-                  </a>
-                ` : ''}
-                <a href="/leaderboards.html" class="bg-purple-700 hover:bg-purple-600 px-4 py-2 rounded text-sm">
-                  🏆 Leaderboards
-                </a>
                 <a href="/rules.html" target="_blank" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">
                   📖 Rules
                 </a>
@@ -1472,24 +1450,15 @@
                     <div class="text-2xl font-bold text-red-400">${currentUser.username}</div>
                     ${eloRating ? `<div class="text-sm text-yellow-500">⭐ Elo: ${eloRating}</div>` : ''}
                   </div>
-                  <div class="flex gap-2">
-                    <a
-                      href="/profile.html?user=${currentUser.username}"
-                      class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded text-sm"
-                    >
-                      👤 Profile
-                    </a>
-                    <button
-                      onclick="logout()"
-                      class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm"
-                    >
-                      Logout
-                    </button>
-                  </div>
+                  <button
+                    onclick="logout()"
+                    class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm"
+                  >
+                    Logout
+                  </button>
                 </div>
               </div>
             ` : ''}
-            
             
             <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
               ${!currentUser ? `
@@ -1560,20 +1529,10 @@
 
               <button
                 onclick="previewRoom()"
-                class="w-full bg-blue-600 hover:bg-blue-700 p-4 rounded text-xl font-bold mb-4"
+                class="w-full bg-blue-600 hover:bg-blue-700 p-4 rounded text-xl font-bold"
               >
                 Join Room
               </button>
-              
-              <div class="text-center text-gray-400 my-4">- OR -</div>
-              
-              <a
-                href="/lobby.html"
-                class="w-full bg-green-600 hover:bg-green-700 p-4 rounded text-xl font-bold block text-center"
-              >
-                🎮 Go to Game Lobby
-              </a>
-              <p class="text-center text-sm text-gray-400 mt-2">Browse active games • Chat with players • Join instantly</p>
             </div>
           </div>
         </div>
@@ -1591,7 +1550,7 @@
               <h1 class="text-3xl font-bold text-red-500">COUP</h1>
               <div class="flex gap-3">
                 <button onclick="toggleSound()" class="sound-toggle-btn bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
-                  ${soundEnabled ? 'ðŸ”Š' : 'ðŸ”‡'}
+                  ${soundEnabled ? '🔊' : '🔇'}
                 </button>
                 <button onclick="${previewMode ? 'cancelPreview' : 'leaveRoom'}()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
                   ${previewMode ? 'Cancel' : 'Leave Room'}
@@ -1609,15 +1568,15 @@
                     onclick="copyRoomCode()" 
                     class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded text-sm font-bold transition-colors"
                   >
-                    ðŸ“‹ Copy
+                    📋 Copy
                   </button>
                 </div>
                 <p class="text-sm text-gray-500 mt-2">${previewMode ? 'Preview - Not yet joined' : 'Share this code with your friends'}</p>
-                ${roomIsPlaying ? '<p class="text-sm text-yellow-500 mt-2">âš ï¸ Game in progress</p>' : ''}
+                ${roomIsPlaying ? '<p class="text-sm text-yellow-500 mt-2">⚠️ Game in progress</p>' : ''}
                 <div class="flex gap-2 justify-center mt-2 flex-wrap">
-                  ${useInquisitor ? '<p class="text-sm text-yellow-500">âœ“ Using Inquisitor</p>' : ''}
-                  ${allowSpectators ? '<p class="text-sm text-blue-500">âœ“ Spectators Allowed</p>' : ''}
-                  ${chatMode === 'unified' ? '<p class="text-sm text-green-500">ðŸ’¬ Unified Chat</p>' : chatMode === 'separate' ? '<p class="text-sm text-green-500">ðŸ’¬ Separate Chats</p>' : '<p class="text-sm text-gray-500">ðŸ’¬ Chat Disabled</p>'}
+                  ${useInquisitor ? '<p class="text-sm text-yellow-500">✓ Using Inquisitor</p>' : ''}
+                  ${allowSpectators ? '<p class="text-sm text-blue-500">✓ Spectators Allowed</p>' : ''}
+                  ${chatMode === 'unified' ? '<p class="text-sm text-green-500">💬 Unified Chat</p>' : chatMode === 'separate' ? '<p class="text-sm text-green-500">💬 Separate Chats</p>' : '<p class="text-sm text-gray-500">💬 Chat Disabled</p>'}
                 </div>
               </div>
               
@@ -1643,7 +1602,7 @@
                         <div class="bg-gray-700 p-3 rounded flex items-center justify-between">
                           <div class="flex items-center gap-2">
                             <span>${player.name}</span>
-                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">â­ USER</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">ðŸ‘¤ GUEST</span>`}
+                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">⭐ USER</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">👤 GUEST</span>`}
                             ${isAuth && eloRating ? `<span class="text-xs text-yellow-400">Elo: ${eloRating}</span>` : ''}
                           </div>
                           ${player.isMe ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">YOU</span>' : ''}
@@ -1753,11 +1712,11 @@
             <div class="flex justify-between items-center mb-6">
               <div class="flex items-center gap-4">
                 <h1 class="text-3xl font-bold text-red-500">COUP</h1>
-                ${isSpectator ? '<span class="bg-blue-600 px-3 py-1 rounded text-sm">ðŸ‘ï¸ SPECTATING</span>' : ''}
+                ${isSpectator ? '<span class="bg-blue-600 px-3 py-1 rounded text-sm">👁️ SPECTATING</span>' : ''}
               </div>
               <div class="flex gap-4 items-center">
                 <button onclick="toggleSound()" class="sound-toggle-btn-text bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm flex items-center gap-2">
-                  ${soundEnabled ? 'ðŸ”Š Sound On' : 'ðŸ”‡ Sound Off'}
+                  ${soundEnabled ? '🔊 Sound On' : '🔇 Sound Off'}
                 </button>
                 <div class="text-gray-400">Room: ${roomCode}</div>
                 <button onclick="leaveRoom()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">
@@ -1781,17 +1740,17 @@
                             <h3 class="font-bold text-lg">
                               ${player.name}
                               ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
-                              ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">âš ï¸ DISCONNECTED</span>' : ''}
+                              ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
                             </h3>
                           </div>
                           <div class="flex items-center gap-2 flex-wrap">
-                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">â­</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">ðŸ‘¤</span>`}
+                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">⭐</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">👤</span>`}
                             ${isAuth && eloRating ? `<span class="text-xs text-yellow-400 font-semibold">${eloRating}</span>` : ''}
                             ${player.id === currentPlayerId ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">TURN</span>' : ''}
                           </div>
                         </div>
                         <div class="flex items-center gap-1 text-yellow-500">
-                          <span>ðŸ’°</span>
+                          <span>💰</span>
                           <span class="font-bold">${player.coins}</span>
                         </div>
                       </div>
@@ -1806,15 +1765,15 @@
                           return `
                             <div class="relative flex-1 ${influence.revealed ? 'bg-red-900 border-2 border-red-600 card-reveal' : 'bg-gray-700'} rounded p-2 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
                               ${influence.revealed ? `
-                                <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded opacity-50" />
+                                <img src="/images/cards/${cardName}.png" alt="${influence.card}" class="w-full h-auto rounded opacity-50" />
                                 <div class="absolute inset-0 flex items-center justify-center">
                                   <div class="text-xs font-bold text-red-300 bg-red-900 bg-opacity-90 px-2 py-1 rounded">LOST</div>
                                 </div>
                               ` : shouldShowCard ? `
-                                <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded" />
-                                ${isSpectator && spectatorRevealed ? '<div class="absolute top-1 right-1 text-blue-400 text-xs">ðŸ‘ï¸</div>' : ''}
+                                <img src="/images/cards/${cardName}.png" alt="${influence.card}" class="w-full h-auto rounded" />
+                                ${isSpectator && spectatorRevealed ? '<div class="absolute top-1 right-1 text-blue-400 text-xs">👁️</div>' : ''}
                               ` : `
-                                <img src="${getCardImagePath('back')}" alt="Hidden card" class="w-full h-auto rounded" />
+                                <img src="/images/cards/back.png" alt="Hidden card" class="w-full h-auto rounded" />
                                 ${isSpectator ? '<div class="absolute bottom-1 left-0 right-0 text-xs text-gray-400 text-center">Click to peek</div>' : ''}
                               `}
                             </div>
@@ -1831,7 +1790,7 @@
                       <h3 class="text-xl font-bold text-yellow-300">Action in Progress</h3>
                       ${actionInProgress.pausedForDisconnection ? `
                         <div class="bg-yellow-800 px-4 py-2 rounded-lg">
-                          <span class="text-sm text-yellow-200">â¸ï¸ Paused - Waiting for reconnection</span>
+                          <span class="text-sm text-yellow-200">⏸️ Paused - Waiting for reconnection</span>
                         </div>
                       ` : countdown !== null ? `
                         <div class="flex flex-col items-end gap-1">
@@ -1851,7 +1810,7 @@
                     
                     ${myResponse ? `
                       <div class="bg-green-900 border border-green-600 rounded p-4 text-center">
-                        <div class="text-green-300 font-bold mb-2">âœ“ Response Recorded</div>
+                        <div class="text-green-300 font-bold mb-2">✓ Response Recorded</div>
                         <div class="text-green-200 text-sm">Waiting for other players...</div>
                       </div>
                     ` : `
@@ -1887,7 +1846,7 @@
                       <h3 class="text-xl font-bold text-blue-300">Block Declared</h3>
                       ${actionInProgress.pausedForDisconnection ? `
                         <div class="bg-blue-800 px-4 py-2 rounded-lg">
-                          <span class="text-sm text-blue-200">â¸ï¸ Paused - Waiting for reconnection</span>
+                          <span class="text-sm text-blue-200">⏸️ Paused - Waiting for reconnection</span>
                         </div>
                       ` : countdown !== null ? `
                         <div class="flex flex-col items-end gap-1">
@@ -1909,7 +1868,7 @@
                     
                     ${myResponse ? `
                       <div class="bg-green-900 border border-green-600 rounded p-4 text-center">
-                        <div class="text-green-300 font-bold mb-2">âœ“ Response Recorded</div>
+                        <div class="text-green-300 font-bold mb-2">✓ Response Recorded</div>
                         <div class="text-green-200 text-sm">Waiting for other players...</div>
                       </div>
                     ` : `
@@ -1936,7 +1895,7 @@
                             onclick="revealInfluence(${idx})" 
                             class="bg-red-600 hover:bg-red-700 p-4 rounded text-center flex-1 max-w-xs"
                           >
-                            <img src="${getCardImagePath(influence.card)}" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
+                            <img src="/images/cards/${influence.card.toLowerCase()}.png" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
                             <div class="text-sm font-bold">Reveal this card</div>
                           </button>
                         ` : ''}
@@ -1961,9 +1920,9 @@
                               : 'bg-gray-700 hover:bg-gray-600'
                           }"
                         >
-                          <img src="${getCardImagePath(cardName)}" alt="${card.card || card}" class="w-full h-auto rounded mb-2" />
+                          <img src="/images/cards/${cardName}.png" alt="${card.card || card}" class="w-full h-auto rounded mb-2" />
                           <div class="text-sm font-bold">
-                            ${selectedExchangeCards.includes(idx) ? 'âœ“ Keep' : 'Click to keep'}
+                            ${selectedExchangeCards.includes(idx) ? '✓ Keep' : 'Click to keep'}
                           </div>
                         </button>
                       `}).join('')}
@@ -1994,7 +1953,7 @@
                             onclick="showCardToExaminer(${idx})" 
                             class="bg-yellow-600 hover:bg-yellow-700 p-4 rounded text-center flex-1 max-w-xs"
                           >
-                            <img src="${getCardImagePath(influence.card)}" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
+                            <img src="/images/cards/${influence.card.toLowerCase()}.png" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
                             <div class="text-sm font-bold">Show this card</div>
                           </button>
                         ` : ''}
@@ -2009,7 +1968,7 @@
                     ${myPlayer.examinedCard ? `
                       <p class="mb-4 text-purple-100">You see one of ${examineTarget.name}'s cards:</p>
                       <div class="bg-purple-800 rounded p-4 mb-4 text-center card-reveal max-w-xs mx-auto">
-                        <img src="${getCardImagePath(myPlayer.examinedCard)}" alt="${myPlayer.examinedCard}" class="w-full h-auto rounded" />
+                        <img src="/images/cards/${myPlayer.examinedCard.toLowerCase()}.png" alt="${myPlayer.examinedCard}" class="w-full h-auto rounded" />
                       </div>
                       <p class="mb-4 text-purple-100">Do you want to force ${examineTarget.name} to exchange this card for a new one from the deck?</p>
                       <div class="flex gap-3">
@@ -2046,7 +2005,7 @@
                           ${players.filter(p => p.id !== myPlayerId && p.alive).map(player => `
                             <button onclick="performAction('${selectedTarget}', '${player.id}')" 
                               class="bg-gray-600 hover:bg-gray-500 p-3 rounded ${player.disconnected ? 'opacity-75' : ''}">
-                              ${player.name} (${player.coins} ðŸ’°)${player.disconnected ? ' âš ï¸' : ''}
+                              ${player.name} (${player.coins} 💰)${player.disconnected ? ' ⚠️' : ''}
                             </button>
                           `).join('')}
                         </div>
@@ -2055,13 +2014,13 @@
                     
                     <div class="grid grid-cols-2 gap-3">
                       <button onclick="performAction('income')" class="bg-green-600 hover:bg-green-700 p-3 rounded">
-                        Income (+1 ðŸ’°)
+                        Income (+1 💰)
                       </button>
                       <button onclick="performAction('foreignAid')" class="bg-blue-600 hover:bg-blue-700 p-3 rounded">
-                        Foreign Aid (+2 ðŸ’°)
+                        Foreign Aid (+2 💰)
                       </button>
                       <button onclick="performAction('tax')" class="bg-purple-600 hover:bg-purple-700 p-3 rounded">
-                        Tax - Duke (+3 ðŸ’°)
+                        Tax - Duke (+3 💰)
                       </button>
                       <button onclick="selectedTarget = 'steal'; render()" class="bg-orange-600 hover:bg-orange-700 p-3 rounded">
                         Steal - Captain
@@ -2077,12 +2036,12 @@
                       <button onclick="selectedTarget = 'assassinate'; render()" 
                         class="bg-red-600 hover:bg-red-700 p-3 rounded ${myPlayer.coins < 3 ? 'opacity-50 cursor-not-allowed' : ''}"
                         ${myPlayer.coins < 3 ? 'disabled' : ''}>
-                        Assassinate (3 ðŸ’°)
+                        Assassinate (3 💰)
                       </button>
                       <button onclick="selectedTarget = 'coup'; render()" 
                         class="bg-red-900 hover:bg-red-950 p-3 rounded ${!useInquisitor ? 'col-span-2' : ''} ${myPlayer.coins < 7 ? 'opacity-50 cursor-not-allowed' : ''}"
                         ${myPlayer.coins < 7 ? 'disabled' : ''}>
-                        Coup (7 ðŸ’°)
+                        Coup (7 💰)
                       </button>
                     </div>
                     
@@ -2109,12 +2068,12 @@
                   </div>
                 ` : !isMyTurn && !canIRespond && !canIChallengeBlock && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && actionInProgress && actionInProgress.pausedForDisconnection && myPlayer?.alive && !isSpectator ? `
                   <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
-                    <h3 class="text-xl font-bold mb-4 text-yellow-300">â¸ï¸ Action Paused</h3>
+                    <h3 class="text-xl font-bold mb-4 text-yellow-300">⏸️ Action Paused</h3>
                     <p class="text-yellow-100">Waiting for disconnected player(s) to reconnect...</p>
                   </div>
                 ` : !isMyTurn && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && !actionInProgress && myPlayer?.alive && !isSpectator && players[currentPlayerId]?.disconnected ? `
                   <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
-                    <h3 class="text-xl font-bold mb-4 text-yellow-300">âš ï¸ Game Paused</h3>
+                    <h3 class="text-xl font-bold mb-4 text-yellow-300">⚠️ Game Paused</h3>
                     <p class="text-yellow-100">${players.find(p => p.id === currentPlayerId)?.name} is disconnected</p>
                     <p class="text-yellow-200 text-sm mt-2">Waiting for them to reconnect...</p>
                   </div>
@@ -2122,7 +2081,7 @@
 
                 ${isSpectator ? `
                   <div class="bg-blue-900 border-2 border-blue-600 rounded-lg p-6 text-center">
-                    <div class="text-2xl mb-2">ðŸ‘ï¸</div>
+                    <div class="text-2xl mb-2">👁️</div>
                     <div class="text-xl font-bold text-blue-300 mb-2">Spectating</div>
                     <div class="text-blue-200 text-sm">You're watching the game</div>
                   </div>
@@ -2190,7 +2149,7 @@
                     <div class="space-y-2">
                       ${spectators.map(spectator => `
                         <div class="text-sm text-gray-300 flex items-center gap-2">
-                          <span class="text-blue-500">ðŸ‘ï¸</span>
+                          <span class="text-blue-500">👁️</span>
                           <span>${spectator.name}</span>
                           ${spectator.isMe ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded ml-auto">YOU</span>' : ''}
                         </div>
@@ -2229,51 +2188,6 @@
       
       // Then initialize socket
       initSocket();
-      
-      // Check if coming from lobby with a join code
-      const lobbyJoinCode = localStorage.getItem('coupJoinCode');
-      const joinAsSpectator = localStorage.getItem('coupJoinAsSpectator') === 'true';
-      
-      if (lobbyJoinCode) {
-        // Clear the stored values
-        localStorage.removeItem('coupJoinCode');
-        localStorage.removeItem('coupJoinAsSpectator');
-        
-        // Set the join code and trigger preview
-        joinCode = lobbyJoinCode;
-        
-        // Wait for socket to connect
-        const checkSocket = setInterval(() => {
-          if (socket && socket.connected) {
-            clearInterval(checkSocket);
-            
-            // Auto-preview the room
-            socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
-              if (response.success) {
-                previewMode = true;
-                previewRoomCode = lobbyJoinCode;
-                previewData = response.roomData;
-                players = previewData.players;
-                spectators = previewData.spectators;
-                useInquisitor = previewData.useInquisitor;
-                allowSpectators = previewData.allowSpectators;
-                chatMode = previewData.chatMode || 'separate';
-                gameState = 'lobby';
-                render();
-                
-                // Auto-join or spectate
-                if (joinAsSpectator) {
-                  setTimeout(() => joinAsSpectator(), 500);
-                } else {
-                  setTimeout(() => joinAsPlayer(), 500);
-                }
-              } else {
-                alert('Room not found: ' + lobbyJoinCode);
-              }
-            });
-          }
-        }, 100);
-      }
     };
   </script>
 </body>

@@ -146,7 +146,7 @@
     let actionInProgress = null;
     let gameLog = [];
     let selectedTarget = null;
-    let playerName = '';
+    let playerName = localStorage.getItem('coupGuestName') || '';
     let joinCode = '';
     let myResponse = null;
     let countdown = null;
@@ -567,34 +567,48 @@
         // Use authenticated username
         name = currentUser.username;
       } else {
-        // Guest mode - require display name
+        // Guest mode - try DOM input first, then localStorage fallback
         const nameInput = document.getElementById('playerName');
-        if (!nameInput) {
-          alert('Please enter your name');
-          return;
-        }
-        name = nameInput.value.trim();
-        if (!name) {
-          alert('Please enter your name');
-          return;
+        if (nameInput && nameInput.value.trim()) {
+          name = nameInput.value.trim();
+        } else {
+          // Coming from create-game.html redirect - use stored name or generate one
+          name = localStorage.getItem('coupGuestName') || playerName || `Guest${Math.floor(Math.random() * 9999)}`;
         }
         playerName = name;
       }
       
-      const inquisitorCheckbox = document.getElementById('useInquisitor');
-      useInquisitor = inquisitorCheckbox ? inquisitorCheckbox.checked : false;
-
-      const spectatorsCheckbox = document.getElementById('allowSpectators');
-      allowSpectators = spectatorsCheckbox ? spectatorsCheckbox.checked : true;
+      // Read game settings from localStorage (set by create-game.html)
+      const settingsJSON = localStorage.getItem('coupGameSettings');
+      let settings = {
+        useInquisitor: false,
+        allowSpectators: true,
+        chatMode: 'separate',
+        password: null,
+        ranked: true
+      };
       
-      const chatModeSelect = document.getElementById('chatMode');
-      const chatMode = chatModeSelect ? chatModeSelect.value : 'separate';
+      if (settingsJSON) {
+        try {
+          settings = JSON.parse(settingsJSON);
+          // Clear settings after reading
+          localStorage.removeItem('coupGameSettings');
+        } catch (e) {
+          console.error('Error parsing game settings:', e);
+        }
+      }
+      
+      useInquisitor = settings.useInquisitor;
+      allowSpectators = settings.allowSpectators;
+      chatMode = settings.chatMode;
       
       socket.emit('createRoom', { 
         playerName: name, 
-        useInquisitor, 
-        allowSpectators,
-        chatMode,
+        useInquisitor: settings.useInquisitor, 
+        allowSpectators: settings.allowSpectators,
+        chatMode: settings.chatMode,
+        password: settings.password,
+        ranked: settings.ranked,
         persistentPlayerId: getOrCreatePlayerId()
       }, (response) => {
         if (response.success) {
@@ -653,10 +667,14 @@
     }
 
     function joinAsPlayer() {
+      const password = localStorage.getItem('coupRoomPassword');
+      const name = currentUser ? currentUser.username : playerName;
+      
       socket.emit('joinRoom', { 
         roomCode: previewRoomCode, 
-        playerName: playerName, 
+        playerName: name, 
         asSpectator: false,
+        password: password,
         persistentPlayerId: getOrCreatePlayerId()
       }, (response) => {
         if (response.success) {
@@ -666,21 +684,30 @@
           previewRoomCode = '';
           previewData = null;
           
+          // Clear password from storage
+          localStorage.removeItem('coupRoomPassword');
+          
           if (!isSpectator) {
             localStorage.setItem('coupCurrentRoom', roomCode);
             localStorage.setItem('coupIsSpectator', 'false');
           }
         } else {
           alert(response.error);
+          // Clear password on error
+          localStorage.removeItem('coupRoomPassword');
         }
       });
     }
 
     function joinAsSpectator() {
+      const password = localStorage.getItem('coupRoomPassword');
+      const name = currentUser ? currentUser.username : playerName;
+      
       socket.emit('joinRoom', { 
         roomCode: previewRoomCode, 
-        playerName: playerName, 
-        asSpectator: true 
+        playerName: name, 
+        asSpectator: true,
+        password: password
       }, (response) => {
         if (response.success) {
           roomCode = previewRoomCode;
@@ -688,8 +715,13 @@
           previewMode = false;
           previewRoomCode = '';
           previewData = null;
+          
+          // Clear password from storage
+          localStorage.removeItem('coupRoomPassword');
         } else {
           alert(response.error);
+          // Clear password on error
+          localStorage.removeItem('coupRoomPassword');
         }
       });
     }
@@ -1027,7 +1059,13 @@
 
     async function verifyAuthToken() {
       if (!authToken) {
-        authState = 'logged-out';
+        // If coming from lobby to join/create a game, skip auth and proceed as guest
+        const hasDestination = localStorage.getItem('coupJoinCode') || localStorage.getItem('coupGameSettings');
+        if (hasDestination) {
+          authState = 'logged-in'; // treat as guest, currentUser stays null
+        } else {
+          authState = 'logged-out';
+        }
         render();
         return;
       }
@@ -2214,12 +2252,10 @@
       
       // Check if coming from lobby with a join code
       const lobbyJoinCode = localStorage.getItem('coupJoinCode');
-      const joinAsSpectator = localStorage.getItem('coupJoinAsSpectator') === 'true';
       
       if (lobbyJoinCode) {
-        // Clear the stored values
+        // Clear the stored value
         localStorage.removeItem('coupJoinCode');
-        localStorage.removeItem('coupJoinAsSpectator');
         
         // Set the join code and trigger preview
         joinCode = lobbyJoinCode;
@@ -2242,21 +2278,22 @@
                 chatMode = previewData.chatMode || 'separate';
                 gameState = 'lobby';
                 render();
-                
-                // Auto-join or spectate
-                if (joinAsSpectator) {
-                  setTimeout(() => joinAsSpectator(), 500);
-                } else {
-                  setTimeout(() => joinAsPlayer(), 500);
-                }
               } else {
                 alert('Room not found: ' + lobbyJoinCode);
               }
             });
           }
         }, 100);
+      } else if (localStorage.getItem('coupGameSettings')) {
+        // Coming from create-game.html - auto-create the room
+        const checkSocket = setInterval(() => {
+          if (socket && socket.connected) {
+            clearInterval(checkSocket);
+            createRoom();
+          }
+        }, 100);
       } else {
-        // No join code - redirect back to lobby
+        // No join code or settings - redirect back to lobby
         window.location.href = '/lobby.html';
       }
     };

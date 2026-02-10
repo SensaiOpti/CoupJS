@@ -524,12 +524,23 @@
     }
 
     function createNewRoom() {
+      // Store guest name so game.html can use it during auto-create
+      const guestName = localStorage.getItem('coupGuestUsername');
+      if (guestName) {
+        localStorage.setItem('coupGuestName', guestName);
+      }
       window.location.href = '/create-game.html';
     }
 
     function joinRoom(code) {
+      // Store guest name so game.html can use it
+      const guestName = localStorage.getItem('coupGuestUsername');
+      if (guestName) {
+        localStorage.setItem('coupGuestName', guestName);
+      }
+      
       // Check if room requires password
-      const room = availableRooms.find(r => r.code === code);
+      const room = rooms.find(r => r.code === code);
       if (room && room.hasPassword) {
         const password = prompt('🔒 This room is password protected.\n\nEnter password:');
         if (!password) {
@@ -545,8 +556,14 @@
     }
 
     function spectateRoom(code) {
+      // Store guest name so game.html can use it
+      const guestName = localStorage.getItem('coupGuestUsername');
+      if (guestName) {
+        localStorage.setItem('coupGuestName', guestName);
+      }
+      
       // Check if room requires password
-      const room = availableRooms.find(r => r.code === code);
+      const room = rooms.find(r => r.code === code);
       if (room && room.hasPassword) {
         const password = prompt('🔒 This room is password protected.\n\nEnter password:');
         if (!password) {
@@ -558,7 +575,6 @@
       }
       
       localStorage.setItem('coupJoinCode', code);
-      localStorage.setItem('coupJoinAsSpectator', 'true');
       window.location.href = '/game.html';
     }
 

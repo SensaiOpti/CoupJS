@@ -77,6 +77,9 @@
         <a href="/rules.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
           📖 Rules
         </a>
+        <a href="/login.html" id="loginBtn" class="hidden bg-green-700 hover:bg-green-600 px-4 py-2 rounded">
+          🔑 Login
+        </a>
         <button id="logoutBtn" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded">
           Logout
         </button>
@@ -211,14 +214,27 @@
 
     // Initialize
     async function init() {
+      // Check if this is a first-time visitor (not logged in, no guest flag, no stored username)
+      const hasGuestUsername = localStorage.getItem('coupGuestUsername');
+      const choseGuestMode = sessionStorage.getItem('coupChoseGuestMode');
+      
+      // If not authenticated AND not a returning guest AND didn't explicitly choose guest mode
+      if (!authToken && !hasGuestUsername && !choseGuestMode) {
+        // First-time visitor - redirect to login page
+        window.location.href = '/login.html';
+        return;
+      }
+      
       // Verify auth
       if (authToken) {
         const verification = await verifyAuthToken();
         if (verification.success) {
           currentUser = verification.user;
-          updateUserInfo();
         }
       }
+      
+      // Update user info (show/hide login/logout buttons)
+      updateUserInfo();
 
       // Set username
       let username;
@@ -227,6 +243,7 @@
         username = currentUser.username;
         // Clear any stored guest username since they're logged in
         localStorage.removeItem('coupGuestUsername');
+        sessionStorage.removeItem('coupChoseGuestMode');
       } else {
         // Guest user - get or create persistent guest username
         username = localStorage.getItem('coupGuestUsername');
@@ -245,12 +262,18 @@
 
     function updateUserInfo() {
       if (currentUser) {
+        // Authenticated user: show logout, hide login
         document.getElementById('logoutBtn').classList.remove('hidden');
+        document.getElementById('loginBtn').classList.add('hidden');
         if (currentUser.stats && currentUser.stats.elo_rating) {
           const eloEl = document.getElementById('userElo');
           eloEl.textContent = `⭐ Elo: ${currentUser.stats.elo_rating}`;
           eloEl.classList.remove('hidden');
         }
+      } else {
+        // Guest user: show login, hide logout
+        document.getElementById('loginBtn').classList.remove('hidden');
+        document.getElementById('logoutBtn').classList.add('hidden');
       }
     }
 
@@ -282,8 +305,19 @@
         socket.emit('joinLobby', { username });
       });
 
-      socket.on('disconnect', () => {
-        console.log('Disconnected from server');
+      socket.on('disconnect', (reason) => {
+        console.log('Disconnected from server:', reason);
+        
+        // If disconnect was intentional (user closed tab), don't show error
+        if (reason === 'io client disconnect' || reason === 'transport close') {
+          console.log('Clean disconnect');
+        }
+      });
+
+      socket.on('reconnect', (attemptNumber) => {
+        console.log('Reconnected after', attemptNumber, 'attempts');
+        // Rejoin lobby after reconnection
+        socket.emit('joinLobby', { username });
       });
 
       socket.on('roomListUpdate', (data) => {
@@ -292,6 +326,7 @@
       });
 
       socket.on('onlineUsersUpdate', (data) => {
+        console.log('Online users update received:', data.users.length, 'users');
         onlineUsers = data.users;
         updateOnlineUsers();
       });
@@ -380,6 +415,8 @@
             
             <!-- Room Settings -->
             <div class="flex flex-wrap gap-2 text-xs">
+              ${room.hasPassword ? '<span class="bg-red-900 px-2 py-1 rounded">🔒 Password</span>' : ''}
+              ${!room.ranked ? '<span class="bg-gray-600 px-2 py-1 rounded">🎮 Unranked</span>' : '<span class="bg-yellow-900 px-2 py-1 rounded">🏆 Ranked</span>'}
               ${room.useInquisitor ? '<span class="bg-purple-900 px-2 py-1 rounded">⚔️ Inquisitor</span>' : ''}
               ${room.allowSpectators ? '<span class="bg-blue-900 px-2 py-1 rounded">👁️ Spectators</span>' : ''}
               ${room.chatMode === 'unified' ? '<span class="bg-green-900 px-2 py-1 rounded">💬 Unified Chat</span>' : 
@@ -487,18 +524,42 @@
     }
 
     function createNewRoom() {
-      window.location.href = '/';
+      window.location.href = '/create-game.html';
     }
 
     function joinRoom(code) {
+      // Check if room requires password
+      const room = availableRooms.find(r => r.code === code);
+      if (room && room.hasPassword) {
+        const password = prompt('🔒 This room is password protected.\n\nEnter password:');
+        if (!password) {
+          return; // User cancelled
+        }
+        localStorage.setItem('coupRoomPassword', password);
+      } else {
+        localStorage.removeItem('coupRoomPassword');
+      }
+      
       localStorage.setItem('coupJoinCode', code);
-      window.location.href = '/';
+      window.location.href = '/game.html';
     }
 
     function spectateRoom(code) {
+      // Check if room requires password
+      const room = availableRooms.find(r => r.code === code);
+      if (room && room.hasPassword) {
+        const password = prompt('🔒 This room is password protected.\n\nEnter password:');
+        if (!password) {
+          return; // User cancelled
+        }
+        localStorage.setItem('coupRoomPassword', password);
+      } else {
+        localStorage.removeItem('coupRoomPassword');
+      }
+      
       localStorage.setItem('coupJoinCode', code);
       localStorage.setItem('coupJoinAsSpectator', 'true');
-      window.location.href = '/';
+      window.location.href = '/game.html';
     }
 
     async function logout() {
@@ -511,6 +572,14 @@
 
     // Event listeners
     document.getElementById('logoutBtn').addEventListener('click', logout);
+
+    // Cleanup on page close/navigation
+    window.addEventListener('beforeunload', () => {
+      if (socket && socket.connected) {
+        socket.emit('leaveLobby');
+        socket.disconnect();
+      }
+    });
 
     // Initialize on load
     init();

@@ -934,20 +934,8 @@
       localStorage.removeItem('coupCurrentRoom');
       localStorage.removeItem('coupIsSpectator');
       
-      stopCountdown();
-      gameState = 'menu';
-      roomCode = '';
-      previewRoomCode = '';
-      previewMode = false;
-      previewData = null;
-      players = [];
-      spectators = [];
-      actionInProgress = null;
-      gameLog = [];
-      selectedTarget = null;
-      isSpectator = false;
-      spectatorRevealedCards = {};
-      render();
+      // Redirect back to lobby
+      window.location.href = '/lobby.html';
     }
 
     function sendChatMessage(event) {
@@ -1161,13 +1149,7 @@
     }
 
     function cancelPreview() {
-      gameState = 'menu';
-      previewRoomCode = '';
-      previewMode = false;
-      previewData = null;
-      players = [];
-      spectators = [];
-      render();
+      window.location.href = '/lobby.html';
     }
 
     function startCountdown(seconds) {
@@ -2273,6 +2255,9 @@
             });
           }
         }, 100);
+      } else {
+        // No join code - redirect back to lobby
+        window.location.href = '/lobby.html';
       }
     };
   </script>

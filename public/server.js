@@ -127,6 +127,11 @@ app.get('/lobby.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'lobby.html'));
 });
 
+// Serve the create game page
+app.get('/create-game.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'create-game.html'));
+});
+
 // Game state storage
 const rooms = new Map();
 const disconnectionTimers = new Map(); // Map of playerId -> timeout
@@ -177,6 +182,8 @@ function createRoom(roomCode, options = {}) {
     useInquisitor: options.useInquisitor || false,
     allowSpectators: options.allowSpectators !== false, // Default to true
     chatMode: options.chatMode || 'separate', // Default to separate
+    password: options.password || null, // Optional password protection
+    ranked: options.ranked !== false, // Default to ranked (true)
     gameStartTime: null, // Track when game starts
     gameEndTime: null // Track when game ends
   };
@@ -239,6 +246,8 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     useInquisitor: room.useInquisitor,
     allowSpectators: room.allowSpectators,
     chatMode: room.chatMode,
+    hasPassword: !!room.password, // Only expose if password exists, not the actual password
+    ranked: room.ranked,
     deckSize: room.deck.length,
     isSpectator: isSpectator,
     players: room.players.map(p => ({
@@ -1340,6 +1349,12 @@ function saveGameResults(room) {
       return;
     }
     
+    // Skip stats for unranked games
+    if (room.ranked === false) {
+      console.log(`Game ${room.code} was unranked - not saving stats`);
+      return;
+    }
+    
     const duration = Math.floor((room.gameEndTime - room.gameStartTime) / 1000); // seconds
     const winner = room.players.find(p => p.id === room.winnerId);
     
@@ -2400,7 +2415,9 @@ function broadcastRoomList() {
     spectatorCount: room.spectators.length,
     useInquisitor: room.useInquisitor,
     allowSpectators: room.allowSpectators,
-    chatMode: room.chatMode
+    chatMode: room.chatMode,
+    hasPassword: !!room.password,
+    ranked: room.ranked
   }));
   
   lobbySockets.forEach((userData, socketId) => {
@@ -2474,7 +2491,9 @@ io.on('connection', (socket) => {
     const room = createRoom(roomCode, { 
       useInquisitor: data.useInquisitor || false,
       allowSpectators: data.allowSpectators !== false, // Default to true
-      chatMode: data.chatMode || 'separate'
+      chatMode: data.chatMode || 'separate',
+      password: data.password || null,
+      ranked: data.ranked !== false // Default to true
     });
     
     // Fetch stats if authenticated
@@ -2549,11 +2568,17 @@ io.on('connection', (socket) => {
   });
 
   socket.on('joinRoom', (data, callback) => {
-    const { roomCode, playerName, asSpectator, persistentPlayerId } = data;
+    const { roomCode, playerName, asSpectator, persistentPlayerId, password } = data;
     const room = rooms.get(roomCode);
 
     if (!room) {
       callback({ success: false, error: 'Room not found' });
+      return;
+    }
+
+    // Check password if room is password protected
+    if (room.password && room.password !== password) {
+      callback({ success: false, error: 'Incorrect password' });
       return;
     }
 

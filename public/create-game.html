@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Create Game - Coup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    }
+    
+    .setting-card {
+      transition: all 0.2s ease;
+    }
+    
+    .setting-card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+    }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
+  <div class="max-w-3xl mx-auto p-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <div>
+        <h1 class="text-4xl font-bold text-red-500 mb-2">Create New Game</h1>
+        <p class="text-gray-400">Configure your game settings</p>
+      </div>
+      <a href="/lobby.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
+        ← Back to Lobby
+      </a>
+    </div>
+
+    <!-- Game Settings -->
+    <div class="space-y-4">
+      
+      <!-- Game Mode -->
+      <div class="setting-card bg-gray-800 rounded-lg p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-4xl">🎴</div>
+          <div class="flex-1">
+            <h3 class="text-xl font-bold mb-2">Game Variant</h3>
+            <p class="text-gray-400 text-sm mb-4">Choose which character set to use</p>
+            <div class="flex gap-3">
+              <button 
+                id="ambassadorBtn"
+                onclick="setGameMode('ambassador')"
+                class="flex-1 p-4 rounded font-bold bg-blue-600 hover:bg-blue-700 transition-colors"
+              >
+                <div class="text-lg mb-1">Ambassador</div>
+                <div class="text-xs text-blue-200">Classic version</div>
+              </button>
+              <button 
+                id="inquisitorBtn"
+                onclick="setGameMode('inquisitor')"
+                class="flex-1 p-4 rounded font-bold bg-gray-700 hover:bg-gray-600 transition-colors"
+              >
+                <div class="text-lg mb-1">Inquisitor</div>
+                <div class="text-xs text-gray-400">Expansion variant</div>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Spectators -->
+      <div class="setting-card bg-gray-800 rounded-lg p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-4xl">👁️</div>
+          <div class="flex-1">
+            <h3 class="text-xl font-bold mb-2">Spectators</h3>
+            <p class="text-gray-400 text-sm mb-4">Allow others to watch the game</p>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input 
+                type="checkbox" 
+                id="allowSpectators" 
+                checked
+                class="w-6 h-6 cursor-pointer"
+              />
+              <span class="font-semibold">Allow spectators to watch</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Chat Mode -->
+      <div class="setting-card bg-gray-800 rounded-lg p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-4xl">💬</div>
+          <div class="flex-1">
+            <h3 class="text-xl font-bold mb-2">Chat Mode</h3>
+            <p class="text-gray-400 text-sm mb-4">Configure in-game chat</p>
+            <select 
+              id="chatMode" 
+              class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white cursor-pointer font-semibold"
+            >
+              <option value="separate">Separate Chats (Players & Spectators)</option>
+              <option value="unified">Unified Chat (Everyone)</option>
+              <option value="none">No Chat (Disabled)</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Password Protection -->
+      <div class="setting-card bg-gray-800 rounded-lg p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-4xl">🔒</div>
+          <div class="flex-1">
+            <h3 class="text-xl font-bold mb-2">Password Protection</h3>
+            <p class="text-gray-400 text-sm mb-4">Require a password to join</p>
+            <label class="flex items-center gap-3 cursor-pointer mb-3">
+              <input 
+                type="checkbox" 
+                id="passwordEnabled" 
+                onchange="togglePassword()"
+                class="w-6 h-6 cursor-pointer"
+              />
+              <span class="font-semibold">Require password</span>
+            </label>
+            <div id="passwordInput" class="hidden">
+              <input 
+                type="text" 
+                id="gamePassword"
+                placeholder="Enter password (4-20 characters)"
+                maxlength="20"
+                class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+              />
+              <p class="text-xs text-gray-500 mt-2">Players will need this password to join</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ranked Mode -->
+      <div class="setting-card bg-gray-800 rounded-lg p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-4xl">🏆</div>
+          <div class="flex-1">
+            <h3 class="text-xl font-bold mb-2">Ranked Mode</h3>
+            <p class="text-gray-400 text-sm mb-4">Count this game for stats and Elo ratings</p>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input 
+                type="checkbox" 
+                id="rankedMode" 
+                checked
+                class="w-6 h-6 cursor-pointer"
+              />
+              <span class="font-semibold">Ranked (affects stats & Elo)</span>
+            </label>
+            <div class="mt-3 p-3 bg-yellow-900 bg-opacity-30 rounded border border-yellow-600">
+              <p class="text-xs text-yellow-200">
+                💡 <strong>Tip:</strong> Unranked games are great for casual play with friends or testing strategies
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Create Button -->
+    <div class="mt-8">
+      <button 
+        onclick="createGame()"
+        class="w-full bg-red-600 hover:bg-red-700 p-6 rounded-lg text-2xl font-bold transition-colors"
+      >
+        🎮 Create Game
+      </button>
+    </div>
+
+    <!-- Settings Summary -->
+    <div id="settingsSummary" class="mt-6 bg-gray-800 rounded-lg p-4 text-sm text-gray-300">
+      <div class="font-bold mb-2">Current Settings:</div>
+      <div id="summaryText" class="space-y-1"></div>
+    </div>
+  </div>
+
+  <script>
+    let gameMode = 'ambassador';
+    
+    // Get auth token
+    const authToken = localStorage.getItem('coupAuthToken');
+    let currentUser = null;
+
+    function setGameMode(mode) {
+      gameMode = mode;
+      
+      // Update button styles
+      const ambassadorBtn = document.getElementById('ambassadorBtn');
+      const inquisitorBtn = document.getElementById('inquisitorBtn');
+      
+      if (mode === 'ambassador') {
+        ambassadorBtn.className = 'flex-1 p-4 rounded font-bold bg-blue-600 hover:bg-blue-700 transition-colors';
+        inquisitorBtn.className = 'flex-1 p-4 rounded font-bold bg-gray-700 hover:bg-gray-600 transition-colors';
+      } else {
+        ambassadorBtn.className = 'flex-1 p-4 rounded font-bold bg-gray-700 hover:bg-gray-600 transition-colors';
+        inquisitorBtn.className = 'flex-1 p-4 rounded font-bold bg-purple-600 hover:bg-purple-700 transition-colors';
+      }
+      
+      updateSummary();
+    }
+    
+    function togglePassword() {
+      const enabled = document.getElementById('passwordEnabled').checked;
+      const passwordInput = document.getElementById('passwordInput');
+      
+      if (enabled) {
+        passwordInput.classList.remove('hidden');
+      } else {
+        passwordInput.classList.add('hidden');
+        document.getElementById('gamePassword').value = '';
+      }
+      
+      updateSummary();
+    }
+    
+    function updateSummary() {
+      const summary = [];
+      
+      // Game mode
+      summary.push(`📋 Variant: ${gameMode === 'ambassador' ? 'Ambassador (Classic)' : 'Inquisitor (Expansion)'}`);
+      
+      // Spectators
+      const allowSpectators = document.getElementById('allowSpectators').checked;
+      summary.push(`👁️ Spectators: ${allowSpectators ? 'Allowed' : 'Not allowed'}`);
+      
+      // Chat
+      const chatMode = document.getElementById('chatMode').value;
+      const chatLabel = chatMode === 'separate' ? 'Separate chats' : chatMode === 'unified' ? 'Unified chat' : 'Disabled';
+      summary.push(`💬 Chat: ${chatLabel}`);
+      
+      // Password
+      const passwordEnabled = document.getElementById('passwordEnabled').checked;
+      summary.push(`🔒 Password: ${passwordEnabled ? 'Required' : 'Not required'}`);
+      
+      // Ranked
+      const ranked = document.getElementById('rankedMode').checked;
+      summary.push(`🏆 Mode: ${ranked ? 'Ranked' : 'Unranked (casual)'}`);
+      
+      document.getElementById('summaryText').innerHTML = summary.map(s => `<div>${s}</div>`).join('');
+    }
+    
+    function createGame() {
+      // Validate password if enabled
+      const passwordEnabled = document.getElementById('passwordEnabled').checked;
+      let password = null;
+      
+      if (passwordEnabled) {
+        password = document.getElementById('gamePassword').value.trim();
+        if (!password || password.length < 4) {
+          alert('Password must be at least 4 characters');
+          return;
+        }
+      }
+      
+      // Get settings
+      const settings = {
+        useInquisitor: gameMode === 'inquisitor',
+        allowSpectators: document.getElementById('allowSpectators').checked,
+        chatMode: document.getElementById('chatMode').value,
+        password: password,
+        ranked: document.getElementById('rankedMode').checked
+      };
+      
+      // Store in localStorage
+      localStorage.setItem('coupGameSettings', JSON.stringify(settings));
+      
+      // Redirect to game interface
+      window.location.href = '/game.html';
+    }
+    
+    // Add change listeners to update summary
+    document.getElementById('allowSpectators').addEventListener('change', updateSummary);
+    document.getElementById('chatMode').addEventListener('change', updateSummary);
+    document.getElementById('rankedMode').addEventListener('change', updateSummary);
+    
+    // Initialize summary
+    updateSummary();
+  </script>
+</body>
+</html>

@@ -65,9 +65,18 @@
         Login
       </button>
       
+      <div class="text-center mb-4">
+        <button
+          onclick="continueAsGuest()"
+          class="text-gray-400 hover:text-white text-sm underline"
+        >
+          Continue as Guest
+        </button>
+      </div>
+      
       <div class="text-center">
-        <a href="/" class="text-gray-400 hover:text-white text-sm">
-          ← Back to game
+        <a href="/rules.html" class="text-gray-400 hover:text-white text-sm">
+          📖 View Rules
         </a>
       </div>
     </div>
@@ -116,9 +125,18 @@
         Create Account
       </button>
       
+      <div class="text-center mb-4">
+        <button
+          onclick="continueAsGuest()"
+          class="text-gray-400 hover:text-white text-sm underline"
+        >
+          Continue as Guest
+        </button>
+      </div>
+      
       <div class="text-center">
-        <a href="/" class="text-gray-400 hover:text-white text-sm">
-          ← Back to game
+        <a href="/rules.html" class="text-gray-400 hover:text-white text-sm">
+          📖 View Rules
         </a>
       </div>
     </div>
@@ -127,11 +145,11 @@
     <div class="bg-blue-900 border border-blue-600 rounded-lg p-6 mt-6">
       <h3 class="font-bold mb-2">Why create an account?</h3>
       <ul class="text-sm space-y-1 text-gray-300">
-        <li>✓ Track your wins, losses, and stats</li>
-        <li>✓ Earn achievements and badges</li>
-        <li>✓ Climb the global leaderboards</li>
-        <li>✓ View your match history</li>
-        <li>✓ Compare stats with friends</li>
+        <li>âœ“ Track your wins, losses, and stats</li>
+        <li>âœ“ Earn achievements and badges</li>
+        <li>âœ“ Climb the global leaderboards</li>
+        <li>âœ“ View your match history</li>
+        <li>âœ“ Compare stats with friends</li>
       </ul>
     </div>
   </div>
@@ -177,14 +195,14 @@
         
         if (data.success) {
           // Save auth data to localStorage
-          localStorage.setItem('authToken', data.token);
+          localStorage.setItem('coupAuthToken', data.token);
           localStorage.setItem('currentUser', JSON.stringify({
             id: data.user.id,
             username: data.user.username
           }));
           
-          // Redirect to main page
-          window.location.href = '/';
+          // Redirect to lobby page
+          window.location.href = '/lobby.html';
         } else {
           showError('loginError', data.error || 'Login failed');
         }
@@ -227,7 +245,7 @@
           showSuccess('registerSuccess', 'Account created! Logging you in...');
           
           // Save auth data
-          localStorage.setItem('authToken', data.token);
+          localStorage.setItem('coupAuthToken', data.token);
           localStorage.setItem('currentUser', JSON.stringify({
             id: data.user.id,
             username: data.user.username
@@ -235,7 +253,7 @@
           
           // Redirect after a short delay
           setTimeout(() => {
-            window.location.href = '/';
+            window.location.href = '/lobby.html';
           }, 1000);
         } else {
           showError('registerError', data.error || 'Registration failed');
@@ -263,6 +281,13 @@
       
       // Hide error if showing success
       document.getElementById('registerError').classList.add('hidden');
+    }
+
+    function continueAsGuest() {
+      // Set a flag that user explicitly chose guest mode
+      sessionStorage.setItem('coupChoseGuestMode', 'true');
+      // Redirect to lobby
+      window.location.href = '/lobby.html';
     }
 
     // Handle Enter key

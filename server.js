@@ -171,6 +171,7 @@ function shuffleDeck(useInquisitor = false) {
 function createRoom(roomCode, options = {}) {
   return {
     code: roomCode,
+    name: options.name || null,
     players: [],
     spectators: [],
     state: 'lobby',
@@ -2410,6 +2411,7 @@ const lobbySockets = new Map(); // socketId -> { username, socketId, isAuthentic
 function broadcastRoomList() {
   const roomList = Array.from(rooms.entries()).map(([code, room]) => ({
     code: code,
+    name: room.name,
     state: room.state,
     playerCount: room.players.length,
     spectatorCount: room.spectators.length,
@@ -2489,11 +2491,12 @@ io.on('connection', (socket) => {
   socket.on('createRoom', (data, callback) => {
     const roomCode = generateRoomCode();
     const room = createRoom(roomCode, { 
+      name: data.gameName || null,
       useInquisitor: data.useInquisitor || false,
-      allowSpectators: data.allowSpectators !== false, // Default to true
+      allowSpectators: data.allowSpectators !== false,
       chatMode: data.chatMode || 'separate',
       password: data.password || null,
-      ranked: data.ranked !== false // Default to true
+      ranked: data.ranked !== false
     });
     
     // Fetch stats if authenticated

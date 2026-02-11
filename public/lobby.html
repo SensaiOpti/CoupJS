@@ -68,7 +68,7 @@
         <h2 class="text-2xl text-gray-300">Game Lobby</h2>
       </div>
       <div class="flex gap-3">
-        <a href="/profile.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
+        <a id="profileBtn" href="/profile.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
           👤 Profile
         </a>
         <a href="/leaderboards.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
@@ -212,6 +212,24 @@
     let rooms = [];
     let currentFilter = 'all';
 
+    // Themed guest name generator
+    async function generateThemedGuestName() {
+      const titles = ['Ambassador', 'Assassin', 'Captain', 'Contessa', 'Duke', 'Inquisitor'];
+      const randomTitle = titles[Math.floor(Math.random() * titles.length)];
+      
+      try {
+        const response = await fetch('/randomnames.txt');
+        const text = await response.text();
+        const names = text.split('\n').map(n => n.trim()).filter(n => n.length > 0);
+        const randomName = names[Math.floor(Math.random() * names.length)];
+        return `${randomTitle}${randomName}`;
+      } catch (error) {
+        console.error('Failed to load random names:', error);
+        // Fallback to old style if file can't be loaded
+        return `Guest_${Math.random().toString(36).substr(2, 6)}`;
+      }
+    }
+
     // Initialize
     async function init() {
       // Check if this is a first-time visitor (not logged in, no guest flag, no stored username)
@@ -248,13 +266,21 @@
         // Guest user - get or create persistent guest username
         username = localStorage.getItem('coupGuestUsername');
         if (!username) {
-          // Generate new guest username and store it
-          username = `Guest_${Math.random().toString(36).substr(2, 6)}`;
+          // Generate new themed guest username and store it
+          username = await generateThemedGuestName();
           localStorage.setItem('coupGuestUsername', username);
         }
       }
       
-      document.getElementById('currentUsername').textContent = username;
+      const el = document.getElementById('currentUsername');
+      if (currentUser) {
+        el.innerHTML = `<a href="/profile.html?user=${encodeURIComponent(username)}" class="hover:text-blue-300 hover:underline">${username}</a>`;
+        const profileBtn = document.getElementById('profileBtn');
+        profileBtn.href = `/profile.html?user=${encodeURIComponent(username)}`;
+        profileBtn.classList.remove('hidden');
+      } else {
+        el.textContent = username;
+      }
 
       // Initialize socket
       initSocket(username);
@@ -379,11 +405,11 @@
             <div class="flex justify-between items-start mb-3">
               <div>
                 <div class="flex items-center gap-2 mb-1">
-                  <span class="text-xl font-bold text-white">${room.code}</span>
+                  <span class="text-xl font-bold text-white">${room.name || room.code}</span>
                   <span class="${statusColor} text-xs px-2 py-1 rounded">${statusText}</span>
                 </div>
                 <div class="text-sm text-gray-400">
-                  ${room.playerCount}/6 players
+                  ${room.name ? `<span class="text-gray-500 mr-2">#${room.code}</span>` : ''}${room.playerCount}/6 players
                   ${room.spectatorCount > 0 ? `· ${room.spectatorCount} spectators` : ''}
                 </div>
               </div>
@@ -417,9 +443,9 @@
             <div class="flex flex-wrap gap-2 text-xs">
               ${room.hasPassword ? '<span class="bg-red-900 px-2 py-1 rounded">🔒 Password</span>' : ''}
               ${!room.ranked ? '<span class="bg-gray-600 px-2 py-1 rounded">🎮 Unranked</span>' : '<span class="bg-yellow-900 px-2 py-1 rounded">🏆 Ranked</span>'}
-              ${room.useInquisitor ? '<span class="bg-purple-900 px-2 py-1 rounded">⚔️ Inquisitor</span>' : ''}
-              ${room.allowSpectators ? '<span class="bg-blue-900 px-2 py-1 rounded">👁️ Spectators</span>' : ''}
-              ${room.chatMode === 'unified' ? '<span class="bg-green-900 px-2 py-1 rounded">💬 Unified Chat</span>' : 
+              ${room.useInquisitor ? '<span class="bg-purple-900 px-2 py-1 rounded">⚔️ Inquisitor</span>' : '<span class="bg-blue-900 px-2 py-1 rounded">🎴 Ambassador</span>'}
+              ${room.allowSpectators ? '<span class="bg-blue-900 px-2 py-1 rounded">👁️ Spectators</span>' : '<span class="bg-gray-600 px-2 py-1 rounded">🚫 No Spectators</span>'}
+              ${room.chatMode === 'unified' ? `<span class="bg-green-900 px-2 py-1 rounded">💬 ${room.allowSpectators ? 'Unified Chat' : 'Player Chat'}</span>` : 
                 room.chatMode === 'separate' ? '<span class="bg-green-900 px-2 py-1 rounded">💬 Separate Chat</span>' : 
                 '<span class="bg-gray-600 px-2 py-1 rounded">🚫 No Chat</span>'}
             </div>
@@ -442,7 +468,10 @@
             <div class="flex items-center gap-2">
               <span class="text-lg">${statusIcon}</span>
               <div>
-                <div class="font-semibold text-sm">${user.username}</div>
+                ${isAuth
+                  ? `<a href="/profile.html?user=${encodeURIComponent(user.username)}" class="font-semibold text-sm text-blue-300 hover:text-blue-100 hover:underline">${user.username}</a>`
+                  : `<div class="font-semibold text-sm">${user.username}</div>`
+                }
                 <div class="text-xs text-gray-400">${statusText}</div>
               </div>
             </div>
@@ -459,10 +488,13 @@
       
       const isAuth = data.isAuthenticated;
       const badge = isAuth ? '<span class="text-green-500 text-xs">⭐</span>' : '';
+      const nameHtml = isAuth
+        ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
+        : `<span class="font-bold text-blue-400">${data.username}</span>`;
       
       messageEl.innerHTML = `
         <div class="bg-gray-700 rounded p-2">
-          <span class="font-bold text-blue-400">${data.username}</span>
+          ${nameHtml}
           ${badge}
           <span class="text-gray-500 text-xs ml-2">${new Date(data.timestamp).toLocaleTimeString()}</span>
           <div class="text-gray-200 mt-1">${escapeHtml(data.message)}</div>

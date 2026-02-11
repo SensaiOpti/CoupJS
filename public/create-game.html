@@ -37,6 +37,26 @@
     <!-- Game Settings -->
     <div class="space-y-4">
       
+    <!-- Game Name -->
+      <div class="setting-card bg-gray-800 rounded-lg p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-4xl">✏️</div>
+          <div class="flex-1">
+            <h3 class="text-xl font-bold mb-2">Game Name</h3>
+            <p class="text-gray-400 text-sm mb-4">Give your game a name so others can find it in the lobby</p>
+            <input
+              type="text"
+              id="gameName"
+              placeholder="e.g. Friday Night Coup, Beginners Welcome..."
+              maxlength="40"
+              oninput="updateSummary()"
+              class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
+            />
+            <p class="text-xs text-gray-500 mt-2">Optional — leave blank for a default name</p>
+          </div>
+        </div>
+      </div>
+
       <!-- Game Mode -->
       <div class="setting-card bg-gray-800 rounded-lg p-6">
         <div class="flex items-start gap-4">
@@ -46,20 +66,20 @@
             <p class="text-gray-400 text-sm mb-4">Choose which character set to use</p>
             <div class="flex gap-3">
               <button 
-                id="ambassadorBtn"
-                onclick="setGameMode('ambassador')"
-                class="flex-1 p-4 rounded font-bold bg-blue-600 hover:bg-blue-700 transition-colors"
-              >
-                <div class="text-lg mb-1">Ambassador</div>
-                <div class="text-xs text-blue-200">Classic version</div>
-              </button>
-              <button 
                 id="inquisitorBtn"
                 onclick="setGameMode('inquisitor')"
-                class="flex-1 p-4 rounded font-bold bg-gray-700 hover:bg-gray-600 transition-colors"
+                class="flex-1 p-4 rounded font-bold bg-purple-600 hover:bg-purple-700 transition-colors"
               >
                 <div class="text-lg mb-1">Inquisitor</div>
-                <div class="text-xs text-gray-400">Expansion variant</div>
+                <div class="text-xs text-purple-200">Expansion variant</div>
+              </button>
+              <button 
+                id="ambassadorBtn"
+                onclick="setGameMode('ambassador')"
+                class="flex-1 p-4 rounded font-bold bg-gray-700 hover:bg-gray-600 transition-colors"
+              >
+                <div class="text-lg mb-1">Ambassador</div>
+                <div class="text-xs text-gray-400">Classic version</div>
               </button>
             </div>
           </div>
@@ -180,7 +200,7 @@
   </div>
 
   <script>
-    let gameMode = 'ambassador';
+    let gameMode = 'inquisitor';
     
     // Get auth token
     const authToken = localStorage.getItem('coupAuthToken');
@@ -189,7 +209,6 @@
     function setGameMode(mode) {
       gameMode = mode;
       
-      // Update button styles
       const ambassadorBtn = document.getElementById('ambassadorBtn');
       const inquisitorBtn = document.getElementById('inquisitorBtn');
       
@@ -220,6 +239,10 @@
     
     function updateSummary() {
       const summary = [];
+
+      // Game name
+      const gameName = document.getElementById('gameName').value.trim();
+      summary.push(`✏️ Name: ${gameName || '(default)'}`);
       
       // Game mode
       summary.push(`📋 Variant: ${gameMode === 'ambassador' ? 'Ambassador (Classic)' : 'Inquisitor (Expansion)'}`);
@@ -230,7 +253,10 @@
       
       // Chat
       const chatMode = document.getElementById('chatMode').value;
-      const chatLabel = chatMode === 'separate' ? 'Separate chats' : chatMode === 'unified' ? 'Unified chat' : 'Disabled';
+      let chatLabel;
+      if (chatMode === 'none') chatLabel = 'Disabled';
+      else if (chatMode === 'separate') chatLabel = 'Separate chats';
+      else chatLabel = allowSpectators ? 'Unified chat' : 'Player chat';
       summary.push(`💬 Chat: ${chatLabel}`);
       
       // Password
@@ -259,6 +285,7 @@
       
       // Get settings
       const settings = {
+        gameName: document.getElementById('gameName').value.trim() || null,
         useInquisitor: gameMode === 'inquisitor',
         allowSpectators: document.getElementById('allowSpectators').checked,
         chatMode: document.getElementById('chatMode').value,
@@ -274,11 +301,33 @@
     }
     
     // Add change listeners to update summary
-    document.getElementById('allowSpectators').addEventListener('change', updateSummary);
+    document.getElementById('allowSpectators').addEventListener('change', () => {
+      updateChatOptions();
+      updateSummary();
+    });
     document.getElementById('chatMode').addEventListener('change', updateSummary);
     document.getElementById('rankedMode').addEventListener('change', updateSummary);
+
+    function updateChatOptions() {
+      const allowSpectators = document.getElementById('allowSpectators').checked;
+      const chatMode = document.getElementById('chatMode');
+      const currentValue = chatMode.value;
+
+      chatMode.innerHTML = allowSpectators
+        ? `<option value="separate">Separate Chats (Players & Spectators)</option>
+           <option value="unified">Unified Chat (Everyone)</option>
+           <option value="none">No Chat (Disabled)</option>`
+        : `<option value="unified">Player Chat</option>
+           <option value="none">Disabled</option>`;
+
+      // Preserve selection if still valid, otherwise default
+      if ([...chatMode.options].some(o => o.value === currentValue)) {
+        chatMode.value = currentValue;
+      }
+    }
     
-    // Initialize summary
+    // Initialize
+    updateChatOptions();
     updateSummary();
   </script>
 </body>

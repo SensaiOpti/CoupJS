@@ -174,6 +174,7 @@
     
     // Spectator card reveal tracking
     let spectatorRevealedCards = {}; // Format: "playerId-cardIndex": true/false
+    let revealAnimatedCards = new Set(); // Cards that have already played their reveal animation
 
     let shouldAutoScroll = true; // Track if we should auto-scroll
     let lastActionSignature = null; // Track which action panel is showing to prevent re-animation
@@ -494,6 +495,7 @@
           gameState = 'playing';
           if (!wasPlaying) {
             shouldAutoScroll = true;
+            revealAnimatedCards.clear(); // Fresh game — allow animations to fire again
           }
         } else if (state.state === 'ended') {
           gameState = 'ended';
@@ -603,7 +605,8 @@
       chatMode = settings.chatMode;
       
       socket.emit('createRoom', { 
-        playerName: name, 
+        playerName: name,
+        gameName: settings.gameName || null,
         useInquisitor: settings.useInquisitor, 
         allowSpectators: settings.allowSpectators,
         chatMode: settings.chatMode,
@@ -1822,9 +1825,18 @@
                           const spectatorRevealed = spectatorRevealedCards[key];
                           const shouldShowCard = influence.revealed || player.isMe || (isSpectator && spectatorRevealed);
                           const cardName = influence.card ? influence.card.toLowerCase() : 'back';
+
+                          // Only animate the reveal once per card
+                          let revealAnimClass = '';
+                          if (influence.revealed) {
+                            if (!revealAnimatedCards.has(key)) {
+                              revealAnimatedCards.add(key);
+                              revealAnimClass = 'card-reveal';
+                            }
+                          }
                           
                           return `
-                            <div class="relative flex-1 ${influence.revealed ? 'bg-red-900 border-2 border-red-600 card-reveal' : 'bg-gray-700'} rounded p-2 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
+                            <div class="relative flex-1 ${influence.revealed ? `bg-red-900 border-2 border-red-600 ${revealAnimClass}` : 'bg-gray-700'} rounded p-2 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
                               ${influence.revealed ? `
                                 <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded opacity-50" />
                                 <div class="absolute inset-0 flex items-center justify-center">
@@ -2256,34 +2268,38 @@
       if (lobbyJoinCode) {
         // Clear the stored value
         localStorage.removeItem('coupJoinCode');
-        
-        // Set the join code and trigger preview
-        joinCode = lobbyJoinCode;
-        
-        // Wait for socket to connect
-        const checkSocket = setInterval(() => {
-          if (socket && socket.connected) {
-            clearInterval(checkSocket);
-            
-            // Auto-preview the room
-            socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
-              if (response.success) {
-                previewMode = true;
-                previewRoomCode = lobbyJoinCode;
-                previewData = response.roomData;
-                players = previewData.players;
-                spectators = previewData.spectators;
-                useInquisitor = previewData.useInquisitor;
-                allowSpectators = previewData.allowSpectators;
-                chatMode = previewData.chatMode || 'separate';
-                gameState = 'lobby';
-                render();
-              } else {
-                alert('Room not found: ' + lobbyJoinCode);
-              }
-            });
-          }
-        }, 100);
+
+        const storedRoomCode = localStorage.getItem('coupCurrentRoom');
+        if (lobbyJoinCode === storedRoomCode) {
+          // This is a rejoin — the connect handler's attemptReconnect will handle it.
+          // Just wait here; don't show the preview or we'll end up with only "Watch".
+        } else {
+          // Fresh join — show preview so user can choose player or spectator
+          joinCode = lobbyJoinCode;
+          
+          const checkSocket = setInterval(() => {
+            if (socket && socket.connected) {
+              clearInterval(checkSocket);
+              
+              socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
+                if (response.success) {
+                  previewMode = true;
+                  previewRoomCode = lobbyJoinCode;
+                  previewData = response.roomData;
+                  players = previewData.players;
+                  spectators = previewData.spectators;
+                  useInquisitor = previewData.useInquisitor;
+                  allowSpectators = previewData.allowSpectators;
+                  chatMode = previewData.chatMode || 'separate';
+                  gameState = 'lobby';
+                  render();
+                } else {
+                  alert('Room not found: ' + lobbyJoinCode);
+                }
+              });
+            }
+          }, 100);
+        }
       } else if (localStorage.getItem('coupGameSettings')) {
         // Coming from create-game.html - auto-create the room
         const checkSocket = setInterval(() => {

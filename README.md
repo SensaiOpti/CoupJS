@@ -45,4 +45,5 @@ npm start
 To date, the only things *not* AI generated are the fonts:
 
 - In the default cards, I use Pfeffer Mediæval, which was made by the lovely Dr. Pfeffer and can be found [here](https://robert-pfeffer.net/schriftarten/englisch/). It was used with admiration, appreciation, awe and respect for all that the good doctor does.
-- In the anime set, I use Lollipoptron which was designed by heaven castro as a derivative of KineticPlasma Fonts' Hi. Anyways, you can find it [here](https://www.fontspace.com/lollipoptron-font-f29782).
+- In the anime card set, I use [Lollipoptron](https://www.fontspace.com/lollipoptron-font-f29782) which was designed by heaven castro as a derivative of KineticPlasma Fonts' Hi. A mouthful!
+- In the pixel card set, I use [PixelMplus](https://fontmeme.com/fonts/pixelmplus-font/) by the heroic Itou Hiroki. A font that evokes a feeling of nostalgia.

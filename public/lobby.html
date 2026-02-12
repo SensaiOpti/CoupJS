@@ -621,13 +621,8 @@
     // Event listeners
     document.getElementById('logoutBtn').addEventListener('click', logout);
 
-    // Cleanup on page close/navigation
-    window.addEventListener('beforeunload', () => {
-      if (socket && socket.connected) {
-        socket.emit('leaveLobby');
-        socket.disconnect();
-      }
-    });
+    // Don't call leaveLobby on navigation - users should stay in online list even in games
+    // The server will clean up on actual disconnect
 
     // Initialize on load
     init();

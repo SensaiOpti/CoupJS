@@ -186,7 +186,8 @@ function createRoom(roomCode, options = {}) {
     password: options.password || null, // Optional password protection
     ranked: options.ranked !== false, // Default to ranked (true)
     gameStartTime: null, // Track when game starts
-    gameEndTime: null // Track when game ends
+    gameEndTime: null, // Track when game ends
+    eliminationOrder: [] // Track order of elimination: [{playerId, playerName, coins, placement}]
   };
 }
 
@@ -211,11 +212,26 @@ function getPlayerById(room, playerId) {
   return room.players.find(p => p.id === playerId);
 }
 
-function emitToRoom(roomCode, event) {
+function emitToRoom(roomCode, event, customData = null) {
   const room = rooms.get(roomCode);
   if (!room) return;
   
-  // Send personalized game state to each player who hasn't left
+  // If custom data is provided, send it directly
+  if (customData !== null) {
+    room.players.forEach(player => {
+      if (!player.hasLeft) {
+        io.to(player.socketId).emit(event, customData);
+      }
+    });
+    room.spectators.forEach(spectator => {
+      if (!spectator.hasLeft) {
+        io.to(spectator.socketId).emit(event, customData);
+      }
+    });
+    return;
+  }
+  
+  // Otherwise, send personalized game state to each player who hasn't left
   room.players.forEach(player => {
     if (!player.hasLeft) {
       io.to(player.socketId).emit(event, getPublicGameState(room, player.socketId, false));
@@ -331,7 +347,7 @@ function startGame(room) {
     // Initialize game stats tracking
     player.gameStats = {
       // Core stats
-      coinsEarned: 0,
+      coinsEarned: 2, // Start with the 2 coins everyone gets
       coinsSpent: 0,
       coinsLost: 0,
       coinsStolen: 0,
@@ -1208,6 +1224,21 @@ function revealInfluence(room, playerId, cardIndex) {
     player.mustRevealInfluence = false;
     player.influencesToLose = 0;
     
+    // Track elimination order (lower placement = eliminated earlier)
+    const alivePlayers = room.players.filter(p => p.alive && p.id !== player.id).length;
+    const placement = alivePlayers + 1; // +1 because this player just died
+    const eliminationEntry = {
+      playerId: player.id,
+      playerName: player.name,
+      userId: player.userId,
+      username: player.username,
+      coinsEarned: player.gameStats?.coinsEarned || 0,
+      eliminations: player.gameStats?.playersEliminated || 0,
+      placement: placement
+    };
+    room.eliminationOrder.push(eliminationEntry);
+    console.log(`Player eliminated: ${player.name}, placement: ${placement}, adding to eliminationOrder:`, eliminationEntry);
+    
     // Track who eliminated this player
     if (player.influenceLossCausedBy) {
       const eliminator = getPlayerById(room, player.influenceLossCausedBy);
@@ -1251,16 +1282,32 @@ function checkWinCondition(room) {
     room.winnerId = winner.id;
     room.winnerUserId = winner.userId; // Track user ID for stats
     
+    // Add winner to elimination order (placement 1)
+    room.eliminationOrder.push({
+      playerId: winner.id,
+      playerName: winner.name,
+      userId: winner.userId,
+      username: winner.username,
+      coinsEarned: winner.gameStats?.coinsEarned || 0,
+      eliminations: winner.gameStats?.playersEliminated || 0,
+      placement: 1
+    });
+    
+    // Sort by placement (ascending - 1st, 2nd, 3rd, etc.)
+    room.eliminationOrder.sort((a, b) => a.placement - b.placement);
+    
     addLogToRoom(room, `ðŸŽ‰ ${winner.name} wins the game! ðŸŽ‰`, 'success');
     room.state = 'ended';
     
     // Save game results to database
     saveGameResults(room);
     
+    console.log('Game ended, sending elimination order:', room.eliminationOrder);
     emitToRoom(room.code, 'gameEnded', { 
       winner: winner.name,
       winnerId: winner.id,
-      winnerUserId: winner.userId
+      winnerUserId: winner.userId,
+      gameStats: room.eliminationOrder
     });
   }
 }
@@ -2490,8 +2537,15 @@ io.on('connection', (socket) => {
 
   socket.on('createRoom', (data, callback) => {
     const roomCode = generateRoomCode();
+    
+    // Determine player name first (needed for default room name)
+    const playerName = authenticatedUser ? authenticatedUser.username : (data.playerName || 'Player');
+    
+    // Generate default room name if none provided
+    const roomName = data.gameName || `${playerName}'s Room`;
+    
     const room = createRoom(roomCode, { 
-      name: data.gameName || null,
+      name: roomName,
       useInquisitor: data.useInquisitor || false,
       allowSpectators: data.allowSpectators !== false,
       chatMode: data.chatMode || 'separate',
@@ -2509,7 +2563,7 @@ io.on('connection', (socket) => {
       id: data.persistentPlayerId || socket.id,
       persistentId: data.persistentPlayerId || socket.id,
       socketId: socket.id,
-      name: authenticatedUser ? authenticatedUser.username : (data.playerName || 'Player'),
+      name: playerName,
       userId: authenticatedUser ? authenticatedUser.id : null,
       username: authenticatedUser ? authenticatedUser.username : null,
       isGuest: !authenticatedUser,
@@ -3099,14 +3153,6 @@ io.on('connection', (socket) => {
     broadcastOnlineUsers();
   });
 
-  socket.on('leaveLobby', () => {
-    const userData = lobbySockets.get(socket.id);
-    if (userData) {
-      lobbySockets.delete(socket.id);
-      broadcastOnlineUsers();
-    }
-  });
-
   socket.on('lobbyChatMessage', (data) => {
     const userData = lobbySockets.get(socket.id);
     if (!userData) return;
@@ -3207,6 +3253,14 @@ io.on('connection', (socket) => {
         }
       }
     });
+    
+    // Remove from lobby sockets tracking
+    const userData = lobbySockets.get(socket.id);
+    if (userData) {
+      lobbySockets.delete(socket.id);
+      console.log(`Removed ${userData.username} from online users list`);
+      broadcastOnlineUsers();
+    }
   });
 
   socket.on('sendChatMessage', (data) => {

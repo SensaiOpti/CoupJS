@@ -155,6 +155,7 @@
     let useInquisitor = false;
     let allowSpectators = true;
     let isSpectator = false;
+    let gameStats = null; // Store end game statistics (placement, coins, kills)
     let leftRooms = new Set();
     let deckSize = 0;
     let chatMode = 'separate'; // 'separate', 'unified', 'none'
@@ -394,6 +395,10 @@
       socket.on('connect', () => {
         console.log('Connected to server');
         
+        // Register with lobby tracking to appear in online users list
+        const username = currentUser ? currentUser.username : (localStorage.getItem('coupGuestName') || playerName);
+        socket.emit('joinLobby', { username });
+        
         // Check if we were in a room before disconnecting
         const storedRoomCode = localStorage.getItem('coupCurrentRoom');
         const storedIsSpectator = localStorage.getItem('coupIsSpectator') === 'true';
@@ -496,6 +501,7 @@
           if (!wasPlaying) {
             shouldAutoScroll = true;
             revealAnimatedCards.clear(); // Fresh game — allow animations to fire again
+            gameStats = null; // Clear previous game stats
           }
         } else if (state.state === 'ended') {
           gameState = 'ended';
@@ -551,6 +557,9 @@
       });
 
       socket.on('gameEnded', (data) => {
+        console.log('=== GAME HTML VERSION: 2.0 WITH LEADERBOARD ===');
+        console.log('gameEnded event received:', data);
+        console.log('data.gameStats value:', data.gameStats);
         if (data && data.roomCode && leftRooms.has(data.roomCode)) {
           return;
         }
@@ -558,6 +567,8 @@
           return;
         }
         gameState = 'ended';
+        gameStats = data.gameStats || null; // Store the game statistics
+        console.log('Stored gameStats:', gameStats);
         render();
       });
     }
@@ -968,6 +979,7 @@
       // Clear stored room
       localStorage.removeItem('coupCurrentRoom');
       localStorage.removeItem('coupIsSpectator');
+      gameStats = null; // Clear game stats
       
       // Redirect back to lobby
       window.location.href = '/lobby.html';
@@ -2238,7 +2250,95 @@
     }
 
     function renderEndGame() {
+      console.log('renderEndGame called, gameStats:', gameStats);
       const winner = players.find(p => p.alive);
+      console.log('Winner:', winner);
+      
+      // If we have game stats, show the full leaderboard
+      if (gameStats && gameStats.length > 0) {
+        console.log('Rendering leaderboard with stats');
+        return `
+          <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white p-8">
+            <div class="max-w-4xl mx-auto">
+              <!-- Header -->
+              <div class="text-center mb-8">
+                <h1 class="text-5xl font-bold mb-4">🎉 Game Over! 🎉</h1>
+                <p class="text-3xl text-yellow-400 mb-2">${winner?.name || gameStats[0].playerName} Wins!</p>
+                ${isSpectator ? `<p class="text-blue-400 text-lg">You were spectating</p>` : ''}
+              </div>
+
+              <!-- Leaderboard -->
+              <div class="bg-gray-800 rounded-lg shadow-2xl overflow-hidden mb-6">
+                <div class="bg-gradient-to-r from-yellow-600 to-yellow-800 p-4">
+                  <h2 class="text-2xl font-bold text-center">Final Standings</h2>
+                </div>
+                
+                <div class="p-6">
+                  ${gameStats.map((player, index) => {
+                    const isWinner = player.placement === 1;
+                    const placementColors = {
+                      1: 'from-yellow-600 to-yellow-800',
+                      2: 'from-gray-400 to-gray-600',
+                      3: 'from-orange-600 to-orange-800'
+                    };
+                    const bgGradient = placementColors[player.placement] || 'from-gray-700 to-gray-800';
+                    
+                    const placementEmoji = {
+                      1: '🥇',
+                      2: '🥈',
+                      3: '🥉'
+                    };
+                    const emoji = placementEmoji[player.placement] || `${player.placement}th`;
+                    
+                    return `
+                      <div class="mb-4 last:mb-0">
+                        <div class="bg-gradient-to-r ${bgGradient} rounded-lg p-4 ${isWinner ? 'ring-4 ring-yellow-400 shadow-lg' : ''}">
+                          <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-4 flex-1">
+                              <div class="text-3xl font-bold w-12 text-center">${emoji}</div>
+                              <div class="flex-1">
+                                <div class="text-xl font-bold">
+                                  ${player.username 
+                                    ? `<a href="/profile.html?user=${encodeURIComponent(player.username)}" class="hover:text-blue-300 hover:underline">${player.playerName}</a>`
+                                    : player.playerName
+                                  }
+                                </div>
+                                <div class="text-sm text-gray-300 mt-1">
+                                  ${player.placement === 1 ? 'Winner' : `Eliminated ${player.placement === gameStats.length ? 'First' : ''}`}
+                                </div>
+                              </div>
+                            </div>
+                            
+                            <div class="flex gap-6 text-center">
+                              <div class="bg-black bg-opacity-30 rounded px-4 py-2">
+                                <div class="text-2xl font-bold text-yellow-400">${player.coinsEarned}</div>
+                                <div class="text-xs text-gray-300">Coins Earned</div>
+                              </div>
+                              <div class="bg-black bg-opacity-30 rounded px-4 py-2">
+                                <div class="text-2xl font-bold text-red-400">${player.eliminations}</div>
+                                <div class="text-xs text-gray-300">Eliminations</div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              </div>
+
+              <!-- Back Button -->
+              <div class="text-center">
+                <button onclick="leaveRoom()" class="bg-red-600 hover:bg-red-700 px-8 py-4 rounded-lg text-xl font-bold shadow-lg transition-colors">
+                  Back to Lobby
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+      }
+      
+      // Fallback if no game stats available
       return `
         <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white flex items-center justify-center">
           <div class="bg-gray-800 rounded-lg p-12 text-center max-w-md">
@@ -2248,7 +2348,7 @@
               <p class="text-blue-400 mb-4">You were spectating</p>
             ` : ''}
             <button onclick="leaveRoom()" class="bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold w-full">
-              Back to Menu
+              Back to Lobby
             </button>
           </div>
         </div>

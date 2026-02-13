@@ -493,31 +493,16 @@
     const socketScript = document.createElement('script');
     socketScript.src = '/socket.io/socket.io.js';
     socketScript.onload = () => {
-      const authToken = localStorage.getItem('authToken');
+      const authToken = localStorage.getItem('coupAuthToken');
       const socket = io({
         auth: { token: authToken }
       });
       
       socket.on('connect', () => {
-        // Get username from localStorage or auth
-        let username = localStorage.getItem('coupGuestUsername');
-        
-        // If we have an auth token, try to get the actual username
-        if (authToken) {
-          fetch('/api/auth/verify', {
-            headers: { 'Authorization': `Bearer ${authToken}` }
-          })
-          .then(r => r.json())
-          .then(data => {
-            if (data.user) username = data.user.username;
-            socket.emit('joinLobby', { username: username || 'Guest' });
-          })
-          .catch(() => {
-            socket.emit('joinLobby', { username: username || 'Guest' });
-          });
-        } else {
-          socket.emit('joinLobby', { username: username || 'Guest' });
-        }
+        // For guests, get username from localStorage
+        const guestUsername = localStorage.getItem('coupGuestUsername');
+        // Server will use authenticatedUser.username if token is valid, otherwise uses this
+        socket.emit('joinLobby', { username: guestUsername });
       });
     };
     document.head.appendChild(socketScript);

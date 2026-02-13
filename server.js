@@ -2271,6 +2271,16 @@ app.get('/api/leaderboards/:type', (req, res) => {
         `;
         break;
         
+      case 'games':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          ORDER BY s.games_played DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
       case 'bluffer':
         query = `
           SELECT u.id, u.username, s.* 
@@ -2330,7 +2340,9 @@ app.get('/api/leaderboards/:type', (req, res) => {
         return res.status(400).json({ error: 'Invalid leaderboard type' });
     }
     
-    const results = db.prepare(query).all(minGames, limit);
+    const results = type === 'games'
+      ? db.prepare(query).all(limit)
+      : db.prepare(query).all(minGames, limit);
     
     // Calculate derived metrics for each player
     const leaderboard = results.map((player, index) => {
@@ -2345,6 +2357,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
                      type === 'winrate' ? parseFloat(winRate) :
                      type === 'kd' ? parseFloat(kdRatio) :
                      type === 'wins' ? player.games_won :
+                     type === 'games' ? player.games_played :
                      type === 'bluffer' ? player.bluffs_succeeded :
                      type === 'tax' ? player.tax_succeeded :
                      type === 'assassin' ? player.assassinations_succeeded :
@@ -2384,8 +2397,8 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
     const { type } = req.params;
     const minGames = parseInt(req.query.minGames) || 5;
     
-    // Get user's stats
-    const userStats = db.prepare('SELECT * FROM user_stats WHERE user_id = ?').get(decoded.userId);
+    // Get user's stats (JWT uses 'id' not 'userId')
+    const userStats = db.prepare('SELECT * FROM user_stats WHERE user_id = ?').get(decoded.id);
     if (!userStats) {
       return res.status(404).json({ error: 'Stats not found' });
     }
@@ -2433,16 +2446,31 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
         userValue = userStats.games_won;
         break;
         
+      case 'games':
+        rankQuery = `
+          SELECT COUNT(*) + 1 as rank 
+          FROM user_stats 
+          WHERE games_played > ?
+        `;
+        userValue = userStats.games_played;
+        break;
+        
       default:
         return res.status(400).json({ error: 'Invalid leaderboard type' });
     }
     
-    const rankData = db.prepare(rankQuery).get(userValue, minGames);
-    const totalPlayers = db.prepare('SELECT COUNT(*) as count FROM user_stats WHERE games_played >= ?').get(minGames);
+    // Execute rank query with appropriate parameters
+    const rankData = type === 'games' 
+      ? db.prepare(rankQuery).get(userValue)
+      : db.prepare(rankQuery).get(userValue, minGames);
+    
+    const totalPlayers = type === 'games'
+      ? db.prepare('SELECT COUNT(*) as count FROM user_stats').get()
+      : db.prepare('SELECT COUNT(*) as count FROM user_stats WHERE games_played >= ?').get(minGames);
     
     res.json({
       rank: rankData.rank,
-      total: totalPlayers.count,
+      totalPlayers: totalPlayers.count,
       value: userValue
     });
     
@@ -3176,8 +3204,13 @@ io.on('connection', (socket) => {
   // Lobby events
   socket.on('joinLobby', (data) => {
     // For authenticated users, always use their actual username from the token
-    // For guests, use the client-supplied username
-    const username = authenticatedUser ? authenticatedUser.username : (data.username || 'Guest');
+    // For guests, use client-supplied username or generate one
+    let username;
+    if (authenticatedUser) {
+      username = authenticatedUser.username;
+    } else {
+      username = data.username || `Guest_${Math.random().toString(36).substr(2, 6)}`;
+    }
     
     // Cancel any pending removal for this user
     if (pendingLobbyRemovals.has(username)) {

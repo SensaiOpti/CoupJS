@@ -398,8 +398,9 @@
         console.log('Connected to server');
         
         // Register with lobby tracking to appear in online users list
-        const username = currentUser ? currentUser.username : (localStorage.getItem('coupGuestName') || playerName);
-        socket.emit('joinLobby', { username });
+        const guestUsername = localStorage.getItem('coupGuestName') || localStorage.getItem('coupGuestUsername');
+        // Server will use authenticatedUser.username if token is valid, otherwise uses this
+        socket.emit('joinLobby', { username: guestUsername });
         
         // Check if we were in a room before disconnecting
         const storedRoomCode = localStorage.getItem('coupCurrentRoom');
@@ -878,26 +879,6 @@
       const key = `${playerId}-${cardIndex}`;
       spectatorRevealedCards[key] = !spectatorRevealedCards[key];
       render();
-    }
-
-    function copyRoomCode() {
-      const code = previewMode ? previewRoomCode : roomCode;
-      navigator.clipboard.writeText(code).then(() => {
-        const button = document.getElementById('copyButton');
-        if (button) {
-          const originalText = button.innerHTML;
-          button.innerHTML = 'âœ“ Copied!';
-          button.classList.add('bg-green-600');
-          button.classList.remove('bg-gray-600');
-          setTimeout(() => {
-            button.innerHTML = originalText;
-            button.classList.remove('bg-green-600');
-            button.classList.add('bg-gray-600');
-          }, 2000);
-        }
-      }).catch(err => {
-        alert('Failed to copy code: ' + err);
-      });
     }
 
     function getCharacterColor(character) {
@@ -1664,7 +1645,6 @@
     }
 
     function renderLobby() {
-      const displayRoomCode = previewMode ? previewRoomCode : roomCode;
       const roomIsPlaying = previewMode && previewData && previewData.state === 'playing';
       
       return `
@@ -1684,23 +1664,19 @@
 
             <div class="bg-gray-800 rounded-lg p-8 shadow-2xl">
               <div class="text-center mb-6">
-                <p class="text-gray-400 mb-2">Room Code</p>
-                <div class="flex items-center justify-center gap-3">
-                  <p class="text-4xl font-bold text-red-500">${displayRoomCode}</p>
-                  <button 
-                    id="copyButton"
-                    onclick="copyRoomCode()" 
-                    class="bg-gray-600 hover:bg-gray-500 px-4 py-2 rounded text-sm font-bold transition-colors"
-                  >
-                    ðŸ“‹ Copy
-                  </button>
-                </div>
-                <p class="text-sm text-gray-500 mt-2">${previewMode ? 'Preview - Not yet joined' : 'Share this code with your friends'}</p>
-                ${roomIsPlaying ? '<p class="text-sm text-yellow-500 mt-2">âš ï¸ Game in progress</p>' : ''}
-                <div class="flex gap-2 justify-center mt-2 flex-wrap">
-                  ${useInquisitor ? '<p class="text-sm text-yellow-500">âœ“ Using Inquisitor</p>' : ''}
-                  ${allowSpectators ? '<p class="text-sm text-blue-500">âœ“ Spectators Allowed</p>' : ''}
-                  ${chatMode === 'unified' ? '<p class="text-sm text-green-500">ðŸ’¬ Unified Chat</p>' : chatMode === 'separate' ? '<p class="text-sm text-green-500">ðŸ’¬ Separate Chats</p>' : '<p class="text-sm text-gray-500">ðŸ’¬ Chat Disabled</p>'}
+                <h2 class="text-2xl font-bold text-red-500 mb-4">Game Lobby</h2>
+                <p class="text-sm text-gray-400 mb-3">${previewMode ? 'Preview - Choose how to join' : 'Waiting for players'}</p>
+                ${roomIsPlaying ? '<p class="text-sm text-yellow-500 mb-3">⚠️ Game in progress</p>' : ''}
+                <div class="flex gap-3 justify-center flex-wrap">
+                  <span class="px-3 py-1 rounded ${useInquisitor ? 'bg-purple-900 text-purple-200' : 'bg-blue-900 text-blue-200'}">
+                    ${useInquisitor ? '⚔️ Inquisitor' : '🎴 Ambassador'}
+                  </span>
+                  <span class="px-3 py-1 rounded ${allowSpectators ? 'bg-blue-900 text-blue-200' : 'bg-gray-700 text-gray-300'}">
+                    ${allowSpectators ? '👁️ Spectators Allowed' : '🚫 No Spectators'}
+                  </span>
+                  <span class="px-3 py-1 rounded ${chatMode === 'none' ? 'bg-gray-700 text-gray-300' : 'bg-green-900 text-green-200'}">
+                    ${chatMode === 'unified' ? '💬 Unified Chat' : chatMode === 'separate' ? '💬 Separate Chats' : '🚫 No Chat'}
+                  </span>
                 </div>
               </div>
               

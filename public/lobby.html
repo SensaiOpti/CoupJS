@@ -458,7 +458,12 @@
       const container = document.getElementById('onlineUsersList');
       document.getElementById('onlineCount').textContent = onlineUsers.length;
 
-      container.innerHTML = onlineUsers.map(user => {
+      // Sort users alphabetically by username (case-insensitive)
+      const sortedUsers = [...onlineUsers].sort((a, b) => 
+        a.username.toLowerCase().localeCompare(b.username.toLowerCase())
+      );
+
+      container.innerHTML = sortedUsers.map(user => {
         const isAuth = user.isAuthenticated;
         const statusIcon = user.inGame ? '🎮' : '💤';
         const statusText = user.inGame ? 'In Game' : 'In Lobby';

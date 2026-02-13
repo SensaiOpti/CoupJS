@@ -159,6 +159,8 @@
     let leftRooms = new Set();
     let deckSize = 0;
     let chatMode = 'separate'; // 'separate', 'unified', 'none'
+    let ranked = true; // Track if game is ranked
+    let hasPassword = false; // Track if game has password
 
     // Authentication state
     let authToken = localStorage.getItem('coupAuthToken');
@@ -457,6 +459,14 @@
 
         if (state.chatMode !== undefined) {
           chatMode = state.chatMode;
+        }
+
+        if (state.ranked !== undefined) {
+          ranked = state.ranked;
+        }
+
+        if (state.hasPassword !== undefined) {
+          hasPassword = state.hasPassword;
         }
 
         if (state.isSpectator !== undefined) {
@@ -968,6 +978,44 @@
       });
       
       return result;
+    }
+
+    function playAgain() {
+      if (!socket) {
+        console.error('No socket connection');
+        return;
+      }
+
+      // Emit playAgain event with current game settings
+      socket.emit('playAgain', {
+        currentRoomCode: roomCode,
+        useInquisitor: useInquisitor,
+        allowSpectators: allowSpectators,
+        chatMode: chatMode,
+        ranked: ranked,
+        hasPassword: hasPassword
+      }, (response) => {
+        if (response.success) {
+          // Mark current room as left
+          if (roomCode) {
+            leftRooms.add(roomCode);
+          }
+          
+          // Clear game stats
+          gameStats = null;
+          
+          // Store the new room code and redirect
+          localStorage.setItem('coupJoinCode', response.newRoomCode);
+          localStorage.removeItem('coupCurrentRoom');
+          localStorage.removeItem('coupIsSpectator');
+          
+          // Reload the page - will show preview screen with new room
+          window.location.reload();
+        } else {
+          console.error('Failed to create new game:', response.error);
+          alert('Failed to create new game. Please try again.');
+        }
+      });
     }
 
     function leaveRoom() {
@@ -2327,8 +2375,11 @@
                 </div>
               </div>
 
-              <!-- Back Button -->
-              <div class="text-center">
+              <!-- Buttons -->
+              <div class="text-center flex gap-4 justify-center">
+                <button onclick="playAgain()" class="bg-green-600 hover:bg-green-700 px-8 py-4 rounded-lg text-xl font-bold shadow-lg transition-colors">
+                  🎮 Play Again!
+                </button>
                 <button onclick="leaveRoom()" class="bg-red-600 hover:bg-red-700 px-8 py-4 rounded-lg text-xl font-bold shadow-lg transition-colors">
                   Back to Lobby
                 </button>
@@ -2347,9 +2398,14 @@
             ${isSpectator ? `
               <p class="text-blue-400 mb-4">You were spectating</p>
             ` : ''}
-            <button onclick="leaveRoom()" class="bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold w-full">
-              Back to Lobby
-            </button>
+            <div class="flex gap-4">
+              <button onclick="playAgain()" class="bg-green-600 hover:bg-green-700 p-4 rounded text-xl font-bold flex-1">
+                🎮 Play Again!
+              </button>
+              <button onclick="leaveRoom()" class="bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold flex-1">
+                Back to Lobby
+              </button>
+            </div>
           </div>
         </div>
       `;

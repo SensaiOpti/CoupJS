@@ -2454,6 +2454,8 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
 
 // Lobby system tracking
 const lobbySockets = new Map(); // socketId -> { username, socketId, isAuthenticated, userId, inGame }
+const pendingLobbyRemovals = new Map(); // username -> timeout
+const LOBBY_REMOVAL_DELAY = 3000; // 3 seconds grace period for page navigation
 
 function broadcastRoomList() {
   const roomList = Array.from(rooms.entries()).map(([code, room]) => ({
@@ -2621,6 +2623,69 @@ io.on('connection', (socket) => {
           isMe: false
         }))
       }
+    });
+  });
+
+  socket.on('playAgain', (data, callback) => {
+    const { currentRoomCode, useInquisitor, allowSpectators, chatMode, ranked, hasPassword } = data;
+    
+    // First, leave the current room if in one
+    if (currentRoomCode) {
+      const oldRoom = rooms.get(currentRoomCode);
+      if (oldRoom) {
+        const playerIndex = oldRoom.players.findIndex(p => p.socketId === socket.id);
+        const spectatorIndex = oldRoom.spectators.findIndex(s => s.socketId === socket.id);
+        
+        if (playerIndex !== -1) {
+          oldRoom.players[playerIndex].hasLeft = true;
+          oldRoom.players.splice(playerIndex, 1);
+        } else if (spectatorIndex !== -1) {
+          oldRoom.spectators[spectatorIndex].hasLeft = true;
+          oldRoom.spectators.splice(spectatorIndex, 1);
+        }
+        
+        // Clean up empty rooms
+        if (oldRoom.players.length === 0 && oldRoom.spectators.length === 0) {
+          rooms.delete(currentRoomCode);
+        } else {
+          emitToRoom(currentRoomCode, 'gameState');
+        }
+      }
+    }
+    
+    // Create a new room with the same settings
+    const newRoomCode = generateRoomCode();
+    
+    // Determine player name for room name
+    const playerName = authenticatedUser ? authenticatedUser.username : 'Player';
+    
+    // Create empty room with same settings (no password copied)
+    const room = createRoom(newRoomCode, {
+      name: `${playerName}'s Room`,
+      useInquisitor: useInquisitor,
+      allowSpectators: allowSpectators,
+      chatMode: chatMode,
+      password: null, // Don't copy password
+      ranked: ranked
+    });
+    
+    rooms.set(newRoomCode, room);
+    
+    // Mark user as not in game in lobby
+    const lobbyUser = lobbySockets.get(socket.id);
+    if (lobbyUser) {
+      lobbyUser.inGame = false;
+      broadcastOnlineUsers();
+    }
+    
+    // Broadcast the new room to all lobby users
+    broadcastRoomList();
+    
+    console.log(`Created new room ${newRoomCode} via Play Again (settings from ${currentRoomCode})`);
+    
+    callback({
+      success: true,
+      newRoomCode: newRoomCode
     });
   });
 
@@ -3110,7 +3175,16 @@ io.on('connection', (socket) => {
 
   // Lobby events
   socket.on('joinLobby', (data) => {
-    const username = data.username || 'Guest';
+    // For authenticated users, always use their actual username from the token
+    // For guests, use the client-supplied username
+    const username = authenticatedUser ? authenticatedUser.username : (data.username || 'Guest');
+    
+    // Cancel any pending removal for this user
+    if (pendingLobbyRemovals.has(username)) {
+      clearTimeout(pendingLobbyRemovals.get(username));
+      pendingLobbyRemovals.delete(username);
+      console.log(`Cancelled pending removal for ${username} - they reconnected`);
+    }
     
     // Remove any existing socket connections for this user (handles refreshes)
     // For authenticated users, check by userId; for guests, check by username
@@ -3254,12 +3328,37 @@ io.on('connection', (socket) => {
       }
     });
     
-    // Remove from lobby sockets tracking
+    // Schedule delayed removal from lobby sockets (grace period for page navigation)
     const userData = lobbySockets.get(socket.id);
     if (userData) {
-      lobbySockets.delete(socket.id);
-      console.log(`Removed ${userData.username} from online users list`);
-      broadcastOnlineUsers();
+      const username = userData.username;
+      const disconnectedSocketId = socket.id;
+      
+      // Cancel any existing pending removal for this user
+      if (pendingLobbyRemovals.has(username)) {
+        clearTimeout(pendingLobbyRemovals.get(username));
+      }
+      
+      // Schedule removal after grace period
+      const removalTimeout = setTimeout(() => {
+        // Check if this specific socket is still in lobbySockets (not replaced by reconnect)
+        const currentUserData = lobbySockets.get(disconnectedSocketId);
+        
+        if (currentUserData) {
+          // Socket is still there (not replaced), so user truly disconnected
+          lobbySockets.delete(disconnectedSocketId);
+          console.log(`Removed ${username} from online users list after grace period`);
+          broadcastOnlineUsers();
+        } else {
+          // Socket was already replaced by a reconnection, do nothing
+          console.log(`${username} reconnected during grace period, kept in online list`);
+        }
+        
+        pendingLobbyRemovals.delete(username);
+      }, LOBBY_REMOVAL_DELAY);
+      
+      pendingLobbyRemovals.set(username, removalTimeout);
+      console.log(`Scheduled removal of ${username} in ${LOBBY_REMOVAL_DELAY}ms`);
     }
   });
 

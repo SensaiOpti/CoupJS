@@ -19,6 +19,12 @@
       transform: translateY(-2px);
       box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
     }
+    
+    /* Custom character colors */
+    .bg-ambassador { background-color: #739C7B; }
+    .bg-ambassador:hover { background-color: #628a69; }
+    .bg-inquisitor { background-color: #EAC01E; }
+    .bg-inquisitor:hover { background-color: #d1a819; }
   </style>
 </head>
 <body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
@@ -68,10 +74,10 @@
               <button 
                 id="inquisitorBtn"
                 onclick="setGameMode('inquisitor')"
-                class="flex-1 p-4 rounded font-bold bg-purple-600 hover:bg-purple-700 transition-colors"
+                class="flex-1 p-4 rounded font-bold bg-inquisitor transition-colors"
               >
                 <div class="text-lg mb-1">Inquisitor</div>
-                <div class="text-xs text-purple-200">Expansion variant</div>
+                <div class="text-xs text-gray-800">Expansion variant</div>
               </button>
               <button 
                 id="ambassadorBtn"
@@ -79,7 +85,7 @@
                 class="flex-1 p-4 rounded font-bold bg-gray-700 hover:bg-gray-600 transition-colors"
               >
                 <div class="text-lg mb-1">Ambassador</div>
-                <div class="text-xs text-gray-400">Classic version</div>
+                <div class="text-xs text-gray-800">Classic version</div>
               </button>
             </div>
           </div>
@@ -117,9 +123,9 @@
               id="chatMode" 
               class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white cursor-pointer font-semibold"
             >
-              <option value="separate">Separate Chats (Players & Spectators)</option>
-              <option value="unified">Unified Chat (Everyone)</option>
-              <option value="none">No Chat (Disabled)</option>
+              <option value="separate">Separate Chats</option>
+              <option value="unified">Unified Chat</option>
+              <option value="none">No Chat</option>
             </select>
           </div>
         </div>
@@ -150,6 +156,30 @@
                 class="w-full p-3 bg-gray-700 rounded border border-gray-600 text-white"
               />
               <p class="text-xs text-gray-500 mt-2">Players will need this password to join</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Anonymous Mode -->
+      <div class="setting-card bg-gray-800 rounded-lg p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-4xl">🎭</div>
+          <div class="flex-1">
+            <h3 class="text-xl font-bold mb-2">Anonymous Mode</h3>
+            <p class="text-gray-400 text-sm mb-4">Hide player identities during the game</p>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input 
+                type="checkbox" 
+                id="anonymousMode" 
+                class="w-6 h-6 cursor-pointer"
+              />
+              <span class="font-semibold">Use anonymous names during gameplay</span>
+            </label>
+            <div class="mt-3 p-3 bg-blue-900 bg-opacity-30 rounded border border-blue-600">
+              <p class="text-xs text-blue-200">
+                💡 <strong>How it works:</strong> Players will see random names like "DukeJames" or "AssassinAlice" instead of real usernames during the game. Real names are revealed after the game ends.
+              </p>
             </div>
           </div>
         </div>
@@ -213,11 +243,11 @@
       const inquisitorBtn = document.getElementById('inquisitorBtn');
       
       if (mode === 'ambassador') {
-        ambassadorBtn.className = 'flex-1 p-4 rounded font-bold bg-blue-600 hover:bg-blue-700 transition-colors';
+        ambassadorBtn.className = 'flex-1 p-4 rounded font-bold bg-ambassador transition-colors';
         inquisitorBtn.className = 'flex-1 p-4 rounded font-bold bg-gray-700 hover:bg-gray-600 transition-colors';
       } else {
         ambassadorBtn.className = 'flex-1 p-4 rounded font-bold bg-gray-700 hover:bg-gray-600 transition-colors';
-        inquisitorBtn.className = 'flex-1 p-4 rounded font-bold bg-purple-600 hover:bg-purple-700 transition-colors';
+        inquisitorBtn.className = 'flex-1 p-4 rounded font-bold bg-inquisitor transition-colors';
       }
       
       updateSummary();
@@ -267,6 +297,10 @@
       const ranked = document.getElementById('rankedMode').checked;
       summary.push(`🏆 Mode: ${ranked ? 'Ranked' : 'Unranked (casual)'}`);
       
+      // Anonymous
+      const anonymous = document.getElementById('anonymousMode').checked;
+      summary.push(`🎭 Identities: ${anonymous ? 'Anonymous' : 'Visible'}`);
+      
       document.getElementById('summaryText').innerHTML = summary.map(s => `<div>${s}</div>`).join('');
     }
     
@@ -290,7 +324,8 @@
         allowSpectators: document.getElementById('allowSpectators').checked,
         chatMode: document.getElementById('chatMode').value,
         password: password,
-        ranked: document.getElementById('rankedMode').checked
+        ranked: document.getElementById('rankedMode').checked,
+        anonymousMode: document.getElementById('anonymousMode').checked
       };
       
       // Store in localStorage
@@ -307,6 +342,7 @@
     });
     document.getElementById('chatMode').addEventListener('change', updateSummary);
     document.getElementById('rankedMode').addEventListener('change', updateSummary);
+    document.getElementById('anonymousMode').addEventListener('change', updateSummary);
 
     function updateChatOptions() {
       const allowSpectators = document.getElementById('allowSpectators').checked;
@@ -314,9 +350,9 @@
       const currentValue = chatMode.value;
 
       chatMode.innerHTML = allowSpectators
-        ? `<option value="separate">Separate Chats (Players & Spectators)</option>
-           <option value="unified">Unified Chat (Everyone)</option>
-           <option value="none">No Chat (Disabled)</option>`
+        ? `<option value="separate">Separate Chats</option>
+           <option value="unified">Unified Chat</option>
+           <option value="none">No Chat</option>`
         : `<option value="unified">Player Chat</option>
            <option value="none">Disabled</option>`;
 

@@ -56,6 +56,27 @@
     .online-user:hover {
       background: rgba(55, 65, 81, 0.8);
     }
+    
+    /* Custom character colors */
+    .text-ambassador { color: #739C7B; }
+    .text-assassin { color: #0E0E0E; }
+    .text-captain { color: #33609F; }
+    .text-contessa { color: #901E21; }
+    .text-duke { color: #432762; }
+    .text-inquisitor { color: #EAC01E; }
+    
+    .bg-ambassador { background-color: #739C7B; }
+    .bg-ambassador:hover { background-color: #628a69; }
+    .bg-assassin { background-color: #0E0E0E; }
+    .bg-assassin:hover { background-color: #1a1a1a; }
+    .bg-captain { background-color: #33609F; }
+    .bg-captain:hover { background-color: #2a5088; }
+    .bg-contessa { background-color: #901E21; }
+    .bg-contessa:hover { background-color: #7a1a1c; }
+    .bg-duke { background-color: #432762; }
+    .bg-duke:hover { background-color: #362053; }
+    .bg-inquisitor { background-color: #EAC01E; }
+    .bg-inquisitor:hover { background-color: #d1a819; }
   </style>
 </head>
 <body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
@@ -443,11 +464,12 @@
             <div class="flex flex-wrap gap-2 text-xs">
               ${room.hasPassword ? '<span class="bg-red-900 px-2 py-1 rounded">🔒 Password</span>' : ''}
               ${!room.ranked ? '<span class="bg-gray-600 px-2 py-1 rounded">🎮 Unranked</span>' : '<span class="bg-yellow-900 px-2 py-1 rounded">🏆 Ranked</span>'}
-              ${room.useInquisitor ? '<span class="bg-purple-900 px-2 py-1 rounded">⚔️ Inquisitor</span>' : '<span class="bg-blue-900 px-2 py-1 rounded">🎴 Ambassador</span>'}
+              ${room.useInquisitor ? '<span class="bg-inquisitor text-white px-2 py-1 rounded">⚔️ Inquisitor</span>' : '<span class="bg-ambassador text-white px-2 py-1 rounded">🎴 Ambassador</span>'}
               ${room.allowSpectators ? '<span class="bg-blue-900 px-2 py-1 rounded">👁️ Spectators</span>' : '<span class="bg-gray-600 px-2 py-1 rounded">🚫 No Spectators</span>'}
               ${room.chatMode === 'unified' ? `<span class="bg-green-900 px-2 py-1 rounded">💬 ${room.allowSpectators ? 'Unified Chat' : 'Player Chat'}</span>` : 
                 room.chatMode === 'separate' ? '<span class="bg-green-900 px-2 py-1 rounded">💬 Separate Chat</span>' : 
                 '<span class="bg-gray-600 px-2 py-1 rounded">🚫 No Chat</span>'}
+              ${room.anonymousMode ? '<span class="bg-orange-900 px-2 py-1 rounded">🎭 Anonymous</span>' : ''}
             </div>
           </div>
         `;
@@ -541,6 +563,9 @@
       
       socket.emit('lobbyChatMessage', { message });
       input.value = '';
+      
+      // Refocus the input so user can continue typing
+      input.focus();
     }
 
     function setFilter(filter) {

@@ -82,13 +82,13 @@
 
     <!-- Loading State -->
     <div id="loading" class="text-center py-20">
-      <div class="text-6xl mb-4">â³</div>
+      <div class="text-6xl mb-4">⏳</div>
       <div class="text-2xl">Loading profile...</div>
     </div>
 
     <!-- Error State -->
     <div id="error" class="hidden bg-red-900 border border-red-600 rounded-lg p-8 text-center">
-      <div class="text-6xl mb-4">âŒ</div>
+      <div class="text-6xl mb-4">❌</div>
       <div class="text-2xl mb-4">Error Loading Profile</div>
       <div id="errorMessage" class="text-gray-300 mb-4"></div>
       <button onclick="window.location.href='/'" class="bg-red-600 hover:bg-red-700 px-6 py-3 rounded">
@@ -103,7 +103,7 @@
         <div class="flex flex-col md:flex-row items-center md:items-start gap-6">
           <!-- Avatar -->
           <div class="w-32 h-32 bg-gray-700 rounded-full flex items-center justify-center text-6xl">
-            ðŸ‘¤
+            👤
           </div>
           
           <!-- User Info -->
@@ -150,7 +150,7 @@
       <!-- Featured Stats Grid -->
       <div class="stat-card rounded-lg p-6 mb-6">
         <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
-          <span>ðŸ“Š</span>
+          <span>🔊</span>
           <span>Featured Stats</span>
         </h3>
         <div id="featuredStats" class="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -176,7 +176,7 @@
       <!-- Achievements -->
       <div class="stat-card rounded-lg p-6 mb-6" id="achievementsSection">
         <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
-          <span>ðŸ†</span>
+          <span>🏆</span>
           <span>Achievements</span>
         </h3>
         <div id="achievements" class="grid grid-cols-2 md:grid-cols-5 gap-4">
@@ -187,7 +187,7 @@
       <!-- Match History -->
       <div class="stat-card rounded-lg p-6">
         <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
-          <span>ðŸ“œ</span>
+          <span>📜</span>
           <span>Recent Matches</span>
         </h3>
         <div id="matchHistory" class="space-y-3">
@@ -288,14 +288,14 @@
 
     function renderFeaturedStats(stats) {
       const featuredStats = [
-        { label: 'Games Played', value: stats.games_played, icon: 'ðŸŽ®' },
-        { label: 'Coins Earned', value: stats.coins_earned.toLocaleString(), icon: 'ðŸ’°' },
-        { label: 'Tax Success', value: stats.tax_succeeded, icon: 'ðŸ’Ž' },
-        { label: 'Assassinations', value: stats.assassinations_succeeded, icon: 'ðŸ—¡ï¸' },
-        { label: 'Bluffs Succeeded', value: stats.bluffs_succeeded, icon: 'ðŸŽ­' },
-        { label: 'Challenges Won', value: stats.successful_challenges, icon: 'âš”ï¸' },
-        { label: 'Coups Enacted', value: stats.coups_enacted, icon: 'ðŸ’ª' },
-        { label: 'Income Taken', value: stats.income_taken, icon: 'ðŸª™' }
+        { label: 'Games Played', value: stats.games_played, icon: '🎮' },
+        { label: 'Coins Earned', value: stats.coins_earned.toLocaleString(), icon: '💰' },
+        { label: 'Tax Success', value: stats.tax_succeeded, icon: '💎' },
+        { label: 'Assassinations', value: stats.assassinations_succeeded, icon: '🗡️' },
+        { label: 'Bluffs Succeeded', value: stats.bluffs_succeeded, icon: '🎭' },
+        { label: 'Challenges Won', value: stats.successful_challenges, icon: '⚔️' },
+        { label: 'Coups Enacted', value: stats.coups_enacted, icon: '💪' },
+        { label: 'Income Taken', value: stats.income_taken, icon: '🪙' }
       ];
       
       const container = document.getElementById('featuredStats');
@@ -334,9 +334,9 @@
         const placementClass = match.placement === 1 ? 'placement-1' : 
                                match.placement === 2 ? 'placement-2' : 
                                match.placement === 3 ? 'placement-3' : 'placement-other';
-        const placementEmoji = match.placement === 1 ? 'ðŸ¥‡' : 
-                              match.placement === 2 ? 'ðŸ¥ˆ' : 
-                              match.placement === 3 ? 'ðŸ¥‰' : 'ðŸ’€';
+        const placementEmoji = match.placement === 1 ? '🥇' : 
+                              match.placement === 2 ? '🥈' : 
+                              match.placement === 3 ? '🥉' : '💀';
         const eloColor = match.eloChange > 0 ? 'text-green-400' : 
                         match.eloChange < 0 ? 'text-red-400' : 'text-gray-400';
         
@@ -377,9 +377,9 @@
               
               <!-- Quick Stats -->
               <div class="flex gap-2 text-xs">
-                ${match.stats.playersEliminated ? `<span class="bg-red-900 px-2 py-1 rounded">ðŸ—¡ï¸ ${match.stats.playersEliminated} kills</span>` : ''}
-                ${match.stats.bluffsSucceeded ? `<span class="bg-purple-900 px-2 py-1 rounded">ðŸŽ­ ${match.stats.bluffsSucceeded} bluffs</span>` : ''}
-                ${match.stats.coinsStolen ? `<span class="bg-yellow-900 px-2 py-1 rounded">ðŸ’° ${match.stats.coinsStolen} stolen</span>` : ''}
+                ${match.stats.playersEliminated ? `<span class="bg-red-900 px-2 py-1 rounded">🗡️ ${match.stats.playersEliminated} kills</span>` : ''}
+                ${match.stats.bluffsSucceeded ? `<span class="bg-purple-900 px-2 py-1 rounded">🎭 ${match.stats.bluffsSucceeded} bluffs</span>` : ''}
+                ${match.stats.coinsStolen ? `<span class="bg-yellow-900 px-2 py-1 rounded">💰 ${match.stats.coinsStolen} stolen</span>` : ''}
               </div>
             </div>
           </div>

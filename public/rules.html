@@ -10,6 +10,27 @@
       margin: 0;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
     }
+    
+    /* Custom character colors */
+    .text-ambassador { color: #739C7B; }
+    .text-assassin { color: #0E0E0E; }
+    .text-captain { color: #33609F; }
+    .text-contessa { color: #901E21; }
+    .text-duke { color: #432762; }
+    .text-inquisitor { color: #EAC01E; }
+    
+    .bg-ambassador { background-color: #739C7B; }
+    .bg-ambassador:hover { background-color: #628a69; }
+    .bg-assassin { background-color: #0E0E0E; }
+    .bg-assassin:hover { background-color: #1a1a1a; }
+    .bg-captain { background-color: #33609F; }
+    .bg-captain:hover { background-color: #2a5088; }
+    .bg-contessa { background-color: #901E21; }
+    .bg-contessa:hover { background-color: #7a1a1c; }
+    .bg-duke { background-color: #432762; }
+    .bg-duke:hover { background-color: #362053; }
+    .bg-inquisitor { background-color: #EAC01E; }
+    .bg-inquisitor:hover { background-color: #d1a819; }
   </style>
 </head>
 <body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
@@ -35,31 +56,31 @@
         <h2 class="text-3xl font-bold text-red-400 mb-3">Characters (Influence)</h2>
         <div class="space-y-4">
           <div class="bg-gray-700 p-4 rounded">
-            <h3 class="text-xl font-bold text-purple-400 mb-2">Duke</h3>
+            <h3 class="text-xl font-bold text-duke mb-2">Duke</h3>
             <p class="text-gray-300"><strong>Action:</strong> Tax - Take 3 coins from the treasury</p>
             <p class="text-gray-300"><strong>Blocks:</strong> Foreign Aid</p>
           </div>
           
           <div class="bg-gray-700 p-4 rounded">
-            <h3 class="text-xl font-bold text-red-400 mb-2">Assassin</h3>
+            <h3 class="text-xl font-bold text-assassin mb-2">Assassin</h3>
             <p class="text-gray-300"><strong>Action:</strong> Assassinate - Pay 3 coins to force a player to lose influence</p>
             <p class="text-gray-300"><strong>Blocks:</strong> Nothing</p>
           </div>
           
           <div class="bg-gray-700 p-4 rounded">
-            <h3 class="text-xl font-bold text-orange-400 mb-2">Captain</h3>
+            <h3 class="text-xl font-bold text-captain mb-2">Captain</h3>
             <p class="text-gray-300"><strong>Action:</strong> Steal - Take 2 coins from another player</p>
             <p class="text-gray-300"><strong>Blocks:</strong> Stealing</p>
           </div>
           
           <div class="bg-gray-700 p-4 rounded">
-            <h3 class="text-xl font-bold text-teal-400 mb-2">Ambassador</h3>
+            <h3 class="text-xl font-bold text-ambassador mb-2">Ambassador</h3>
             <p class="text-gray-300"><strong>Action:</strong> Exchange - Draw 2 cards, choose which to keep, return 2</p>
             <p class="text-gray-300"><strong>Blocks:</strong> Stealing</p>
           </div>
           
           <div class="bg-gray-700 p-4 rounded">
-            <h3 class="text-xl font-bold text-yellow-400 mb-2">Contessa</h3>
+            <h3 class="text-xl font-bold text-contessa mb-2">Contessa</h3>
             <p class="text-gray-300"><strong>Action:</strong> None</p>
             <p class="text-gray-300"><strong>Blocks:</strong> Assassination</p>
           </div>
@@ -68,12 +89,12 @@
 
       <!-- Inquisitor (Expansion) -->
       <section class="bg-yellow-900 bg-opacity-30 p-4 rounded border border-yellow-600">
-        <h2 class="text-3xl font-bold text-yellow-400 mb-3">Inquisitor (Expansion)</h2>
+        <h2 class="text-3xl font-bold text-inquisitor mb-3">Inquisitor (Expansion)</h2>
         <p class="text-gray-300 mb-3">
           The Inquisitor replaces the Ambassador when the expansion is enabled.
         </p>
         <div class="bg-gray-700 p-4 rounded">
-          <h3 class="text-xl font-bold text-purple-400 mb-2">Inquisitor</h3>
+          <h3 class="text-xl font-bold text-inquisitor mb-2">Inquisitor</h3>
           <p class="text-gray-300"><strong>Action:</strong> Exchange - Draw 1 card, choose to keep it or your current card</p>
           <p class="text-gray-300"><strong>Action:</strong> Examine - Look at one of another player's cards. You may force them to exchange it</p>
           <p class="text-gray-300"><strong>Blocks:</strong> Stealing</p>

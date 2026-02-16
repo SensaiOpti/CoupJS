@@ -129,6 +129,36 @@
       image-rendering: crisp-edges;
       image-rendering: -webkit-optimize-contrast;
     }
+    
+    /* Custom character colors */
+    .text-ambassador { color: #739C7B; }
+    .text-assassin { color: #0E0E0E; }
+    .text-captain { color: #33609F; }
+    .text-contessa { color: #901E21; }
+    .text-duke { color: #432762; }
+    .text-inquisitor { color: #EAC01E; }
+    
+    .bg-ambassador { background-color: #5a7d62; } /* Darkened from #739C7B for better contrast with white text */
+    .bg-ambassador:hover { background-color: #4a6d52; }
+    .bg-assassin { background-color: #2a2a2a; } /* Lightened from #0E0E0E for better contrast with white text */
+    .bg-assassin:hover { background-color: #1a1a1a; }
+    .bg-captain { background-color: #33609F; }
+    .bg-captain:hover { background-color: #2a5088; }
+    .bg-contessa { background-color: #901E21; }
+    .bg-contessa:hover { background-color: #7a1a1c; }
+    .bg-duke { background-color: #432762; }
+    .bg-duke:hover { background-color: #362053; }
+    .bg-inquisitor { background-color: #EAC01E; }
+    .bg-inquisitor:hover { background-color: #d1a819; }
+    
+    /* Game log default text color */
+    .text-log-default { color: #999999; }
+    
+    /* Game log filter buttons */
+    .filter-btn {
+      cursor: pointer;
+      user-select: none;
+    }
   </style>
 </head>
 <body>
@@ -161,6 +191,12 @@
     let chatMode = 'separate'; // 'separate', 'unified', 'none'
     let ranked = true; // Track if game is ranked
     let hasPassword = false; // Track if game has password
+    let anonymousMode = false; // Track if game is in anonymous mode
+
+    // Game log filters
+    let showAllActions = true; // true = show all players' actions, false = show only my actions
+    let showChat = true; // true = show chat, false = hide chat
+    let showSpectatorChat = true; // true = show spectator chat, false = hide spectator chat
 
     // Authentication state
     let authToken = localStorage.getItem('coupAuthToken');
@@ -341,12 +377,12 @@
       // Update all sound buttons without re-rendering
       const soundButtons = document.querySelectorAll('.sound-toggle-btn');
       soundButtons.forEach(btn => {
-        btn.textContent = soundEnabled ? 'ðŸ”Š' : 'ðŸ”‡';
+        btn.textContent = soundEnabled ? '🔊' : '🔇';
       });
       
       const soundButtonsWithText = document.querySelectorAll('.sound-toggle-btn-text');
       soundButtonsWithText.forEach(btn => {
-        btn.textContent = soundEnabled ? 'ðŸ”Š Sound On' : 'ðŸ”‡ Sound Off';
+        btn.textContent = soundEnabled ? '🔊 Sound On' : '🔇 Sound Off';
       });
     }
 
@@ -470,6 +506,10 @@
           hasPassword = state.hasPassword;
         }
 
+        if (state.anonymousMode !== undefined) {
+          anonymousMode = state.anonymousMode;
+        }
+
         if (state.isSpectator !== undefined) {
           isSpectator = state.isSpectator;
         }
@@ -564,7 +604,21 @@
           playSound('your-turn');
         }
         
+        // Preserve chat input focus across render
+        const chatInput = document.getElementById('chatInput');
+        const shouldRefocusChat = chatInput && document.activeElement === chatInput;
+        
         render();
+        
+        // Restore focus to chat input if it was focused before render
+        if (shouldRefocusChat) {
+          setTimeout(() => {
+            const newChatInput = document.getElementById('chatInput');
+            if (newChatInput) {
+              newChatInput.focus();
+            }
+          }, 0);
+        }
       });
 
       socket.on('gameEnded', (data) => {
@@ -609,7 +663,8 @@
         allowSpectators: true,
         chatMode: 'separate',
         password: null,
-        ranked: true
+        ranked: true,
+        anonymousMode: false
       };
       
       if (settingsJSON) {
@@ -634,6 +689,7 @@
         chatMode: settings.chatMode,
         password: settings.password,
         ranked: settings.ranked,
+        anonymousMode: settings.anonymousMode || false,
         persistentPlayerId: getOrCreatePlayerId()
       }, (response) => {
         if (response.success) {
@@ -683,6 +739,7 @@
           useInquisitor = previewData.useInquisitor;
           allowSpectators = previewData.allowSpectators;
           chatMode = previewData.chatMode || 'separate';
+          anonymousMode = previewData.anonymousMode || false;
           gameState = 'lobby';
           render();
         } else {
@@ -883,12 +940,12 @@
 
     function getCharacterColor(character) {
       const colors = {
-        'Duke': 'text-purple-400',
-        'Assassin': 'text-gray-300',
-        'Captain': 'text-blue-400',
-        'Ambassador': 'text-yellow-400',
-        'Inquisitor': 'text-yellow-400',
-        'Contessa': 'text-red-400',
+        'Duke': 'text-duke',
+        'Assassin': 'text-assassin',
+        'Captain': 'text-captain',
+        'Ambassador': 'text-ambassador',
+        'Inquisitor': 'text-inquisitor',
+        'Contessa': 'text-contessa',
         'Income': 'text-green-400',
         'ForeignAid': 'text-blue-300',
         'Coup': 'text-red-500'
@@ -896,33 +953,41 @@
       return colors[character] || 'text-gray-300';
     }
 
+    function getCharacterBgColor(character) {
+      const bgColors = {
+        'Duke': 'bg-duke',
+        'Assassin': 'bg-assassin',
+        'Captain': 'bg-captain',
+        'Ambassador': 'bg-ambassador',
+        'Inquisitor': 'bg-inquisitor',
+        'Contessa': 'bg-contessa'
+      };
+      return bgColors[character] || '';
+    }
+
     function getLogStyle(log) {
-      let borderColor = 'border-gray-700';
       let bgColor = '';
-      let textColor = 'text-gray-300';
+      let textColor = 'text-white';
       
-      if (log.type === 'action') {
-        borderColor = 'border-blue-600';
+      // Use character background if character is specified
+      if (log.character) {
+        bgColor = getCharacterBgColor(log.character);
+      } else if (log.type === 'action') {
         bgColor = 'bg-blue-900 bg-opacity-20';
       } else if (log.type === 'challenge') {
-        borderColor = 'border-red-600';
         bgColor = 'bg-red-900 bg-opacity-20';
       } else if (log.type === 'block') {
-        borderColor = 'border-yellow-600';
         bgColor = 'bg-yellow-900 bg-opacity-20';
       } else if (log.type === 'success') {
-        borderColor = 'border-green-600';
         bgColor = 'bg-green-900 bg-opacity-20';
       } else if (log.type === 'fail') {
-        borderColor = 'border-red-600';
         bgColor = 'bg-red-900 bg-opacity-20';
       }
       
-      if (log.character) {
-        textColor = getCharacterColor(log.character);
-      }
+      // For info messages without character, keep white text
+      // All messages now use white text for legibility
       
-      return { borderColor, bgColor, textColor };
+      return { bgColor, textColor };
     }
 
     function highlightCharactersInLog(message) {
@@ -931,31 +996,28 @@
       
       let result = message;
       
-      characters.forEach(char => {
-        const color = getCharacterColor(char);
-        const regex = new RegExp(`\\b${char}\\b`, 'gi');
-        result = result.replace(regex, `<span class="${color} font-bold">${char}</span>`);
+      // Get all player and spectator names
+      const allNames = [...players.map(p => p.name), ...spectators.map(s => s.name)];
+      
+      // Make player names bold (but not when followed by "'s turn")
+      allNames.forEach(name => {
+        // Escape special regex characters in the name
+        const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        // Match the name but not when it's followed by "'s turn"
+        const regex = new RegExp(`\\b(${escapedName})\\b(?!'s turn)`, 'g');
+        result = result.replace(regex, `<span class="font-bold">$1</span>`);
       });
       
-      const actionColors = {
-        'Tax': 'text-purple-400',
-        'assassinate': 'text-gray-300',
-        'assassinates': 'text-gray-300',
-        'assassination': 'text-gray-300',
-        'Steal': 'text-blue-400',
-        'steals': 'text-blue-400',
-        'steal': 'text-blue-400',
-        'Exchange': 'text-yellow-400',
-        'Examine': 'text-yellow-400',
-        'blocks': 'text-yellow-600',
-        'Income': 'text-green-400',
-        'Foreign Aid': 'text-blue-300',
-        'Coup': 'text-red-500'
-      };
+      // Make characters bold (no color since background provides the color)
+      characters.forEach(char => {
+        const regex = new RegExp(`\\b${char}\\b`, 'gi');
+        result = result.replace(regex, `<span class="font-bold">${char}</span>`);
+      });
       
-      Object.entries(actionColors).forEach(([action, color]) => {
+      // Make actions bold (no color since background provides the color)
+      actions.forEach(action => {
         const regex = new RegExp(`\\b${action}\\b`, 'gi');
-        result = result.replace(regex, (match) => `<span class="${color} font-bold">${match}</span>`);
+        result = result.replace(regex, (match) => `<span class="font-bold">${match}</span>`);
       });
       
       return result;
@@ -974,7 +1036,8 @@
         allowSpectators: allowSpectators,
         chatMode: chatMode,
         ranked: ranked,
-        hasPassword: hasPassword
+        hasPassword: hasPassword,
+        anonymousMode: anonymousMode
       }, (response) => {
         if (response.success) {
           // Mark current room as left
@@ -1029,6 +1092,9 @@
       
       socket.emit('sendChatMessage', { roomCode, message });
       input.value = '';
+      
+      // Refocus the input so user can continue typing
+      input.focus();
     }
 
     // Authentication functions
@@ -1288,6 +1354,21 @@
       countdown = null;
     }
 
+    function toggleActionsFilter() {
+      showAllActions = !showAllActions;
+      render();
+    }
+
+    function toggleChatFilter() {
+      showChat = !showChat;
+      render();
+    }
+
+    function toggleSpectatorChatFilter() {
+      showSpectatorChat = !showSpectatorChat;
+      render();
+    }
+
     function render() {
       const app = document.getElementById('app');
       
@@ -1361,10 +1442,10 @@
               <div class="mt-6 p-4 bg-gray-700 rounded">
                 <h3 class="font-bold mb-2">Why create an account?</h3>
                 <ul class="text-sm text-gray-300 space-y-1">
-                  <li>ðŸ“Š Track your stats and Elo rating</li>
-                  <li>ðŸ† Compete on leaderboards</li>
-                  <li>ðŸ“ˆ View your match history</li>
-                  <li>â­ Build your reputation</li>
+                  <li>🔊 Track your stats and Elo rating</li>
+                  <li>🏆 Compete on leaderboards</li>
+                  <li>📈 View your match history</li>
+                  <li>⭐ Build your reputation</li>
                 </ul>
               </div>
             </div>
@@ -1419,7 +1500,7 @@
                   onclick="backToAuthChoice()"
                   class="text-gray-400 hover:text-white"
                 >
-                  â† Back
+                  ← Back
                 </button>
               </div>
             </div>
@@ -1492,7 +1573,7 @@
                   onclick="backToAuthChoice()"
                   class="text-gray-400 hover:text-white"
                 >
-                  â† Back
+                  ← Back
                 </button>
               </div>
             </div>
@@ -1596,9 +1677,9 @@
                 <div>
                   <label class="font-bold block mb-2">Chat Mode</label>
                   <select id="chatMode" class="w-full p-2 bg-gray-600 rounded border border-gray-500 text-white cursor-pointer">
-                    <option value="separate">Separate Chats (Players & Spectators)</option>
-                    <option value="unified">Unified Chat (Everyone)</option>
-                    <option value="none">No Chat (Disabled)</option>
+                    <option value="separate">Separate Chats</option>
+                    <option value="unified">Unified Chat</option>
+                    <option value="none">No Chat</option>
                   </select>
                 </div>
               </div>
@@ -1654,7 +1735,7 @@
               <h1 class="text-3xl font-bold text-red-500">COUP</h1>
               <div class="flex gap-3">
                 <button onclick="toggleSound()" class="sound-toggle-btn bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm">
-                  ${soundEnabled ? 'ðŸ”Š' : 'ðŸ”‡'}
+                  ${soundEnabled ? '🔊' : '🔇'}
                 </button>
                 <button onclick="${previewMode ? 'cancelPreview' : 'leaveRoom'}()" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">
                   ${previewMode ? 'Cancel' : 'Leave Room'}
@@ -1668,7 +1749,7 @@
                 <p class="text-sm text-gray-400 mb-3">${previewMode ? 'Preview - Choose how to join' : 'Waiting for players'}</p>
                 ${roomIsPlaying ? '<p class="text-sm text-yellow-500 mb-3">⚠️ Game in progress</p>' : ''}
                 <div class="flex gap-3 justify-center flex-wrap">
-                  <span class="px-3 py-1 rounded ${useInquisitor ? 'bg-purple-900 text-purple-200' : 'bg-blue-900 text-blue-200'}">
+                  <span class="px-3 py-1 rounded ${useInquisitor ? 'bg-inquisitor text-white' : 'bg-ambassador text-white'}">
                     ${useInquisitor ? '⚔️ Inquisitor' : '🎴 Ambassador'}
                   </span>
                   <span class="px-3 py-1 rounded ${allowSpectators ? 'bg-blue-900 text-blue-200' : 'bg-gray-700 text-gray-300'}">
@@ -1677,6 +1758,7 @@
                   <span class="px-3 py-1 rounded ${chatMode === 'none' ? 'bg-gray-700 text-gray-300' : 'bg-green-900 text-green-200'}">
                     ${chatMode === 'unified' ? '💬 Unified Chat' : chatMode === 'separate' ? '💬 Separate Chats' : '🚫 No Chat'}
                   </span>
+                  ${anonymousMode ? '<span class="px-3 py-1 rounded bg-orange-900 text-orange-200">🎭 Anonymous</span>' : ''}
                 </div>
               </div>
               
@@ -1702,7 +1784,7 @@
                         <div class="bg-gray-700 p-3 rounded flex items-center justify-between">
                           <div class="flex items-center gap-2">
                             <span>${player.name}</span>
-                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">â­ USER</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">ðŸ‘¤ GUEST</span>`}
+                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">⭐ USER</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">👤 GUEST</span>`}
                             ${isAuth && eloRating ? `<span class="text-xs text-yellow-400">Elo: ${eloRating}</span>` : ''}
                           </div>
                           ${player.isMe ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">YOU</span>' : ''}
@@ -1812,11 +1894,11 @@
             <div class="flex justify-between items-center mb-6">
               <div class="flex items-center gap-4">
                 <h1 class="text-3xl font-bold text-red-500">COUP</h1>
-                ${isSpectator ? '<span class="bg-blue-600 px-3 py-1 rounded text-sm">ðŸ‘ï¸ SPECTATING</span>' : ''}
+                ${isSpectator ? '<span class="bg-blue-600 px-3 py-1 rounded text-sm">👁️ SPECTATING</span>' : ''}
               </div>
               <div class="flex gap-4 items-center">
                 <button onclick="toggleSound()" class="sound-toggle-btn-text bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm flex items-center gap-2">
-                  ${soundEnabled ? 'ðŸ”Š Sound On' : 'ðŸ”‡ Sound Off'}
+                  ${soundEnabled ? '🔊 Sound On' : '🔇 Sound Off'}
                 </button>
                 <div class="text-gray-400">Room: ${roomCode}</div>
                 <button onclick="leaveRoom()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">
@@ -1840,17 +1922,18 @@
                             <h3 class="font-bold text-lg">
                               ${player.name}
                               ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
-                              ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">âš ï¸ DISCONNECTED</span>' : ''}
+                              ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
+                              ${player.hasLeft ? '<span class="text-xs ml-2 text-gray-400">LEFT</span>' : ''}
                             </h3>
                           </div>
                           <div class="flex items-center gap-2 flex-wrap">
-                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">â­</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">ðŸ‘¤</span>`}
+                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">⭐</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">👤</span>`}
                             ${isAuth && eloRating ? `<span class="text-xs text-yellow-400 font-semibold">${eloRating}</span>` : ''}
                             ${player.id === currentPlayerId ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">TURN</span>' : ''}
                           </div>
                         </div>
                         <div class="flex items-center gap-1 text-yellow-500">
-                          <span>ðŸ’°</span>
+                          <span>💰</span>
                           <span class="font-bold">${player.coins}</span>
                         </div>
                       </div>
@@ -1880,7 +1963,7 @@
                                 </div>
                               ` : shouldShowCard ? `
                                 <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded" />
-                                ${isSpectator && spectatorRevealed ? '<div class="absolute top-1 right-1 text-blue-400 text-xs">ðŸ‘ï¸</div>' : ''}
+                                ${isSpectator && spectatorRevealed ? '<div class="absolute top-1 right-1 text-blue-400 text-xs">👁️</div>' : ''}
                               ` : `
                                 <img src="${getCardImagePath('back')}" alt="Hidden card" class="w-full h-auto rounded" />
                                 ${isSpectator ? '<div class="absolute bottom-1 left-0 right-0 text-xs text-gray-400 text-center">Click to peek</div>' : ''}
@@ -1899,7 +1982,7 @@
                       <h3 class="text-xl font-bold text-yellow-300">Action in Progress</h3>
                       ${actionInProgress.pausedForDisconnection ? `
                         <div class="bg-yellow-800 px-4 py-2 rounded-lg">
-                          <span class="text-sm text-yellow-200">â¸ï¸ Paused - Waiting for reconnection</span>
+                          <span class="text-sm text-yellow-200">⏸️ Paused - Waiting for reconnection</span>
                         </div>
                       ` : countdown !== null ? `
                         <div class="flex flex-col items-end gap-1">
@@ -1919,7 +2002,7 @@
                     
                     ${myResponse ? `
                       <div class="bg-green-900 border border-green-600 rounded p-4 text-center">
-                        <div class="text-green-300 font-bold mb-2">âœ“ Response Recorded</div>
+                        <div class="text-green-300 font-bold mb-2">✓ Response Recorded</div>
                         <div class="text-green-200 text-sm">Waiting for other players...</div>
                       </div>
                     ` : `
@@ -1955,7 +2038,7 @@
                       <h3 class="text-xl font-bold text-blue-300">Block Declared</h3>
                       ${actionInProgress.pausedForDisconnection ? `
                         <div class="bg-blue-800 px-4 py-2 rounded-lg">
-                          <span class="text-sm text-blue-200">â¸ï¸ Paused - Waiting for reconnection</span>
+                          <span class="text-sm text-blue-200">⏸️ Paused - Waiting for reconnection</span>
                         </div>
                       ` : countdown !== null ? `
                         <div class="flex flex-col items-end gap-1">
@@ -1977,7 +2060,7 @@
                     
                     ${myResponse ? `
                       <div class="bg-green-900 border border-green-600 rounded p-4 text-center">
-                        <div class="text-green-300 font-bold mb-2">âœ“ Response Recorded</div>
+                        <div class="text-green-300 font-bold mb-2">✓ Response Recorded</div>
                         <div class="text-green-200 text-sm">Waiting for other players...</div>
                       </div>
                     ` : `
@@ -2031,7 +2114,7 @@
                         >
                           <img src="${getCardImagePath(cardName)}" alt="${card.card || card}" class="w-full h-auto rounded mb-2" />
                           <div class="text-sm font-bold">
-                            ${selectedExchangeCards.includes(idx) ? 'âœ“ Keep' : 'Click to keep'}
+                            ${selectedExchangeCards.includes(idx) ? '✓ Keep' : 'Click to keep'}
                           </div>
                         </button>
                       `}).join('')}
@@ -2114,7 +2197,7 @@
                           ${players.filter(p => p.id !== myPlayerId && p.alive).map(player => `
                             <button onclick="performAction('${selectedTarget}', '${player.id}')" 
                               class="bg-gray-600 hover:bg-gray-500 p-3 rounded ${player.disconnected ? 'opacity-75' : ''}">
-                              ${player.name} (${player.coins} ðŸ’°)${player.disconnected ? ' âš ï¸' : ''}
+                              ${player.name} (${player.coins} 💰)${player.disconnected ? ' ⚠️' : ''}
                             </button>
                           `).join('')}
                         </div>
@@ -2122,35 +2205,35 @@
                     ` : ''}
                     
                     <div class="grid grid-cols-2 gap-3">
-                      <button onclick="performAction('income')" class="bg-green-600 hover:bg-green-700 p-3 rounded">
-                        Income (+1 ðŸ’°)
+                      <button onclick="performAction('income')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
+                        Income (+1 💰)
                       </button>
-                      <button onclick="performAction('foreignAid')" class="bg-blue-600 hover:bg-blue-700 p-3 rounded">
-                        Foreign Aid (+2 ðŸ’°)
+                      <button onclick="performAction('foreignAid')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
+                        Foreign Aid (+2 💰)
                       </button>
-                      <button onclick="performAction('tax')" class="bg-purple-600 hover:bg-purple-700 p-3 rounded">
-                        Tax - Duke (+3 ðŸ’°)
+                      <button onclick="performAction('tax')" class="bg-duke p-3 rounded text-white">
+                        Tax - Duke (+3 💰)
                       </button>
-                      <button onclick="selectedTarget = 'steal'; render()" class="bg-orange-600 hover:bg-orange-700 p-3 rounded">
+                      <button onclick="selectedTarget = 'steal'; render()" class="bg-captain p-3 rounded text-white">
                         Steal - Captain
                       </button>
-                      <button onclick="performAction('exchange')" class="bg-teal-600 hover:bg-teal-700 p-3 rounded">
+                      <button onclick="performAction('exchange')" class="${useInquisitor ? 'bg-inquisitor' : 'bg-ambassador'} p-3 rounded text-white">
                         Exchange - ${useInquisitor ? 'Inquisitor' : 'Ambassador'}
                       </button>
                       ${useInquisitor ? `
-                        <button onclick="selectedTarget = 'examine'; render()" class="bg-purple-600 hover:bg-purple-700 p-3 rounded">
+                        <button onclick="selectedTarget = 'examine'; render()" class="bg-inquisitor p-3 rounded text-white">
                           Examine - Inquisitor
                         </button>
                       ` : '<div></div>'}
                       <button onclick="selectedTarget = 'assassinate'; render()" 
-                        class="bg-red-600 hover:bg-red-700 p-3 rounded ${myPlayer.coins < 3 ? 'opacity-50 cursor-not-allowed' : ''}"
+                        class="bg-assassin p-3 rounded text-white ${myPlayer.coins < 3 ? 'opacity-50 cursor-not-allowed' : ''}"
                         ${myPlayer.coins < 3 ? 'disabled' : ''}>
-                        Assassinate (3 ðŸ’°)
+                        Assassinate (3 💰)
                       </button>
                       <button onclick="selectedTarget = 'coup'; render()" 
-                        class="bg-red-900 hover:bg-red-950 p-3 rounded ${!useInquisitor ? 'col-span-2' : ''} ${myPlayer.coins < 7 ? 'opacity-50 cursor-not-allowed' : ''}"
+                        class="bg-red-900 hover:bg-red-950 p-3 rounded text-white ${!useInquisitor ? 'col-span-2' : ''} ${myPlayer.coins < 7 ? 'opacity-50 cursor-not-allowed' : ''}"
                         ${myPlayer.coins < 7 ? 'disabled' : ''}>
-                        Coup (7 ðŸ’°)
+                        Coup (7 💰)
                       </button>
                     </div>
                     
@@ -2177,12 +2260,12 @@
                   </div>
                 ` : !isMyTurn && !canIRespond && !canIChallengeBlock && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && actionInProgress && actionInProgress.pausedForDisconnection && myPlayer?.alive && !isSpectator ? `
                   <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
-                    <h3 class="text-xl font-bold mb-4 text-yellow-300">â¸ï¸ Action Paused</h3>
+                    <h3 class="text-xl font-bold mb-4 text-yellow-300">⏸️ Action Paused</h3>
                     <p class="text-yellow-100">Waiting for disconnected player(s) to reconnect...</p>
                   </div>
                 ` : !isMyTurn && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && !actionInProgress && myPlayer?.alive && !isSpectator && players[currentPlayerId]?.disconnected ? `
                   <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
-                    <h3 class="text-xl font-bold mb-4 text-yellow-300">âš ï¸ Game Paused</h3>
+                    <h3 class="text-xl font-bold mb-4 text-yellow-300">⚠️ Game Paused</h3>
                     <p class="text-yellow-100">${players.find(p => p.id === currentPlayerId)?.name} is disconnected</p>
                     <p class="text-yellow-200 text-sm mt-2">Waiting for them to reconnect...</p>
                   </div>
@@ -2190,7 +2273,7 @@
 
                 ${isSpectator ? `
                   <div class="bg-blue-900 border-2 border-blue-600 rounded-lg p-6 text-center">
-                    <div class="text-2xl mb-2">ðŸ‘ï¸</div>
+                    <div class="text-2xl mb-2">👁️</div>
                     <div class="text-xl font-bold text-blue-300 mb-2">Spectating</div>
                     <div class="text-blue-200 text-sm">You're watching the game</div>
                   </div>
@@ -2198,22 +2281,84 @@
               </div>
 
               <div>
-                <div id="gameLogContainer" class="bg-gray-800 rounded-lg p-4 h-[600px] overflow-y-auto mb-4" onscroll="checkScrollPosition()">
-                  <div class="flex justify-between items-center mb-3 sticky top-0 bg-gray-800 pb-2 border-b border-gray-700">
-                    <h3 class="font-bold">Game Log</h3>
+                <div id="gameLogContainer" class="bg-gray-800 rounded-lg px-4 pb-4 h-[600px] overflow-y-auto mb-4" onscroll="checkScrollPosition()">
+                  <div class="flex justify-between items-center mb-3 sticky top-0 bg-gray-800 pb-2 pt-4 border-b border-gray-700 z-50">
+                    <div class="flex items-center gap-2">
+                      <h3 class="font-bold">Game Log</h3>
+                      <div class="flex gap-1">
+                        <button 
+                          onclick="toggleActionsFilter()" 
+                          class="text-xs px-2 py-1 rounded transition-colors ${showAllActions ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-600 hover:bg-gray-500'}"
+                          title="${showAllActions ? 'Showing all actions' : 'Showing only my actions'}"
+                        >
+                          ${showAllActions ? '👥' : '👤'}
+                        </button>
+                        <button 
+                          onclick="toggleChatFilter()" 
+                          class="text-xs px-2 py-1 rounded transition-colors ${showChat ? 'bg-green-600 hover:bg-green-700' : 'bg-gray-600 hover:bg-gray-500'}"
+                          title="${showChat ? 'Chat visible' : 'Chat hidden'}"
+                        >
+                          💬
+                        </button>
+                        ${allowSpectators ? `
+                          <button 
+                            onclick="toggleSpectatorChatFilter()" 
+                            class="text-xs px-2 py-1 rounded transition-colors ${showSpectatorChat ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-600 hover:bg-gray-500'}"
+                            title="${showSpectatorChat ? 'Spectator chat visible' : 'Spectator chat hidden'}"
+                          >
+                            👁️
+                          </button>
+                        ` : ''}
+                      </div>
+                    </div>
                     <div class="text-sm text-gray-400">
                       <span class="font-bold text-white">${deckSize}</span> cards in deck
                     </div>
                   </div>
                   <div class="space-y-2">
-                    ${gameLog.map(log => {
+                    ${gameLog.filter(log => {
+                      // Filter chat messages
+                      if (log.type === 'chat') {
+                        if (!showChat) return false;
+                        if (log.isSpectator && !showSpectatorChat) return false;
+                        return true;
+                      }
+                      
+                      // Filter action messages (only if not showing all actions)
+                      if (!showAllActions) {
+                        const myPlayer = players.find(p => p.isMe);
+                        if (!myPlayer) return true; // Show all if can't determine "me"
+                        
+                        const myName = myPlayer.name;
+                        const message = log.message;
+                        
+                        // Always show general game events (no player name, or special messages)
+                        if (message.startsWith('---') || 
+                            message.startsWith('🎉') || 
+                            message.includes('wins the game') ||
+                            message.includes('Game started') ||
+                            message.includes('joined') ||
+                            message.includes('disconnected') ||
+                            message.includes('left the game')) {
+                          return true;
+                        }
+                        
+                        // Show if message involves my name
+                        if (message.includes(myName)) return true;
+                        
+                        // Hide other players' actions
+                        return false;
+                      }
+                      
+                      return true;
+                    }).map(log => {
                       if (log.type === 'chat') {
                         // Chat message styling
                         const isSpectatorChat = log.isSpectator;
-                        const chatColor = isSpectatorChat ? 'border-blue-500 bg-blue-900 bg-opacity-20' : 'border-green-500 bg-green-900 bg-opacity-20';
+                        const chatColor = isSpectatorChat ? 'border-blue-500' : 'border-green-500';
                         const badge = isSpectatorChat ? '<span class="text-xs bg-blue-600 px-1 rounded">SPEC</span>' : '';
                         return `
-                          <div class="text-sm text-gray-200 border-l-2 ${chatColor} pl-3 py-1 rounded-r">
+                          <div class="text-sm text-white border-l-2 ${chatColor} pl-3 py-1 rounded-r">
                             <span class="font-bold">${log.playerName}</span> ${badge}: ${log.message}
                           </div>
                         `;
@@ -2222,7 +2367,7 @@
                         const style = getLogStyle(log);
                         const highlighted = highlightCharactersInLog(log.message);
                         return `
-                          <div class="text-sm ${style.textColor} border-l-2 ${style.borderColor} ${style.bgColor} pl-3 py-1 rounded-r">
+                          <div class="text-sm ${style.textColor} ${style.bgColor} pl-3 py-1 rounded">
                             ${highlighted}
                           </div>
                         `;
@@ -2258,7 +2403,7 @@
                     <div class="space-y-2">
                       ${spectators.map(spectator => `
                         <div class="text-sm text-gray-300 flex items-center gap-2">
-                          <span class="text-blue-500">ðŸ‘ï¸</span>
+                          <span class="text-blue-500">👁️</span>
                           <span>${spectator.name}</span>
                           ${spectator.isMe ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded ml-auto">YOU</span>' : ''}
                         </div>

@@ -185,6 +185,7 @@ function createRoom(roomCode, options = {}) {
     chatMode: options.chatMode || 'separate', // Default to separate
     password: options.password || null, // Optional password protection
     ranked: options.ranked !== false, // Default to ranked (true)
+    anonymousMode: options.anonymousMode || false, // Default to false
     gameStartTime: null, // Track when game starts
     gameEndTime: null, // Track when game ends
     eliminationOrder: [] // Track order of elimination: [{playerId, playerName, coins, placement}]
@@ -210,6 +211,37 @@ function getSpectatorBySocketId(room, socketId) {
 
 function getPlayerById(room, playerId) {
   return room.players.find(p => p.id === playerId);
+}
+
+function generateAnonymousName(usedNames) {
+  try {
+    const titles = ['Ambassador', 'Assassin', 'Captain', 'Contessa', 'Duke', 'Inquisitor'];
+    const fs = require('fs');
+    const path = require('path');
+    
+    // Read names from the public directory
+    const namesPath = path.join(__dirname, 'public', 'randomnames.txt');
+    const names = fs.readFileSync(namesPath, 'utf-8')
+      .split('\n')
+      .map(n => n.trim())
+      .filter(n => n.length > 0);
+    
+    let attempts = 0;
+    let anonymousName;
+    
+    do {
+      const title = titles[Math.floor(Math.random() * titles.length)];
+      const name = names[Math.floor(Math.random() * names.length)];
+      anonymousName = `${title}${name}`;
+      attempts++;
+    } while (usedNames.has(anonymousName) && attempts < 100);
+    
+    usedNames.add(anonymousName);
+    return anonymousName;
+  } catch (error) {
+    console.error('Error generating anonymous name:', error);
+    return `Player${Math.floor(Math.random() * 1000)}`;
+  }
 }
 
 function emitToRoom(roomCode, event, customData = null) {
@@ -246,6 +278,19 @@ function emitToRoom(roomCode, event, customData = null) {
   });
 }
 
+// Helper function to clear action and associated timeout
+function clearActionAndTimeout(room) {
+  if (room.responseTimeout) {
+    clearTimeout(room.responseTimeout);
+    room.responseTimeout = null;
+  }
+  if (room.actionInProgress && room.actionInProgress.responseTimeout) {
+    clearTimeout(room.actionInProgress.responseTimeout);
+    room.actionInProgress.responseTimeout = null;
+  }
+  room.actionInProgress = null;
+}
+
 function getPublicGameState(room, socketId, isSpectator = false) {
   const player = getPlayerBySocketId(room, socketId);
   const spectator = getSpectatorBySocketId(room, socketId);
@@ -265,31 +310,36 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     chatMode: room.chatMode,
     hasPassword: !!room.password, // Only expose if password exists, not the actual password
     ranked: room.ranked,
+    anonymousMode: room.anonymousMode,
     deckSize: room.deck.length,
     isSpectator: isSpectator,
-    players: room.players.map(p => ({
-      id: p.id,
-      name: p.name,
-      username: p.username || null,
-      isGuest: p.isGuest || false,
-      userId: p.userId || null,
-      stats: p.stats || null,
-      coins: p.coins,
-      influenceCount: p.influences.length,
-      disconnected: p.disconnected || false,
-      // Spectators can see all cards, players can only see their own cards
-      influences: (p.socketId === socketId && !isSpectator) || isSpectator ? p.influences : p.influences.map(inf => inf.revealed ? inf : { revealed: false }),
-      alive: p.alive,
-      mustRevealInfluence: p.mustRevealInfluence || false,
-      influencesToLose: p.influencesToLose || 0,
-      mustChooseExchange: p.mustChooseExchange || false,
-      mustChooseExamine: p.mustChooseExamine || false,
-      mustShowCardToExaminer: p.mustShowCardToExaminer || false,
-      examineTargetId: p.examineTargetId || null,
-      examinedCard: (p.socketId === socketId && !isSpectator) ? (p.examinedCard || null) : null,
-      exchangeCards: (p.socketId === socketId && !isSpectator) ? (p.exchangeCards || null) : null,
-      isMe: p.socketId === socketId && !isSpectator
-    })),
+    players: room.players.map(p => {
+      const displayName = room.anonymousMode && room.state === 'playing' && p.anonymousName ? p.anonymousName : p.name;
+      return {
+        id: p.id,
+        name: displayName,
+        username: p.username || null,
+        isGuest: p.isGuest === true,
+        userId: p.userId || null,
+        stats: p.stats || null,
+        coins: p.coins,
+        influenceCount: p.influences.length,
+        disconnected: p.disconnected || false,
+        hasLeft: p.hasLeft || false,
+        // Spectators can see all cards, players can only see their own cards
+        influences: (p.socketId === socketId && !isSpectator) || isSpectator ? p.influences : p.influences.map(inf => inf.revealed ? inf : { revealed: false }),
+        alive: p.alive,
+        mustRevealInfluence: p.mustRevealInfluence || false,
+        influencesToLose: p.influencesToLose || 0,
+        mustChooseExchange: p.mustChooseExchange || false,
+        mustChooseExamine: p.mustChooseExamine || false,
+        mustShowCardToExaminer: p.mustShowCardToExaminer || false,
+        examineTargetId: p.examineTargetId || null,
+        examinedCard: (p.socketId === socketId && !isSpectator) ? (p.examinedCard || null) : null,
+        exchangeCards: (p.socketId === socketId && !isSpectator) ? (p.exchangeCards || null) : null,
+        isMe: p.socketId === socketId && !isSpectator
+      };
+    }),
     spectators: room.spectators.map(s => ({
       id: s.id,
       name: s.name,
@@ -310,8 +360,8 @@ function getPublicGameState(room, socketId, isSpectator = false) {
       
       // Separate chat mode: filter by sender/receiver type
       if (room.chatMode === 'separate') {
-        // Spectators only see spectator chat
-        if (isSpectator) return log.isSpectator === true;
+        // Spectators see all chat (player + spectator)
+        if (isSpectator) return true;
         // Players only see player chat
         return log.isSpectator === false;
       }
@@ -329,6 +379,14 @@ function startGame(room) {
 
   // Randomize player order
   room.players.sort(() => Math.random() - 0.5);
+
+  // Generate anonymous names if in anonymous mode
+  if (room.anonymousMode) {
+    const usedNames = new Set();
+    room.players.forEach(player => {
+      player.anonymousName = generateAnonymousName(usedNames);
+    });
+  }
 
   room.deck = shuffleDeck(room.useInquisitor);
   room.state = 'playing';
@@ -454,6 +512,16 @@ function performAction(room, socketId, action, targetId) {
     blockers = blockers.filter(card => card !== 'Ambassador');
   }
 
+  // Clear any existing timer from previous action
+  if (room.responseTimeout) {
+    clearTimeout(room.responseTimeout);
+    room.responseTimeout = null;
+  }
+  if (room.actionInProgress && room.actionInProgress.responseTimeout) {
+    clearTimeout(room.actionInProgress.responseTimeout);
+    room.actionInProgress.responseTimeout = null;
+  }
+
   room.actionInProgress = {
     action,
     playerId: player.id,
@@ -507,6 +575,12 @@ function performAction(room, socketId, action, targetId) {
     room.actionInProgress.totalResponders = eligibleResponders.length;
     room.actionInProgress.respondedCount = 0;
     
+    // If no one can respond (e.g., all other players are disconnected), resolve immediately
+    if (eligibleResponders.length === 0) {
+      resolveAction(room);
+      return { success: true };
+    }
+    
     // Check if target is disconnected (for blockable actions)
     const targetIsDisconnected = targetPlayer && targetPlayer.disconnected;
     
@@ -515,7 +589,7 @@ function performAction(room, socketId, action, targetId) {
       addLogToRoom(room, `âš ï¸ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
     } else {
       // Set timeout for responses (12 seconds)
-      room.actionInProgress.responseTimeout = setTimeout(() => {
+      const timeoutId = setTimeout(() => {
         if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
           // Log that no one responded
           if (room.actionInProgress.action === 'foreignAid') {
@@ -525,6 +599,10 @@ function performAction(room, socketId, action, targetId) {
           emitToRoom(room.code, 'gameState');
         }
       }, 12000); // 12 seconds
+      
+      // Store at both levels so we always have a reference
+      room.actionInProgress.responseTimeout = timeoutId;
+      room.responseTimeout = timeoutId;
     }
   } else {
     // No responses needed, resolve immediately
@@ -538,6 +616,16 @@ function respondToAction(room, socketId, response) {
   const player = getPlayerBySocketId(room, socketId);
   if (!player || !room.actionInProgress) {
     return { success: false, error: 'Invalid response' };
+  }
+
+  // Verify this player is in the pending responses set
+  if (!room.pendingResponses.has(player.id)) {
+    return { success: false, error: 'Not eligible to respond' };
+  }
+
+  // Check if player has already responded
+  if (room.actionInProgress.responses[player.id]) {
+    return { success: false, error: 'Already responded' };
   }
 
   // During the initial action phase, can't respond to your own action
@@ -621,7 +709,7 @@ function respondToAction(room, socketId, response) {
           } else {
             addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', room.actionInProgress.blockCard);
           }
-          room.actionInProgress = null;
+          clearActionAndTimeout(room);
           nextTurn(room);
         } else {
           // Still waiting for disconnected players - pause
@@ -678,6 +766,12 @@ function handleChallenge(room, challengerId) {
   const challenger = getPlayerById(room, challengerId);
   const actor = getPlayerById(room, action.playerId);
   const actionData = ACTIONS[action.action];
+
+  // Clear any existing timer since challenge resolves the action
+  if (action.responseTimeout) {
+    clearTimeout(action.responseTimeout);
+    action.responseTimeout = null;
+  }
 
   addLogToRoom(room, `${challenger.name} challenges ${actor.name}!`, 'challenge');
 
@@ -738,7 +832,7 @@ function handleChallenge(room, challengerId) {
     }
     
     loseInfluence(room, action.playerId, 1, challengerId);
-    room.actionInProgress = null;
+    clearActionAndTimeout(room);
     nextTurn(room);
   }
 }
@@ -764,6 +858,44 @@ function handleBlock(room, blockerId, blockCard) {
   room.actionInProgress.totalResponders = eligibleChallengersList.length;
   room.actionInProgress.respondedCount = 0;
   
+  // If no one can challenge (e.g., all other players are disconnected), block succeeds immediately
+  if (eligibleChallengersList.length === 0) {
+    const blocker = getPlayerById(room, blockerId);
+    if (blocker && blocker.gameStats) {
+      const hasCard = blocker.influences.some(inf => !inf.revealed && inf.card === blockCard);
+      if (hasCard) {
+        blocker.gameStats.claimsDefended += 1;
+      } else {
+        blocker.gameStats.bluffsSucceeded += 1;
+      }
+      if (action.action === 'steal') {
+        blocker.gameStats.stealsBlocked += 1;
+      } else if (action.action === 'assassinate') {
+        blocker.gameStats.contessaSucceeded += 1;
+      } else if (action.action === 'foreignAid') {
+        blocker.gameStats.foreignaidblockSucceeded += 1;
+      }
+    }
+    
+    const originalActor = getPlayerById(room, action.playerId);
+    if (originalActor && originalActor.gameStats) {
+      if (action.action === 'foreignAid') {
+        originalActor.gameStats.foreignaidDenied += 1;
+      } else if (action.action === 'assassinate') {
+        originalActor.gameStats.assassinationsFailed += 1;
+      }
+    }
+    
+    if (action.action === 'foreignAid') {
+      addLogToRoom(room, `The block succeeds. Foreign Aid is blocked!`, 'success', blockCard);
+    } else {
+      addLogToRoom(room, `The block succeeds!`, 'success', blockCard);
+    }
+    clearActionAndTimeout(room);
+    nextTurn(room);
+    return;
+  }
+  
   // Check if there are any disconnected players who could challenge
   const hasDisconnectedChallengers = room.players.some(p => p.alive && p.id !== blockerId && p.disconnected);
   
@@ -775,7 +907,13 @@ function handleBlock(room, blockerId, blockCard) {
       .join(', ');
     addLogToRoom(room, `âš ï¸ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
   } else {
-    room.actionInProgress.responseTimeout = setTimeout(() => {
+    // Clear any previous timeout before setting new one
+    if (room.responseTimeout) {
+      clearTimeout(room.responseTimeout);
+      room.responseTimeout = null;
+    }
+    
+    const timeoutId = setTimeout(() => {
       if (room.actionInProgress && room.actionInProgress.phase === 'block') {
         // Block succeeded without being challenged
         const blocker = getPlayerById(room, room.actionInProgress.blockerId);
@@ -816,11 +954,15 @@ function handleBlock(room, blockerId, blockCard) {
         } else {
           addLogToRoom(room, `No one challenges the block. The action is blocked!`, 'success', blockCard);
         }
-        room.actionInProgress = null;
+        clearActionAndTimeout(room);
         nextTurn(room);
         emitToRoom(room.code, 'gameState');
       }
     }, 12000); // 12 seconds
+    
+    // Store at both levels so we always have a reference
+    room.actionInProgress.responseTimeout = timeoutId;
+    room.responseTimeout = timeoutId;
   }
 }
 
@@ -835,6 +977,12 @@ function challengeBlock(room, socketId) {
 
   if (challenger.id === action.blockerId) {
     return { success: false, error: 'Cannot challenge your own block' };
+  }
+  
+  // Clear any existing timer since challenge resolves the block
+  if (action.responseTimeout) {
+    clearTimeout(action.responseTimeout);
+    action.responseTimeout = null;
   }
   
   addLogToRoom(room, `${challenger.name} challenges the block!`, 'challenge');
@@ -887,7 +1035,7 @@ function challengeBlock(room, socketId) {
     } else {
       addLogToRoom(room, `The block stands. The action is blocked!`, 'success', action.blockCard);
     }
-    room.actionInProgress = null;
+    clearActionAndTimeout(room);
     nextTurn(room);
   } else {
     // Challenge succeeded - blocker was bluffing
@@ -927,7 +1075,9 @@ function challengeBlock(room, socketId) {
 
 function resolveAction(room) {
   const action = room.actionInProgress;
-  if (!action) return;
+  if (!action) {
+    return;
+  }
 
   const actionData = ACTIONS[action.action];
   const actor = getPlayerById(room, action.playerId);
@@ -1051,7 +1201,7 @@ function resolveAction(room) {
       break;
   }
 
-  room.actionInProgress = null;
+  clearActionAndTimeout(room);
   nextTurn(room);
 }
 
@@ -1237,7 +1387,6 @@ function revealInfluence(room, playerId, cardIndex) {
       placement: placement
     };
     room.eliminationOrder.push(eliminationEntry);
-    console.log(`Player eliminated: ${player.name}, placement: ${placement}, adding to eliminationOrder:`, eliminationEntry);
     
     // Track who eliminated this player
     if (player.influenceLossCausedBy) {
@@ -1302,7 +1451,6 @@ function checkWinCondition(room) {
     // Save game results to database
     saveGameResults(room);
     
-    console.log('Game ended, sending elimination order:', room.eliminationOrder);
     emitToRoom(room.code, 'gameEnded', { 
       winner: winner.name,
       winnerId: winner.id,
@@ -1393,13 +1541,11 @@ function calculateEloChanges(players, winnerId) {
 function saveGameResults(room) {
   try {
     if (!room.gameStartTime || !room.gameEndTime) {
-      console.log('Game start/end time not recorded, skipping save');
       return;
     }
     
     // Skip stats for unranked games
     if (room.ranked === false) {
-      console.log(`Game ${room.code} was unranked - not saving stats`);
       return;
     }
     
@@ -1497,12 +1643,6 @@ function saveGameResults(room) {
       );
       
       db.saveDatabase();
-      
-      console.log(`Updated stats for user ${player.username}:`, {
-        isWinner,
-        eloChange: eloChange ? eloChange.change : 0,
-        newElo: eloChange ? eloChange.newElo : player.stats.elo_rating
-      });
     });
     
     // Prepare player data for game history
@@ -1544,8 +1684,6 @@ function saveGameResults(room) {
     
     db.saveDatabase();
     
-    console.log(`Game ${room.code} saved to history. Winner: ${winner?.name}, Duration: ${duration}s`);
-    
   } catch (error) {
     console.error('Error saving game results:', error);
   }
@@ -1582,7 +1720,7 @@ function nextTurn(room) {
   addLogToRoom(room, `--- ${room.players[next].name}'s turn ---`, 'info');
 }
 
-function switchToPlayer(room, socketId, name, persistentPlayerId) {
+function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedUser = null) {
   const spectator = getSpectatorBySocketId(room, socketId);
   if (!spectator) {
     return { success: false, error: 'Spectator not found' };
@@ -1599,12 +1737,22 @@ function switchToPlayer(room, socketId, name, persistentPlayerId) {
   // Remove from spectators
   room.spectators = room.spectators.filter(s => s.socketId !== socketId);
 
+  // Fetch stats if authenticated
+  let stats = null;
+  if (authenticatedUser && authenticatedUser.stats) {
+    stats = authenticatedUser.stats;
+  }
+
   // Add to players
   const player = {
     id: persistentPlayerId || socketId,
     persistentId: persistentPlayerId || socketId,
     socketId: socketId,
-    name: name || spectator.name,
+    name: authenticatedUser ? authenticatedUser.username : (name || spectator.name),
+    userId: authenticatedUser ? authenticatedUser.id : null,
+    username: authenticatedUser ? authenticatedUser.username : null,
+    isGuest: !authenticatedUser,
+    stats: stats,
     coins: 2,
     influences: [],
     alive: true,
@@ -2486,18 +2634,31 @@ const pendingLobbyRemovals = new Map(); // username -> timeout
 const LOBBY_REMOVAL_DELAY = 3000; // 3 seconds grace period for page navigation
 
 function broadcastRoomList() {
-  const roomList = Array.from(rooms.entries()).map(([code, room]) => ({
-    code: code,
-    name: room.name,
-    state: room.state,
-    playerCount: room.players.length,
-    spectatorCount: room.spectators.length,
-    useInquisitor: room.useInquisitor,
-    allowSpectators: room.allowSpectators,
-    chatMode: room.chatMode,
-    hasPassword: !!room.password,
-    ranked: room.ranked
-  }));
+  const roomList = Array.from(rooms.entries())
+    .map(([code, room]) => {
+      // Count only players who haven't left
+      const activePlayers = room.players.filter(p => !p.hasLeft);
+      const activeSpectators = room.spectators.filter(s => !s.hasLeft);
+      
+      return {
+        code: code,
+        name: room.name,
+        state: room.state,
+        playerCount: activePlayers.length,
+        spectatorCount: activeSpectators.length,
+        useInquisitor: room.useInquisitor,
+        allowSpectators: room.allowSpectators,
+        chatMode: room.chatMode,
+        hasPassword: !!room.password,
+        ranked: room.ranked,
+        anonymousMode: room.anonymousMode,
+        _hasActivePlayers: activePlayers.length > 0 || activeSpectators.length > 0
+      };
+    })
+    .filter(room => room._hasActivePlayers); // Only show rooms with active players/spectators
+  
+  // Remove the internal flag before sending
+  roomList.forEach(room => delete room._hasActivePlayers);
   
   lobbySockets.forEach((userData, socketId) => {
     io.to(socketId).emit('roomListUpdate', { rooms: roomList });
@@ -2551,7 +2712,6 @@ function broadcastOnlineUsers() {
 
 // Socket.IO event handlers
 io.on('connection', (socket) => {
-  console.log(`Client connected: ${socket.id}`);
   
   // Store user info from auth token (if provided)
   let authenticatedUser = null;
@@ -2561,7 +2721,6 @@ io.on('connection', (socket) => {
     const verification = auth.verifyToken(token);
     if (verification.success) {
       authenticatedUser = verification.user;
-      console.log(`Authenticated user connected: ${authenticatedUser.username}`);
     }
   }
 
@@ -2580,7 +2739,8 @@ io.on('connection', (socket) => {
       allowSpectators: data.allowSpectators !== false,
       chatMode: data.chatMode || 'separate',
       password: data.password || null,
-      ranked: data.ranked !== false
+      ranked: data.ranked !== false,
+      anonymousMode: data.anonymousMode || false
     });
     
     // Fetch stats if authenticated
@@ -2640,9 +2800,14 @@ io.on('connection', (socket) => {
         useInquisitor: room.useInquisitor,
         allowSpectators: room.allowSpectators,
         chatMode: room.chatMode,
+        anonymousMode: room.anonymousMode,
         players: room.players.map(p => ({
           id: p.id,
           name: p.name,
+          username: p.username || null,
+          isGuest: p.isGuest === true,
+          userId: p.userId || null,
+          stats: p.stats || null,
           isMe: false
         })),
         spectators: room.spectators.map(s => ({
@@ -2655,49 +2820,65 @@ io.on('connection', (socket) => {
   });
 
   socket.on('playAgain', (data, callback) => {
-    const { currentRoomCode, useInquisitor, allowSpectators, chatMode, ranked, hasPassword } = data;
+    const { currentRoomCode, useInquisitor, allowSpectators, chatMode, ranked, hasPassword, anonymousMode } = data;
     
-    // First, leave the current room if in one
-    if (currentRoomCode) {
-      const oldRoom = rooms.get(currentRoomCode);
-      if (oldRoom) {
-        const playerIndex = oldRoom.players.findIndex(p => p.socketId === socket.id);
-        const spectatorIndex = oldRoom.spectators.findIndex(s => s.socketId === socket.id);
-        
-        if (playerIndex !== -1) {
-          oldRoom.players[playerIndex].hasLeft = true;
-          oldRoom.players.splice(playerIndex, 1);
-        } else if (spectatorIndex !== -1) {
-          oldRoom.spectators[spectatorIndex].hasLeft = true;
-          oldRoom.spectators.splice(spectatorIndex, 1);
-        }
-        
-        // Clean up empty rooms
-        if (oldRoom.players.length === 0 && oldRoom.spectators.length === 0) {
-          rooms.delete(currentRoomCode);
-        } else {
-          emitToRoom(currentRoomCode, 'gameState');
-        }
-      }
+    const oldRoom = rooms.get(currentRoomCode);
+    if (!oldRoom) {
+      callback({ success: false, error: 'Original room not found' });
+      return;
     }
     
-    // Create a new room with the same settings
-    const newRoomCode = generateRoomCode();
+    // Check if a rematch room already exists for this game
+    let rematchRoomCode = oldRoom.rematchRoomCode;
+    let rematchRoom = rematchRoomCode ? rooms.get(rematchRoomCode) : null;
     
-    // Determine player name for room name
-    const playerName = authenticatedUser ? authenticatedUser.username : 'Player';
+    // If rematch room doesn't exist or has been deleted, create a new one
+    if (!rematchRoom) {
+      rematchRoomCode = generateRoomCode();
+      
+      // Determine room name
+      const oldRoomName = oldRoom.name || 'Game';
+      
+      // Create rematch room with same settings (no password)
+      rematchRoom = createRoom(rematchRoomCode, {
+        name: `${oldRoomName} - Rematch`,
+        useInquisitor: useInquisitor,
+        allowSpectators: allowSpectators,
+        chatMode: chatMode,
+        password: null, // Don't copy password
+        ranked: ranked,
+        anonymousMode: anonymousMode
+      });
+      
+      rooms.set(rematchRoomCode, rematchRoom);
+      
+      // Link the old room to the new rematch room
+      oldRoom.rematchRoomCode = rematchRoomCode;
+      
+      // Broadcast the new room to all lobby users
+      broadcastRoomList();
+    }
     
-    // Create empty room with same settings (no password copied)
-    const room = createRoom(newRoomCode, {
-      name: `${playerName}'s Room`,
-      useInquisitor: useInquisitor,
-      allowSpectators: allowSpectators,
-      chatMode: chatMode,
-      password: null, // Don't copy password
-      ranked: ranked
-    });
+    // Remove player from old room
+    const playerIndex = oldRoom.players.findIndex(p => p.socketId === socket.id);
+    const spectatorIndex = oldRoom.spectators.findIndex(s => s.socketId === socket.id);
     
-    rooms.set(newRoomCode, room);
+    if (playerIndex !== -1) {
+      oldRoom.players[playerIndex].hasLeft = true;
+      oldRoom.players.splice(playerIndex, 1);
+    } else if (spectatorIndex !== -1) {
+      oldRoom.spectators[spectatorIndex].hasLeft = true;
+      oldRoom.spectators.splice(spectatorIndex, 1);
+    }
+    
+    // Clean up old room if empty
+    const activePlayers = oldRoom.players.filter(p => !p.hasLeft);
+    const activeSpectators = oldRoom.spectators.filter(s => !s.hasLeft);
+    if (activePlayers.length === 0 && activeSpectators.length === 0) {
+      rooms.delete(currentRoomCode);
+    } else {
+      emitToRoom(currentRoomCode, 'gameState');
+    }
     
     // Mark user as not in game in lobby
     const lobbyUser = lobbySockets.get(socket.id);
@@ -2706,14 +2887,9 @@ io.on('connection', (socket) => {
       broadcastOnlineUsers();
     }
     
-    // Broadcast the new room to all lobby users
-    broadcastRoomList();
-    
-    console.log(`Created new room ${newRoomCode} via Play Again (settings from ${currentRoomCode})`);
-    
     callback({
       success: true,
-      newRoomCode: newRoomCode
+      newRoomCode: rematchRoomCode
     });
   });
 
@@ -2934,7 +3110,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const result = switchToPlayer(room, socket.id, data.name, persistentPlayerId);
+    const result = switchToPlayer(room, socket.id, data.name, persistentPlayerId, authenticatedUser);
     callback(result);
     
     if (result.success) {
@@ -3141,19 +3317,44 @@ io.on('connection', (socket) => {
       
       if (room.state === 'playing') {
         // Player forfeits - reveal all influences and eliminate
+        const revealedCards = [];
         player.influences.forEach(inf => {
           if (!inf.revealed) {
             inf.revealed = true;
+            revealedCards.push(inf.card);
           }
         });
+        
+        // Track elimination before marking as not alive
+        if (player.alive) {
+          const alivePlayers = room.players.filter(p => p.alive && p.id !== player.id).length;
+          const placement = alivePlayers + 1;
+          const eliminationEntry = {
+            playerId: player.id,
+            playerName: player.name,
+            userId: player.userId,
+            username: player.username,
+            coinsEarned: player.gameStats?.coinsEarned || 0,
+            eliminations: player.gameStats?.playersEliminated || 0,
+            placement: placement
+          };
+          room.eliminationOrder.push(eliminationEntry);
+        }
+        
         player.alive = false;
+        player.disconnected = true; // Mark as disconnected so they stay visible
         player.mustRevealInfluence = false;
         player.mustChooseExchange = false;
         player.mustChooseExamine = false;
         player.mustShowCardToExaminer = false;
         player.influencesToLose = 0;
         
-        addLogToRoom(room, `${player.name} left the game and forfeits all influence!`, 'info');
+        // Log the forfeit and reveal cards
+        addLogToRoom(room, `${player.name} left the game and forfeits!`, 'info');
+        if (revealedCards.length > 0) {
+          const cardList = revealedCards.join(' and ');
+          addLogToRoom(room, `${player.name}'s cards are revealed: ${cardList}`, 'info');
+        }
         
         // Check win condition
         checkWinCondition(room);
@@ -3164,13 +3365,25 @@ io.on('connection', (socket) => {
           nextTurn(room);
         }
         
+        // Don't remove from array - keep them visible with revealed cards
         // Emit to other players (not this one since hasLeft = true)
         emitToRoom(roomCode, 'gameState');
+        
+        // Clean up room if no active players/spectators left
+        const activePlayers = room.players.filter(p => !p.hasLeft);
+        const activeSpectators = room.spectators.filter(s => !s.hasLeft);
+        if (activePlayers.length === 0 && activeSpectators.length === 0) {
+          rooms.delete(roomCode);
+          broadcastRoomList();
+        }
       } else {
         // In lobby, remove them completely
         room.players.splice(playerIndex, 1);
         
-        if (room.players.length === 0 && room.spectators.length === 0) {
+        // Check if there are any active players or spectators left
+        const activePlayers = room.players.filter(p => !p.hasLeft);
+        const activeSpectators = room.spectators.filter(s => !s.hasLeft);
+        if (activePlayers.length === 0 && activeSpectators.length === 0) {
           rooms.delete(roomCode);
         } else {
           emitToRoom(roomCode, 'gameState');
@@ -3183,7 +3396,10 @@ io.on('connection', (socket) => {
       
       room.spectators.splice(spectatorIndex, 1);
       
-      if (room.players.length === 0 && room.spectators.length === 0) {
+      // Check if there are any active players or spectators left
+      const activePlayers = room.players.filter(p => !p.hasLeft);
+      const activeSpectators = room.spectators.filter(s => !s.hasLeft);
+      if (activePlayers.length === 0 && activeSpectators.length === 0) {
         rooms.delete(roomCode);
       } else {
         emitToRoom(roomCode, 'gameState');
@@ -3216,7 +3432,6 @@ io.on('connection', (socket) => {
     if (pendingLobbyRemovals.has(username)) {
       clearTimeout(pendingLobbyRemovals.get(username));
       pendingLobbyRemovals.delete(username);
-      console.log(`Cancelled pending removal for ${username} - they reconnected`);
     }
     
     // Remove any existing socket connections for this user (handles refreshes)
@@ -3239,7 +3454,6 @@ io.on('connection', (socket) => {
     // Remove old connections
     existingSocketsToRemove.forEach(socketId => {
       lobbySockets.delete(socketId);
-      console.log(`Removed stale lobby connection for ${username} (socket: ${socketId})`);
     });
     
     // Add new connection
@@ -3250,8 +3464,6 @@ io.on('connection', (socket) => {
       userId: authenticatedUser ? authenticatedUser.id : null,
       inGame: false
     });
-    
-    console.log(`${username} joined lobby`);
     
     // Send initial room list to this user
     broadcastRoomList();
@@ -3279,7 +3491,6 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
-    console.log(`Client disconnected: ${socket.id}`);
     
     // Handle player/spectator disconnection
     rooms.forEach((room, roomCode) => {
@@ -3297,7 +3508,6 @@ io.on('connection', (socket) => {
           const timerKey = `${roomCode}-${player.persistentId}`;
           const forfeitTimer = setTimeout(() => {
             // Grace period expired - forfeit
-            console.log(`Grace period expired for ${player.name} in room ${roomCode}`);
             
             // Check if player is still disconnected
             const currentPlayer = room.players[playerIndex];
@@ -3305,11 +3515,30 @@ io.on('connection', (socket) => {
               currentPlayer.hasLeft = true;
               
               // Forfeit - reveal all influences and eliminate
+              const revealedCards = [];
               currentPlayer.influences.forEach(inf => {
                 if (!inf.revealed) {
                   inf.revealed = true;
+                  revealedCards.push(inf.card);
                 }
               });
+              
+              // Track elimination before marking as not alive
+              if (currentPlayer.alive) {
+                const alivePlayers = room.players.filter(p => p.alive && p.id !== currentPlayer.id).length;
+                const placement = alivePlayers + 1;
+                const eliminationEntry = {
+                  playerId: currentPlayer.id,
+                  playerName: currentPlayer.name,
+                  userId: currentPlayer.userId,
+                  username: currentPlayer.username,
+                  coinsEarned: currentPlayer.gameStats?.coinsEarned || 0,
+                  eliminations: currentPlayer.gameStats?.playersEliminated || 0,
+                  placement: placement
+                };
+                room.eliminationOrder.push(eliminationEntry);
+              }
+              
               currentPlayer.alive = false;
               currentPlayer.mustRevealInfluence = false;
               currentPlayer.mustChooseExchange = false;
@@ -3317,7 +3546,11 @@ io.on('connection', (socket) => {
               currentPlayer.mustShowCardToExaminer = false;
               currentPlayer.influencesToLose = 0;
               
-              addLogToRoom(room, `${currentPlayer.name} failed to reconnect and forfeits all influence!`, 'info');
+              addLogToRoom(room, `${currentPlayer.name} failed to reconnect and forfeits!`, 'info');
+              if (revealedCards.length > 0) {
+                const cardList = revealedCards.join(' and ');
+                addLogToRoom(room, `${currentPlayer.name}'s cards are revealed: ${cardList}`, 'info');
+              }
               
               // Check win condition
               checkWinCondition(room);
@@ -3329,6 +3562,14 @@ io.on('connection', (socket) => {
               }
               
               emitToRoom(roomCode, 'gameState');
+              
+              // Clean up room if no active players/spectators left
+              const activePlayers = room.players.filter(p => !p.hasLeft);
+              const activeSpectators = room.spectators.filter(s => !s.hasLeft);
+              if (activePlayers.length === 0 && activeSpectators.length === 0) {
+                rooms.delete(roomCode);
+                broadcastRoomList();
+              }
             }
             
             disconnectionTimers.delete(timerKey);
@@ -3336,12 +3577,18 @@ io.on('connection', (socket) => {
           
           disconnectionTimers.set(timerKey, forfeitTimer);
           emitToRoom(roomCode, 'gameState');
+        } else if (room.state === 'playing' && player.hasLeft) {
+          // Player already left during active game - don't remove from array
+          // They should stay visible with revealed cards
         } else {
           // In lobby, just remove them
           player.hasLeft = true;
           room.players.splice(playerIndex, 1);
           
-          if (room.players.length === 0 && room.spectators.length === 0) {
+          // Check if there are any active players or spectators left
+          const activePlayers = room.players.filter(p => !p.hasLeft);
+          const activeSpectators = room.spectators.filter(s => !s.hasLeft);
+          if (activePlayers.length === 0 && activeSpectators.length === 0) {
             rooms.delete(roomCode);
           } else {
             emitToRoom(roomCode, 'gameState');
@@ -3353,7 +3600,10 @@ io.on('connection', (socket) => {
         
         room.spectators.splice(spectatorIndex, 1);
         
-        if (room.players.length === 0 && room.spectators.length === 0) {
+        // Check if there are any active players or spectators left
+        const activePlayers = room.players.filter(p => !p.hasLeft);
+        const activeSpectators = room.spectators.filter(s => !s.hasLeft);
+        if (activePlayers.length === 0 && activeSpectators.length === 0) {
           rooms.delete(roomCode);
         } else {
           emitToRoom(roomCode, 'gameState');
@@ -3380,18 +3630,13 @@ io.on('connection', (socket) => {
         if (currentUserData) {
           // Socket is still there (not replaced), so user truly disconnected
           lobbySockets.delete(disconnectedSocketId);
-          console.log(`Removed ${username} from online users list after grace period`);
           broadcastOnlineUsers();
-        } else {
-          // Socket was already replaced by a reconnection, do nothing
-          console.log(`${username} reconnected during grace period, kept in online list`);
         }
         
         pendingLobbyRemovals.delete(username);
       }, LOBBY_REMOVAL_DELAY);
       
       pendingLobbyRemovals.set(username, removalTimeout);
-      console.log(`Scheduled removal of ${username} in ${LOBBY_REMOVAL_DELAY}ms`);
     }
   });
 
@@ -3429,19 +3674,25 @@ io.on('connection', (socket) => {
       // Everyone sees all messages
       emitToRoom(roomCode, 'gameState');
     } else if (room.chatMode === 'separate') {
-      // Players see player chat, spectators see spectator chat
+      // Players only see player chat
+      // Spectators see all chat (player + spectator)
       if (isSpectatorMessage) {
-        // Send to all spectators
+        // Spectator message: send to spectators only
         room.spectators.forEach(s => {
           if (!s.hasLeft) {
             io.to(s.socketId).emit('gameState', getPublicGameState(room, s.socketId, true));
           }
         });
       } else {
-        // Send to all players
+        // Player message: send to all players AND all spectators
         room.players.forEach(p => {
           if (!p.hasLeft) {
             io.to(p.socketId).emit('gameState', getPublicGameState(room, p.socketId, false));
+          }
+        });
+        room.spectators.forEach(s => {
+          if (!s.hasLeft) {
+            io.to(s.socketId).emit('gameState', getPublicGameState(room, s.socketId, true));
           }
         });
       }
@@ -3450,7 +3701,6 @@ io.on('connection', (socket) => {
     // Handle lobby disconnection
     const userData = lobbySockets.get(socket.id);
     if (userData) {
-      console.log(`${userData.username} disconnected from lobby (socket: ${socket.id})`);
       lobbySockets.delete(socket.id);
       
       // Broadcast updated user list immediately

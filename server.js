@@ -1655,7 +1655,7 @@ function saveGameResults(room) {
       finalCoins: p.coins,
       influencesRemaining: p.influences.filter(i => !i.revealed).length,
       gameStats: p.gameStats,
-      eloChange: eloChanges[p.userId] || null
+      eloChange: eloChanges[p.userId]?.change || null
     }));
     
     // Save to game_history
@@ -2095,118 +2095,682 @@ function calculatePlaystyle(stats) {
 function calculateAchievements(stats) {
   const achievements = [];
   
-  // Master Bluffer
-  if (stats.bluffs_succeeded >= 50) {
-    achievements.push({
-      id: 'master_bluffer',
-      name: 'Master Bluffer',
-      icon: 'ðŸƒ',
-      description: 'Successfully bluffed 50+ times',
-      unlocked: true
-    });
-  }
+  // === DUKE ACHIEVEMENTS (Tax) ===
+  achievements.push({
+    id: 'dukes_decree',
+    name: "Duke's Decree",
+    icon: '💎',
+    description: 'Collected tax 25 times',
+    unlocked: stats.tax_succeeded >= 25,
+    progress: stats.tax_succeeded,
+    target: 25
+  });
   
-  // Duke's Domain
-  if (stats.tax_succeeded >= 100) {
-    achievements.push({
-      id: 'dukes_domain',
-      name: "Duke's Domain",
-      icon: 'ðŸ’Ž',
-      description: 'Collected tax 100+ times',
-      unlocked: true
-    });
-  }
+  achievements.push({
+    id: 'dukes_domain',
+    name: "Duke's Domain",
+    icon: '💎',
+    description: 'Collected tax 100 times',
+    unlocked: stats.tax_succeeded >= 100,
+    progress: stats.tax_succeeded,
+    target: 100
+  });
   
-  // Assassin's Creed
-  if (stats.assassinations_succeeded >= 25) {
-    achievements.push({
-      id: 'assassins_creed',
-      name: "Assassin's Creed",
-      icon: 'âš”ï¸',
-      description: 'Successfully assassinated 25+ players',
-      unlocked: true
-    });
-  }
+  achievements.push({
+    id: 'dukes_dominion',
+    name: "Duke's Dominion",
+    icon: '💎',
+    description: 'Collected tax 250 times',
+    unlocked: stats.tax_succeeded >= 250,
+    progress: stats.tax_succeeded,
+    target: 250
+  });
   
-  // Iron Wall
-  if ((stats.steals_blocked + stats.contessa_succeeded) >= 50) {
-    achievements.push({
-      id: 'iron_wall',
-      name: 'Iron Wall',
-      icon: 'ðŸ›¡ï¸',
-      description: 'Blocked 50+ attacks',
-      unlocked: true
-    });
-  }
+  achievements.push({
+    id: 'dukes_domination',
+    name: "Duke's Domination",
+    icon: '💎',
+    description: 'Collected tax 1000 times',
+    unlocked: stats.tax_succeeded >= 1000,
+    progress: stats.tax_succeeded,
+    target: 1000
+  });
   
-  // Coup Master
-  if (stats.games_won >= 10) {
-    achievements.push({
-      id: 'coup_master',
-      name: 'Coup Master',
-      icon: 'ðŸ‘‘',
-      description: 'Won 10+ games',
-      unlocked: true
-    });
-  }
+  // === ASSASSIN ACHIEVEMENTS ===
+  achievements.push({
+    id: 'dishonored',
+    name: 'Dishonored',
+    icon: '⚔️',
+    description: 'Successfully assassinated 25 players',
+    unlocked: stats.assassinations_succeeded >= 25,
+    progress: stats.assassinations_succeeded,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'hitman',
+    name: 'Hitman',
+    icon: '⚔️',
+    description: 'Successfully assassinated 100 players',
+    unlocked: stats.assassinations_succeeded >= 100,
+    progress: stats.assassinations_succeeded,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'mark_of_the_ninja',
+    name: 'Mark of the Ninja',
+    icon: '⚔️',
+    description: 'Successfully assassinated 250 players',
+    unlocked: stats.assassinations_succeeded >= 250,
+    progress: stats.assassinations_succeeded,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'assassins_creed',
+    name: "Assassin's Creed",
+    icon: '⚔️',
+    description: 'Successfully assassinated 1000 players',
+    unlocked: stats.assassinations_succeeded >= 1000,
+    progress: stats.assassinations_succeeded,
+    target: 1000
+  });
+  
+  // === CAPTAIN ACHIEVEMENTS (Coins Stolen) ===
+  achievements.push({
+    id: 'stickup_artist',
+    name: 'Stickup Artist',
+    icon: '💰',
+    description: 'Stolen 50 coins',
+    unlocked: stats.coins_stolen >= 50,
+    progress: stats.coins_stolen,
+    target: 50
+  });
+  
+  achievements.push({
+    id: 'bank_raider',
+    name: 'Bank Raider',
+    icon: '💰',
+    description: 'Stolen 200 coins',
+    unlocked: stats.coins_stolen >= 200,
+    progress: stats.coins_stolen,
+    target: 200
+  });
+  
+  achievements.push({
+    id: 'crime_lord',
+    name: 'Crime Lord',
+    icon: '💰',
+    description: 'Stolen 500 coins',
+    unlocked: stats.coins_stolen >= 500,
+    progress: stats.coins_stolen,
+    target: 500
+  });
+  
+  achievements.push({
+    id: 'robber_baron',
+    name: 'Robber Baron',
+    icon: '💰',
+    description: 'Stolen 2000 coins',
+    unlocked: stats.coins_stolen >= 2000,
+    progress: stats.coins_stolen,
+    target: 2000
+  });
+  
+  // === AMBASSADOR/INQUISITOR ACHIEVEMENTS (Exchanges) ===
+  achievements.push({
+    id: 'backroom_dealer',
+    name: 'Backroom Dealer',
+    icon: '🔄',
+    description: 'Successfully exchanged 25 times',
+    unlocked: stats.influence_exchanged >= 25,
+    progress: stats.influence_exchanged,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'court_negotiator',
+    name: 'Court Negotiator',
+    icon: '🔄',
+    description: 'Successfully exchanged 100 times',
+    unlocked: stats.influence_exchanged >= 100,
+    progress: stats.influence_exchanged,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'power_broker',
+    name: 'Power Broker',
+    icon: '🔄',
+    description: 'Successfully exchanged 250 times',
+    unlocked: stats.influence_exchanged >= 250,
+    progress: stats.influence_exchanged,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'architect_of_influence',
+    name: 'Architect of Influence',
+    icon: '🔄',
+    description: 'Successfully exchanged 1000 times',
+    unlocked: stats.influence_exchanged >= 1000,
+    progress: stats.influence_exchanged,
+    target: 1000
+  });
+  
+  // === INQUISITOR ACHIEVEMENTS (Examinations) ===
+  achievements.push({
+    id: 'confession_extracted',
+    name: 'Confession Extracted',
+    icon: '🔍',
+    description: 'Successfully investigated 25 cards',
+    unlocked: stats.influence_examined >= 25,
+    progress: stats.influence_examined,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'doctrine_enforced',
+    name: 'Doctrine Enforced',
+    icon: '🔍',
+    description: 'Successfully investigated 100 cards',
+    unlocked: stats.influence_examined >= 100,
+    progress: stats.influence_examined,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'eyes_of_the_state',
+    name: 'Eyes of the State',
+    icon: '🔍',
+    description: 'Successfully investigated 250 cards',
+    unlocked: stats.influence_examined >= 250,
+    progress: stats.influence_examined,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'by_divine_scrutiny',
+    name: 'By Divine Scrutiny',
+    icon: '🔍',
+    description: 'Successfully investigated 1000 cards',
+    unlocked: stats.influence_examined >= 1000,
+    progress: stats.influence_examined,
+    target: 1000
+  });
+  
+  // === CONTESSA ACHIEVEMENTS (Assassination Blocks) ===
+  achievements.push({
+    id: 'death_deferred',
+    name: 'Death Deferred',
+    icon: '🛡️',
+    description: 'Successfully blocked 25 assassination attempts',
+    unlocked: stats.contessa_succeeded >= 25,
+    progress: stats.contessa_succeeded,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'a_ladys_reprieve',
+    name: "A Lady's Reprieve",
+    icon: '🛡️',
+    description: 'Successfully blocked 100 assassination attempts',
+    unlocked: stats.contessa_succeeded >= 100,
+    progress: stats.contessa_succeeded,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'royal_immunity',
+    name: 'Royal Immunity',
+    icon: '🛡️',
+    description: 'Successfully blocked 250 assassination attempts',
+    unlocked: stats.contessa_succeeded >= 250,
+    progress: stats.contessa_succeeded,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'untouched_nobility',
+    name: 'Untouched Nobility',
+    icon: '🛡️',
+    description: 'Successfully blocked 1000 assassination attempts',
+    unlocked: stats.contessa_succeeded >= 1000,
+    progress: stats.contessa_succeeded,
+    target: 1000
+  });
+  
+  // === INCOME ACHIEVEMENTS ===
+  achievements.push({
+    id: 'dont_spend_it_all_in_one_place',
+    name: "Don't Spend It All In One Place",
+    icon: '🪙',
+    description: 'Collected income 25 times',
+    unlocked: stats.income_taken >= 25,
+    progress: stats.income_taken,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'hard_earned_wages',
+    name: 'Hard Earned Wages',
+    icon: '🪙',
+    description: 'Collected income 100 times',
+    unlocked: stats.income_taken >= 100,
+    progress: stats.income_taken,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'working_overtime',
+    name: 'Working Overtime',
+    icon: '🪙',
+    description: 'Collected income 250 times',
+    unlocked: stats.income_taken >= 250,
+    progress: stats.income_taken,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'working_9_to_5',
+    name: 'Working 9 to 5',
+    icon: '🪙',
+    description: 'Collected income 500 times',
+    unlocked: stats.income_taken >= 500,
+    progress: stats.income_taken,
+    target: 500
+  });
+  
+  achievements.push({
+    id: 'honest_living',
+    name: 'Honest Living',
+    icon: '🪙',
+    description: 'Collected income 1000 times',
+    unlocked: stats.income_taken >= 1000,
+    progress: stats.income_taken,
+    target: 1000
+  });
+  
+  // === COUP ACHIEVEMENTS ===
+  achievements.push({
+    id: 'by_the_books',
+    name: 'By the Books',
+    icon: '👊',
+    description: 'Performed a coup 25 times',
+    unlocked: stats.coups_enacted >= 25,
+    progress: stats.coups_enacted,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'hostile_takeover',
+    name: 'Hostile Takeover',
+    icon: '👊',
+    description: 'Performed a coup 100 times',
+    unlocked: stats.coups_enacted >= 100,
+    progress: stats.coups_enacted,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'storming_the_bastille',
+    name: 'Storming the Bastille',
+    icon: '👊',
+    description: 'Performed a coup 250 times',
+    unlocked: stats.coups_enacted >= 250,
+    progress: stats.coups_enacted,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'coup_detat',
+    name: "Coup d'État",
+    icon: '👊',
+    description: 'Performed a coup 500 times',
+    unlocked: stats.coups_enacted >= 500,
+    progress: stats.coups_enacted,
+    target: 500
+  });
+  
+  achievements.push({
+    id: 'coup_de_grace',
+    name: 'Coup de Grâce',
+    icon: '👊',
+    description: 'Performed a coup 1000 times',
+    unlocked: stats.coups_enacted >= 1000,
+    progress: stats.coups_enacted,
+    target: 1000
+  });
+  
+  // === OTHER EXISTING ACHIEVEMENTS ===
+  
+  // === BLUFFING ACHIEVEMENTS ===
+  achievements.push({
+    id: 'spinning_the_yarn',
+    name: 'Spinning the Yarn',
+    icon: '🃏',
+    description: 'Successfully bluffed 25 times',
+    unlocked: stats.bluffs_succeeded >= 25,
+    progress: stats.bluffs_succeeded,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'master_bluffer',
+    name: 'Master Bluffer',
+    icon: '🃏',
+    description: 'Successfully bluffed 100 times',
+    unlocked: stats.bluffs_succeeded >= 100,
+    progress: stats.bluffs_succeeded,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'dastardly_deceiver',
+    name: 'Dastardly Deceiver',
+    icon: '🃏',
+    description: 'Successfully bluffed 250 times',
+    unlocked: stats.bluffs_succeeded >= 250,
+    progress: stats.bluffs_succeeded,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'flagrant_falsifier',
+    name: 'Flagrant Falsifier',
+    icon: '🃏',
+    description: 'Successfully bluffed 1000 times',
+    unlocked: stats.bluffs_succeeded >= 1000,
+    progress: stats.bluffs_succeeded,
+    target: 1000
+  });
+  
+  // === WINS ACHIEVEMENTS ===
+  achievements.push({
+    id: 'the_peoples_champion',
+    name: "The People's Champion",
+    icon: '👑',
+    description: 'Win 10 games',
+    unlocked: stats.games_won >= 10,
+    progress: stats.games_won,
+    target: 10
+  });
+  
+  achievements.push({
+    id: 'knight_of_the_realm',
+    name: 'Knight of the Realm',
+    icon: '👑',
+    description: 'Win 25 games',
+    unlocked: stats.games_won >= 25,
+    progress: stats.games_won,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'dont_discount_this_viscount',
+    name: "Don't Discount this Viscount",
+    icon: '👑',
+    description: 'Win 50 games',
+    unlocked: stats.games_won >= 50,
+    progress: stats.games_won,
+    target: 50
+  });
+  
+  achievements.push({
+    id: 'my_name_is_earl',
+    name: 'My Name is Earl',
+    icon: '👑',
+    description: 'Win 100 games',
+    unlocked: stats.games_won >= 100,
+    progress: stats.games_won,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'mckee_de_lafayette',
+    name: 'McKee de Lafayette',
+    icon: '👑',
+    description: 'Win 250 games',
+    unlocked: stats.games_won >= 250,
+    progress: stats.games_won,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'prince_of_the_universe',
+    name: 'Prince of the Universe',
+    icon: '👑',
+    description: 'Win 500 games',
+    unlocked: stats.games_won >= 500,
+    progress: stats.games_won,
+    target: 500
+  });
+  
+  achievements.push({
+    id: 'god_save_the_queen',
+    name: 'God Save the Queen',
+    icon: '👑',
+    description: 'Win 1000 games',
+    unlocked: stats.games_won >= 1000,
+    progress: stats.games_won,
+    target: 1000
+  });
+  
+  achievements.push({
+    id: 'emperor_of_mankind',
+    name: 'Emperor of Mankind',
+    icon: '👑',
+    description: 'Win 2500 games',
+    unlocked: stats.games_won >= 2500,
+    progress: stats.games_won,
+    target: 2500
+  });
+  
+  achievements.push({
+    id: 'we_said_it_couldnt_be_done',
+    name: "We Said It Couldn't Be Done",
+    icon: '👑',
+    description: 'Win 5000 games',
+    unlocked: stats.games_won >= 5000,
+    progress: stats.games_won,
+    target: 5000
+  });
+  
+  // === COINS EARNED ACHIEVEMENTS ===
+  achievements.push({
+    id: 'scrapin_by',
+    name: "Scrapin' By",
+    icon: '💵',
+    description: 'Earned 25 coins',
+    unlocked: stats.coins_earned >= 25,
+    progress: stats.coins_earned,
+    target: 25
+  });
+  
+  achievements.push({
+    id: 'buying_for_1_selling_for_2',
+    name: 'Buying for 1, Selling for 2',
+    icon: '💵',
+    description: 'Earned 50 coins',
+    unlocked: stats.coins_earned >= 50,
+    progress: stats.coins_earned,
+    target: 50
+  });
+  
+  achievements.push({
+    id: 'i_got_99_problems',
+    name: 'I Got 99 Problems',
+    icon: '💵',
+    description: 'Earned 99 coins',
+    unlocked: stats.coins_earned >= 99,
+    progress: stats.coins_earned,
+    target: 99
+  });
+  
+  achievements.push({
+    id: 'franklins',
+    name: "Franklin's",
+    icon: '💵',
+    description: 'Earned 100 coins',
+    unlocked: stats.coins_earned >= 100,
+    progress: stats.coins_earned,
+    target: 100
+  });
+  
+  achievements.push({
+    id: 'fat_stacks',
+    name: 'Fat Stacks',
+    icon: '💵',
+    description: 'Earned 250 coins',
+    unlocked: stats.coins_earned >= 250,
+    progress: stats.coins_earned,
+    target: 250
+  });
+  
+  achievements.push({
+    id: 'im_rich_bitch',
+    name: "I'm Rich, Bitch!",
+    icon: '💵',
+    description: 'Earned 500 coins',
+    unlocked: stats.coins_earned >= 500,
+    progress: stats.coins_earned,
+    target: 500
+  });
+  
+  achievements.push({
+    id: 'unstoppable_treasurer',
+    name: 'Unstoppable Treasurer',
+    icon: '💵',
+    description: 'Earned 1000 coins',
+    unlocked: stats.coins_earned >= 1000,
+    progress: stats.coins_earned,
+    target: 1000
+  });
+  
+  achievements.push({
+    id: 'economic_powerhouse',
+    name: 'Economic Powerhouse',
+    icon: '💵',
+    description: 'Earned 2500 coins',
+    unlocked: stats.coins_earned >= 2500,
+    progress: stats.coins_earned,
+    target: 2500
+  });
+  
+  // === ELO ACHIEVEMENTS ===
+  achievements.push({
+    id: 'rising_star',
+    name: 'Rising Star',
+    icon: '⭐',
+    description: 'Reached 1250 Elo',
+    unlocked: stats.elo_rating >= 1250,
+    progress: stats.elo_rating,
+    target: 1250
+  });
+  
+  achievements.push({
+    id: 'lucky_you',
+    name: 'Lucky You',
+    icon: '⭐',
+    description: 'Reached 1313 Elo',
+    unlocked: stats.elo_rating >= 1313,
+    progress: stats.elo_rating,
+    target: 1313
+  });
+  
+  achievements.push({
+    id: 'l33t_haxx0rz',
+    name: 'L33t Haxx0rz',
+    icon: '⭐',
+    description: 'Reached 1337 Elo',
+    unlocked: stats.elo_rating >= 1337,
+    progress: stats.elo_rating,
+    target: 1337
+  });
+  
+  achievements.push({
+    id: 'discovered_the_americas',
+    name: 'Discovered the Americas',
+    icon: '⭐',
+    description: 'Reached 1492 Elo',
+    unlocked: stats.elo_rating >= 1492,
+    progress: stats.elo_rating,
+    target: 1492
+  });
+  
+  achievements.push({
+    id: 'in_full_bloom',
+    name: 'In Full Bloom',
+    icon: '⭐',
+    description: 'Reached 1500 Elo',
+    unlocked: stats.elo_rating >= 1500,
+    progress: stats.elo_rating,
+    target: 1500
+  });
+  
+  achievements.push({
+    id: 'high_society',
+    name: 'High Society',
+    icon: '⭐',
+    description: 'Reached 1750 Elo',
+    unlocked: stats.elo_rating >= 1750,
+    progress: stats.elo_rating,
+    target: 1750
+  });
+  
+  achievements.push({
+    id: 'top_of_the_game',
+    name: 'Top of the Game',
+    icon: '⭐',
+    description: 'Reached 2000 Elo',
+    unlocked: stats.elo_rating >= 2000,
+    progress: stats.elo_rating,
+    target: 2000
+  });
+  
+  achievements.push({
+    id: 'grandmaster',
+    name: 'Grandmaster',
+    icon: '⭐',
+    description: 'Reached 2500 Elo',
+    unlocked: stats.elo_rating >= 2500,
+    progress: stats.elo_rating,
+    target: 2500
+  });
+  
+  // === SPECIAL ACHIEVEMENTS ===
   
   // Sharpshooter
-  const challengeAccuracy = stats.successful_challenges + stats.failed_challenges > 0 
-    ? stats.successful_challenges / (stats.successful_challenges + stats.failed_challenges)
+  const totalChallenges = stats.successful_challenges + stats.failed_challenges;
+  const challengeAccuracy = totalChallenges > 0 
+    ? stats.successful_challenges / totalChallenges
     : 0;
-  if (challengeAccuracy >= 0.75 && stats.successful_challenges >= 20) {
-    achievements.push({
-      id: 'sharpshooter',
-      name: 'Sharpshooter',
-      icon: 'ðŸŽ¯',
-      description: '75%+ challenge accuracy (20+ challenges)',
-      unlocked: true
-    });
-  }
-  
-  // Robber Baron
-  if (stats.coins_stolen >= 500) {
-    achievements.push({
-      id: 'robber_baron',
-      name: 'Robber Baron',
-      icon: 'ðŸ’°',
-      description: 'Stolen 500+ coins',
-      unlocked: true
-    });
-  }
+  const sharpshooterUnlocked = challengeAccuracy >= 0.75 && stats.successful_challenges >= 20;
+  achievements.push({
+    id: 'sharpshooter',
+    name: 'Sharpshooter',
+    icon: '🎯',
+    description: '75%+ challenge accuracy (20+ challenges)',
+    unlocked: sharpshooterUnlocked,
+    progress: stats.successful_challenges,
+    target: 20,
+    accuracy: Math.round(challengeAccuracy * 100)
+  });
   
   // The Untouchable
-  if (stats.games_won >= 5 && stats.influences_lost / stats.games_played < 1.5) {
-    achievements.push({
-      id: 'untouchable',
-      name: 'The Untouchable',
-      icon: 'âœ¨',
-      description: 'Win 5+ games while losing few influences',
-      unlocked: true
-    });
-  }
-  
-  // Economic Powerhouse
-  if (stats.coins_earned >= 1000) {
-    achievements.push({
-      id: 'economic_powerhouse',
-      name: 'Economic Powerhouse',
-      icon: 'ðŸ’µ',
-      description: 'Earned 1000+ coins',
-      unlocked: true
-    });
-  }
-  
-  // Rising Star
-  if (stats.elo_rating >= 1500) {
-    achievements.push({
-      id: 'rising_star',
-      name: 'Rising Star',
-      icon: 'â­',
-      description: 'Reached 1500+ Elo',
-      unlocked: true
-    });
-  }
+  const avgInfluencesLost = stats.games_played > 0 ? stats.influences_lost / stats.games_played : 0;
+  const untouchableUnlocked = stats.games_won >= 5 && avgInfluencesLost < 1.5;
+  achievements.push({
+    id: 'untouchable',
+    name: 'The Untouchable',
+    icon: '✨',
+    description: 'Win 5+ games while losing <1.5 influences per game',
+    unlocked: untouchableUnlocked,
+    progress: stats.games_won,
+    target: 5,
+    avgInfluences: avgInfluencesLost.toFixed(2)
+  });
   
   return achievements;
 }

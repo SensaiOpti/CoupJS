@@ -26,18 +26,13 @@
       box-shadow: 0 10px 30px rgba(239, 68, 68, 0.2);
     }
     
-    .badge {
-      animation: float 3s ease-in-out infinite;
-    }
-    
-    @keyframes float {
-      0%, 100% { transform: translateY(0px); }
-      50% { transform: translateY(-10px); }
-    }
-    
     .progress-bar {
       transition: width 1s ease-out;
     }
+    
+    /* Toggle switch */
+    input:checked ~ .toggle-bg { background-color: #7E1D1D; }
+    input:checked ~ .toggle-dot { transform: translateX(16px); }
     
     .match-item {
       transition: all 0.2s ease;
@@ -52,6 +47,14 @@
     .placement-2 { border-left: 4px solid #9ca3af; }
     .placement-3 { border-left: 4px solid #d97706; }
     .placement-other { border-left: 4px solid #374151; }
+    
+    /* Character colors */
+    .bg-ambassador { background-color: #5a7d62; }
+    .bg-assassin { background-color: #2a2a2a; }
+    .bg-captain { background-color: #2A5088; }
+    .bg-contessa { background-color: #901E21; }
+    .bg-duke { background-color: #432762; }
+    .bg-inquisitor { background-color: #D1A819; }
     
     .skeleton {
       background: linear-gradient(90deg, #374151 25%, #4b5563 50%, #374151 75%);
@@ -110,25 +113,25 @@
           <div class="flex-1 text-center md:text-left">
             <h2 id="username" class="text-4xl font-bold mb-2"></h2>
             <div id="playstyle" class="text-2xl mb-3"></div>
-            <div id="memberSince" class="text-gray-400 text-sm"></div>
+            <div id="memberSince" class="text-gray-400 text-sm mb-4"></div>
             
-            <!-- Rank Badge -->
-            <div id="rankBadge" class="inline-block bg-gradient-to-r from-red-600 to-orange-600 px-6 py-2 rounded-full mt-4">
-              <span class="font-bold"></span>
+            <!-- Elo and Games Stats -->
+            <div class="flex gap-6 justify-center md:justify-start mt-4">
+              <div>
+                <div class="text-gray-400 text-xs uppercase mb-1">Games Played</div>
+                <div id="gamesPlayedHeader" class="text-3xl font-bold text-blue-400"></div>
+              </div>
+              <div>
+                <div class="text-gray-400 text-xs uppercase mb-1">Elo Rating</div>
+                <div id="eloHeader" class="text-3xl font-bold text-yellow-500"></div>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <!-- Core Stats -->
-      <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <!-- Elo -->
-        <div class="stat-card rounded-lg p-6 text-center">
-          <div class="text-gray-400 text-sm mb-2">ELO RATING</div>
-          <div id="elo" class="text-5xl font-bold text-yellow-500 mb-2"></div>
-          <div id="eloRank" class="text-sm text-gray-400"></div>
-        </div>
-        
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <!-- Win Rate -->
         <div class="stat-card rounded-lg p-6 text-center">
           <div class="text-gray-400 text-sm mb-2">WIN RATE</div>
@@ -147,11 +150,11 @@
         </div>
       </div>
 
-      <!-- Featured Stats Grid -->
+      <!-- Individual Stats Grid -->
       <div class="stat-card rounded-lg p-6 mb-6">
         <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
-          <span>🔊</span>
-          <span>Featured Stats</span>
+          <span>📊</span>
+          <span>Individual Stats</span>
         </h3>
         <div id="featuredStats" class="grid grid-cols-2 md:grid-cols-4 gap-4">
           <!-- Dynamically populated -->
@@ -175,10 +178,33 @@
 
       <!-- Achievements -->
       <div class="stat-card rounded-lg p-6 mb-6" id="achievementsSection">
-        <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
-          <span>🏆</span>
-          <span>Achievements</span>
-        </h3>
+        <div class="flex flex-col md:flex-row md:items-start justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-2xl font-bold flex items-center gap-2">
+              <span>🏆</span>
+              <span>Achievements</span>
+            </h3>
+            <div id="achievementCompletion" class="text-sm text-gray-400 mt-1"></div>
+          </div>
+          <div class="flex gap-3 text-sm">
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <div class="relative">
+                <input type="checkbox" id="toggleUnlocked" class="sr-only" checked>
+                <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg transition-colors"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot transition-transform"></div>
+              </div>
+              <span class="text-gray-300">Show unlocked</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <div class="relative">
+                <input type="checkbox" id="toggleLaterTiers" class="sr-only">
+                <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg transition-colors"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot transition-transform"></div>
+              </div>
+              <span class="text-gray-300">Show later tiers</span>
+            </label>
+          </div>
+        </div>
         <div id="achievements" class="grid grid-cols-2 md:grid-cols-5 gap-4">
           <!-- Dynamically populated -->
         </div>
@@ -250,14 +276,11 @@
       const joinDate = new Date(user.createdAt).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
       document.getElementById('memberSince').textContent = `Playing since ${joinDate}`;
       
-      // Rank
-      const rankBadge = document.getElementById('rankBadge');
-      rankBadge.querySelector('span').textContent = `Rank #${rank.current} of ${rank.total} (Top ${rank.percentile}%)`;
+      // Header stats
+      document.getElementById('eloHeader').textContent = stats.elo_rating;
+      document.getElementById('gamesPlayedHeader').textContent = stats.games_played;
       
       // Core stats
-      document.getElementById('elo').textContent = stats.elo_rating;
-      document.getElementById('eloRank').textContent = `Rank #${rank.current}`;
-      
       document.getElementById('winRate').textContent = `${stats.win_rate}%`;
       document.getElementById('winRecord').textContent = `${stats.games_won}W - ${stats.games_played - stats.games_won}L`;
       document.getElementById('winRateBar').style.width = `${stats.win_rate}%`;
@@ -275,27 +298,36 @@
         renderDeckOptions();
       }
       
-      // Achievements
-      if (achievements.length > 0) {
-        renderAchievements(achievements);
-      } else {
-        document.getElementById('achievementsSection').classList.add('hidden');
-      }
+      // Achievements - always show section now
+      // Store achievements globally for re-rendering on toggle
+      window.allAchievements = achievements;
+      renderAchievements(achievements);
+      
+      // Set up toggle listeners
+      document.getElementById('toggleUnlocked').addEventListener('change', () => renderAchievements(window.allAchievements));
+      document.getElementById('toggleLaterTiers').addEventListener('change', () => renderAchievements(window.allAchievements));
       
       // Match history
       renderMatchHistory(matches.matches);
     }
 
     function renderFeaturedStats(stats) {
+      // Calculate total actions blocked
+      const actionsBlocked = (stats.steals_blocked || 0) + (stats.contessa_succeeded || 0) + (stats.foreignaidblock_succeeded || 0);
+      
       const featuredStats = [
-        { label: 'Games Played', value: stats.games_played, icon: '🎮' },
         { label: 'Coins Earned', value: stats.coins_earned.toLocaleString(), icon: '💰' },
-        { label: 'Tax Success', value: stats.tax_succeeded, icon: '💎' },
-        { label: 'Assassinations', value: stats.assassinations_succeeded, icon: '🗡️' },
+        { label: 'Assassinations Succeeded', value: stats.assassinations_succeeded, icon: '⚔️' },
+        { label: 'Contessa Saves Succeeded', value: stats.contessa_succeeded, icon: '🛡️' },
+        { label: 'Exchanges Succeeded', value: stats.influence_exchanged, icon: '🔄' },
+        { label: 'Examinations Succeeded', value: stats.influence_examined, icon: '🔍' },
+        { label: 'Stealing Succeeded', value: stats.coins_stolen, icon: '💸' },
+        { label: 'Taxes Succeeded', value: stats.tax_succeeded, icon: '💎' },
+        { label: 'Coups Enacted', value: stats.coups_enacted, icon: '👊' },
+        { label: 'Income Taken', value: stats.income_taken, icon: '🪙' },
         { label: 'Bluffs Succeeded', value: stats.bluffs_succeeded, icon: '🎭' },
-        { label: 'Challenges Won', value: stats.successful_challenges, icon: '⚔️' },
-        { label: 'Coups Enacted', value: stats.coups_enacted, icon: '💪' },
-        { label: 'Income Taken', value: stats.income_taken, icon: '🪙' }
+        { label: 'Challenges Won', value: stats.successful_challenges, icon: '✓' },
+        { label: 'Actions Blocked', value: actionsBlocked, icon: '🚫' }
       ];
       
       const container = document.getElementById('featuredStats');
@@ -308,14 +340,106 @@
       `).join('');
     }
 
+    function filterAchievementTiers(achievements) {
+      // Group achievements by icon AND progress value (same series will have same current progress)
+      const grouped = {};
+      
+      achievements.forEach(achievement => {
+        const key = `${achievement.icon}_${achievement.progress}`;
+        if (!grouped[key]) {
+          grouped[key] = [];
+        }
+        grouped[key].push(achievement);
+      });
+      
+      // For each group, keep unlocked achievements and only the next locked tier
+      const filtered = [];
+      
+      Object.values(grouped).forEach(group => {
+        // Sort by target ascending
+        group.sort((a, b) => a.target - b.target);
+        
+        // For groups with multiple achievements, check if it's a tier series
+        // A tier series has 2+ achievements with increasing targets
+        const isTierSeries = group.length >= 2;
+        
+        if (isTierSeries) {
+          // Add all unlocked achievements
+          const unlocked = group.filter(a => a.unlocked);
+          filtered.push(...unlocked);
+          
+          // Find the first locked achievement (next tier to unlock)
+          const locked = group.filter(a => !a.unlocked);
+          if (locked.length > 0) {
+            filtered.push(locked[0]); // Add only the first locked one
+          }
+        } else {
+          // Not a tier series (standalone achievement), show all
+          filtered.push(...group);
+        }
+      });
+      
+      return filtered;
+    }
+
     function renderAchievements(achievements) {
       const container = document.getElementById('achievements');
-      container.innerHTML = achievements.map(achievement => `
-        <div class="badge bg-gradient-to-br from-yellow-600 to-orange-600 rounded-lg p-4 text-center hover:scale-110 transition-transform cursor-pointer" title="${achievement.description}">
-          <div class="text-4xl mb-2">${achievement.icon}</div>
-          <div class="text-sm font-bold">${achievement.name}</div>
-        </div>
-      `).join('');
+      const showUnlocked = document.getElementById('toggleUnlocked').checked;
+      const showLaterTiers = document.getElementById('toggleLaterTiers').checked;
+      
+      // Calculate total completion stats (always from full list)
+      const totalCount = achievements.length;
+      const unlockedCount = achievements.filter(a => a.unlocked).length;
+      const completionPct = totalCount > 0 ? Math.round((unlockedCount / totalCount) * 100) : 0;
+      document.getElementById('achievementCompletion').textContent = `${unlockedCount} of ${totalCount} (${completionPct}%)`;
+      
+      // Apply tier filtering based on toggle
+      let filteredAchievements = showLaterTiers ? achievements : filterAchievementTiers(achievements);
+      
+      // Apply unlocked filter
+      if (!showUnlocked) {
+        filteredAchievements = filteredAchievements.filter(a => !a.unlocked);
+      }
+      
+      container.innerHTML = filteredAchievements.map(achievement => {
+        const percentage = Math.min(100, Math.round((achievement.progress / achievement.target) * 100));
+        const isUnlocked = achievement.unlocked;
+        
+        // Build additional info text (only shown for locked achievements)
+        let additionalInfo = '';
+        if (achievement.id === 'sharpshooter') {
+          additionalInfo = `<div class="text-xs text-gray-300 mt-1">${achievement.accuracy}% accuracy</div>`;
+        } else if (achievement.id === 'untouchable') {
+          additionalInfo = `<div class="text-xs text-gray-300 mt-1">${achievement.avgInfluences} avg influences lost</div>`;
+        }
+        
+        return `
+          <div class="${isUnlocked ? 'badge' : 'bg-gray-700 hover:scale-105'} rounded-lg p-4 text-center transition-transform cursor-pointer relative overflow-hidden" 
+               style="${isUnlocked ? 'background: linear-gradient(to bottom right, #7E1D1D, #A52A2A);' : ''}"
+               title="${achievement.description}">
+            ${!isUnlocked ? `
+              <div class="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 opacity-30" style="width: ${percentage}%"></div>
+            ` : ''}
+            <div class="relative z-10">
+              <div class="text-4xl mb-2 ${!isUnlocked ? 'opacity-50' : ''}">${achievement.icon}</div>
+              <div class="text-sm font-bold ${!isUnlocked ? 'text-gray-300' : ''}">${achievement.name}</div>
+              <div class="text-xs text-gray-300 italic mt-1">${achievement.description}</div>
+              ${!isUnlocked ? `
+                <div class="mt-2">
+                  <div class="text-xs text-gray-400 mb-1">${achievement.progress} / ${achievement.target}</div>
+                  <div class="w-full bg-gray-600 rounded-full h-2">
+                    <div class="bg-gradient-to-r from-blue-500 to-purple-500 h-2 rounded-full transition-all" style="width: ${percentage}%"></div>
+                  </div>
+                  <div class="text-xs text-gray-400 mt-1">${percentage}%</div>
+                </div>
+                ${additionalInfo}
+              ` : `
+                <div class="text-xs text-green-300 mt-2">✓ Unlocked</div>
+              `}
+            </div>
+          </div>
+        `;
+      }).join('');
     }
 
     function renderMatchHistory(matches) {
@@ -337,8 +461,11 @@
         const placementEmoji = match.placement === 1 ? '🥇' : 
                               match.placement === 2 ? '🥈' : 
                               match.placement === 3 ? '🥉' : '💀';
-        const eloColor = match.eloChange > 0 ? 'text-green-400' : 
-                        match.eloChange < 0 ? 'text-red-400' : 'text-gray-400';
+        const eloChangeValue = typeof match.eloChange === 'object' && match.eloChange !== null 
+          ? match.eloChange.change 
+          : (match.eloChange || 0);
+        const eloColor = eloChangeValue > 0 ? 'text-green-400' : 
+                        eloChangeValue < 0 ? 'text-red-400' : 'text-gray-400';
         
         return `
           <div class="match-item ${placementClass} bg-gray-700 rounded-lg p-4">
@@ -352,34 +479,28 @@
                       match.placement === 2 ? '2nd Place' : 
                       match.placement === 3 ? '3rd Place' : 
                       `${match.placement}th Place`}
+                    ${eloChangeValue !== 0 ? `<span class="${eloColor} font-bold">(${eloChangeValue > 0 ? '+' : ''}${eloChangeValue})</span>` : ''}
                   </div>
+                  <div class="text-sm text-gray-300">Players: ${match.totalPlayers}</div>
                   <div class="text-sm text-gray-400">${date} at ${time}</div>
                 </div>
               </div>
               
-              <!-- Stats -->
-              <div class="flex gap-4 text-sm">
-                <div>
-                  <div class="text-gray-400">Elo</div>
-                  <div class="${eloColor} font-bold">
-                    ${match.eloChange > 0 ? '+' : ''}${match.eloChange || 0}
-                  </div>
-                </div>
-                <div>
-                  <div class="text-gray-400">Coins</div>
-                  <div class="font-bold">${match.finalCoins}</div>
-                </div>
-                <div>
-                  <div class="text-gray-400">Players</div>
-                  <div class="font-bold">${match.totalPlayers}</div>
-                </div>
-              </div>
-              
               <!-- Quick Stats -->
-              <div class="flex gap-2 text-xs">
-                ${match.stats.playersEliminated ? `<span class="bg-red-900 px-2 py-1 rounded">🗡️ ${match.stats.playersEliminated} kills</span>` : ''}
+              <div class="grid grid-rows-2 gap-2 text-xs" style="grid-auto-flow: column;">
+                ${match.stats.coinsEarned ? `<span class="bg-yellow-700 px-2 py-1 rounded">🪙 ${match.stats.coinsEarned} coins earned</span>` : ''}
+                ${match.stats.playersEliminated ? `<span class="bg-red-900 px-2 py-1 rounded">🗡️ ${match.stats.playersEliminated} eliminations</span>` : ''}
                 ${match.stats.bluffsSucceeded ? `<span class="bg-purple-900 px-2 py-1 rounded">🎭 ${match.stats.bluffsSucceeded} bluffs</span>` : ''}
-                ${match.stats.coinsStolen ? `<span class="bg-yellow-900 px-2 py-1 rounded">💰 ${match.stats.coinsStolen} stolen</span>` : ''}
+                ${match.stats.coinsStolen ? `<span class="bg-captain px-2 py-1 rounded">💰 ${match.stats.coinsStolen} stolen</span>` : ''}
+                ${match.stats.influencesLost ? `<span class="bg-gray-700 px-2 py-1 rounded">💀 ${match.stats.influencesLost} lost</span>` : ''}
+                ${match.stats.taxSucceeded ? `<span class="bg-duke px-2 py-1 rounded">💎 ${match.stats.taxSucceeded} tax</span>` : ''}
+                ${match.stats.assassinationsSucceeded ? `<span class="bg-assassin px-2 py-1 rounded">⚔️ ${match.stats.assassinationsSucceeded} assassinations</span>` : ''}
+                ${match.stats.coupsEnacted ? `<span class="bg-red-800 px-2 py-1 rounded">👑 ${match.stats.coupsEnacted} coups</span>` : ''}
+                ${match.stats.influenceExchanged ? `<span class="bg-inquisitor px-2 py-1 rounded">🔄 ${match.stats.influenceExchanged} exchanges</span>` : ''}
+                ${match.stats.influenceExamined ? `<span class="bg-inquisitor px-2 py-1 rounded">🔍 ${match.stats.influenceExamined} examinations</span>` : ''}
+                ${match.stats.contessaSucceeded ? `<span class="bg-contessa px-2 py-1 rounded">🛡️ ${match.stats.contessaSucceeded} assassination blocks</span>` : ''}
+                ${match.stats.stealsBlocked ? `<span class="bg-ambassador px-2 py-1 rounded">🛡️ ${match.stats.stealsBlocked} steal blocks</span>` : ''}
+                ${match.stats.foreignaidblockSucceeded ? `<span class="bg-duke px-2 py-1 rounded">🛡️ ${match.stats.foreignaidblockSucceeded} foreign aid blocks</span>` : ''}
               </div>
             </div>
           </div>

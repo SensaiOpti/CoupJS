@@ -145,8 +145,8 @@ app.post('/api/user/settings', (req, res) => {
     const validDecks = ['default', 'anime', 'pixel', 'minimalist'];
     const newDeck = validDecks.includes(deckPreference) ? deckPreference : user.deck_preference;
     
-    // Limit bio to 200 characters
-    const newBio = typeof bio === 'string' ? bio.substring(0, 200) : user.bio || '';
+    // Limit bio to 250 characters
+    const newBio = typeof bio === 'string' ? bio.substring(0, 250) : user.bio || '';
     
     db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ? WHERE id = ?')
       .run(JSON.stringify(newPrivacy), newDeck, newBio, verification.user.id);

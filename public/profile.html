@@ -31,7 +31,7 @@
     }
     
     /* Toggle switch */
-    input:checked ~ .toggle-bg { background-color: #7E1D1D; }
+    input:checked ~ .toggle-bg { background: linear-gradient(to right, #3b82f6, #a855f7); }
     input:checked ~ .toggle-dot { transform: translateX(16px); }
     
     .match-item {
@@ -74,11 +74,14 @@
     <div class="flex justify-between items-center mb-8">
       <h1 class="text-4xl font-bold text-red-500">COUP</h1>
       <div class="flex gap-3">
-        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
-          Back to Game
-        </a>
         <a href="/leaderboards.html" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded transition-colors">
           Leaderboards
+        </a>
+        <a id="settingsBtn" href="/settings.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Settings
+        </a>
+        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Back to Lobby
         </a>
       </div>
     </div>
@@ -127,11 +130,21 @@
               </div>
             </div>
           </div>
+          
+          <!-- Bio (if present) -->
+          <div id="bioContainer" class="hidden md:max-w-xs">
+            <div class="bg-gray-700 rounded-lg p-4">
+              <div class="text-gray-400 text-xs uppercase mb-2">Bio</div>
+              <div id="bioText" class="text-gray-200 text-sm italic"></div>
+            </div>
+          </div>
         </div>
       </div>
 
       <!-- Core Stats -->
-      <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+      <div id="privateContent" class="hidden">
+
+      <div id="winRateSection" class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
         <!-- Win Rate -->
         <div class="stat-card rounded-lg p-6 text-center">
           <div class="text-gray-400 text-sm mb-2">WIN RATE</div>
@@ -151,7 +164,7 @@
       </div>
 
       <!-- Individual Stats Grid -->
-      <div class="stat-card rounded-lg p-6 mb-6">
+      <div id="individualStatsSection" class="stat-card rounded-lg p-6 mb-6">
         <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
           <span>📊</span>
           <span>Individual Stats</span>
@@ -159,21 +172,6 @@
         <div id="featuredStats" class="grid grid-cols-2 md:grid-cols-4 gap-4">
           <!-- Dynamically populated -->
         </div>
-      </div>
-
-      <!-- Deck Preferences -->
-      <div id="deckPreferencesSection" class="hidden stat-card rounded-lg p-6 mb-6">
-        <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
-          <span>🎴</span>
-          <span>Deck Style Preferences</span>
-        </h3>
-        <p class="text-gray-400 mb-6">Choose your preferred card deck style. This will be used across all your games.</p>
-        
-        <div id="deckOptions" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <!-- Dynamically populated -->
-        </div>
-        
-        <div id="deckSaveMessage" class="hidden mt-4 p-3 rounded"></div>
       </div>
 
       <!-- Achievements -->
@@ -211,7 +209,7 @@
       </div>
 
       <!-- Match History -->
-      <div class="stat-card rounded-lg p-6">
+      <div id="matchHistorySection" class="stat-card rounded-lg p-6">
         <h3 class="text-2xl font-bold mb-4 flex items-center gap-2">
           <span>📜</span>
           <span>Recent Matches</span>
@@ -222,6 +220,15 @@
         <div id="noMatches" class="hidden text-center py-8 text-gray-400">
           No matches played yet. Start your first game!
         </div>
+      </div>
+
+      </div> <!-- end privateContent -->
+
+      <!-- Visitor message -->
+      <div id="visitorMessage" class="hidden stat-card rounded-lg p-8 text-center">
+        <div class="text-4xl mb-3">🔒</div>
+        <div class="text-lg font-bold text-gray-300 mb-2">Stats are private</div>
+        <div class="text-sm text-gray-400">Only this player can view their full stats, achievements, and match history.</div>
       </div>
     </div>
   </div>
@@ -263,10 +270,16 @@
 
     function renderProfile(data, matches) {
       const { user, stats, rank, playstyle, achievements } = data;
+      const privacy = data.privacy || {};
       
       // Check if this is the current user's profile
       const currentUserData = authToken ? JSON.parse(localStorage.getItem('currentUser') || '{}') : {};
       isMyProfile = currentUserData.username === user.username;
+      
+      // Show settings button for profile owner
+      if (isMyProfile) {
+        document.getElementById('settingsBtn').classList.remove('hidden');
+      }
       
       // User info
       document.getElementById('username').textContent = user.username;
@@ -280,6 +293,12 @@
       document.getElementById('eloHeader').textContent = stats.elo_rating;
       document.getElementById('gamesPlayedHeader').textContent = stats.games_played;
       
+      // Bio
+      if (user.bio && user.bio.trim()) {
+        document.getElementById('bioText').textContent = user.bio;
+        document.getElementById('bioContainer').classList.remove('hidden');
+      }
+      
       // Core stats
       document.getElementById('winRate').textContent = `${stats.win_rate}%`;
       document.getElementById('winRecord').textContent = `${stats.games_won}W - ${stats.games_played - stats.games_won}L`;
@@ -291,13 +310,35 @@
       // Featured stats
       renderFeaturedStats(stats);
       
-      // Deck preferences (only show for own profile)
-      if (isMyProfile && authToken) {
-        document.getElementById('deckPreferencesSection').classList.remove('hidden');
-        currentDeckPreference = localStorage.getItem('coupDeckPreference') || 'default';
-        renderDeckOptions();
-      }
+      // Determine what's visible to visitors based on privacy settings
+      const canSeeAll = isMyProfile;
+      const canSeeIndividualStats = canSeeAll || privacy.showIndividualStats;
+      const canSeeWinRate = canSeeAll || privacy.showWinRate;
+      const canSeeAchievements = canSeeAll || privacy.showAchievements;
+      const canSeeMatchHistory = canSeeAll || privacy.showMatchHistory;
       
+      if (isMyProfile) {
+        document.getElementById('privateContent').classList.remove('hidden');
+        // Hide sections that aren't applicable for visitor view
+        document.getElementById('winRateSection').classList.toggle('hidden', false);
+        document.getElementById('individualStatsSection').classList.toggle('hidden', false);
+        document.getElementById('achievementsSection').classList.toggle('hidden', false);
+        document.getElementById('matchHistorySection').classList.toggle('hidden', false);
+      } else {
+        // Show the private wrapper
+        document.getElementById('privateContent').classList.remove('hidden');
+        // Selectively show/hide based on privacy
+        document.getElementById('winRateSection').classList.toggle('hidden', !canSeeWinRate);
+        document.getElementById('individualStatsSection').classList.toggle('hidden', !canSeeIndividualStats);
+        document.getElementById('achievementsSection').classList.toggle('hidden', !canSeeAchievements);
+        document.getElementById('matchHistorySection').classList.toggle('hidden', !canSeeMatchHistory);
+        // Show visitor message only if everything is hidden
+        if (!canSeeIndividualStats && !canSeeWinRate && !canSeeAchievements && !canSeeMatchHistory) {
+          document.getElementById('visitorMessage').classList.remove('hidden');
+          document.getElementById('privateContent').classList.add('hidden');
+        }
+      }
+
       // Achievements - always show section now
       // Store achievements globally for re-rendering on toggle
       window.allAchievements = achievements;
@@ -413,9 +454,13 @@
           additionalInfo = `<div class="text-xs text-gray-300 mt-1">${achievement.avgInfluences} avg influences lost</div>`;
         }
         
+        const unlockedDate = achievement.unlockedAt 
+          ? new Date(achievement.unlockedAt).toISOString().split('T')[0]
+          : null;
+        
         return `
           <div class="${isUnlocked ? 'badge' : 'bg-gray-700 hover:scale-105'} rounded-lg p-4 text-center transition-transform cursor-pointer relative overflow-hidden" 
-               style="${isUnlocked ? 'background: linear-gradient(to bottom right, #7E1D1D, #A52A2A);' : ''}"
+               style="${isUnlocked ? 'background: linear-gradient(to bottom right, #3b82f6, #a855f7);' : ''}"
                title="${achievement.description}">
             ${!isUnlocked ? `
               <div class="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 opacity-30" style="width: ${percentage}%"></div>
@@ -434,7 +479,7 @@
                 </div>
                 ${additionalInfo}
               ` : `
-                <div class="text-xs text-green-300 mt-2">✓ Unlocked</div>
+                <div class="text-xs text-green-300 mt-2">✓ Unlocked${unlockedDate ? ` on ${unlockedDate}` : ''}</div>
               `}
             </div>
           </div>
@@ -508,104 +553,8 @@
       }).join('');
     }
 
-    // Deck selector functionality
-    const DECK_OPTIONS = [
-      {
-        id: 'default',
-        name: 'Classic',
-        description: 'Original card designs',
-        preview: '/images/cards/default/duke.png'
-      },
-      {
-        id: 'anime',
-        name: 'Anime',
-        description: 'Anime-style artwork',
-        preview: '/images/cards/anime/duke.png'
-      },
-      {
-        id: 'pixel',
-        name: 'Pixel Art',
-        description: 'Retro pixel art style',
-        preview: '/images/cards/pixel/duke.png'
-      },
-      {
-        id: 'minimalist',
-        name: 'Minimalist',
-        description: 'Clean, modern design',
-        preview: '/images/cards/minimalist/duke.png'
-      }
-    ];
-
-    let currentDeckPreference = 'default';
     let authToken = localStorage.getItem('coupAuthToken');
     let isMyProfile = false;
-
-    function renderDeckOptions() {
-      const container = document.getElementById('deckOptions');
-      if (!container) return;
-
-      container.innerHTML = DECK_OPTIONS.map(deck => `
-        <div 
-          onclick="selectDeck('${deck.id}')" 
-          class="bg-gray-700 rounded-lg p-4 cursor-pointer transition-all hover:bg-gray-600 ${currentDeckPreference === deck.id ? 'ring-4 ring-red-500' : ''}"
-        >
-          <div class="flex items-center gap-4">
-            <img src="${deck.preview}" alt="${deck.name}" class="w-20 h-28 object-cover rounded" onerror="this.style.display='none'">
-            <div class="flex-1">
-              <h4 class="text-lg font-bold mb-1">${deck.name}</h4>
-              <p class="text-gray-400 text-sm mb-2">${deck.description}</p>
-              ${currentDeckPreference === deck.id ? '<div class="text-green-500 font-bold text-sm">✓ Currently Selected</div>' : '<div class="text-blue-400 text-sm">Click to select</div>'}
-            </div>
-          </div>
-        </div>
-      `).join('');
-    }
-
-    async function selectDeck(deckId) {
-      if (!isMyProfile || !authToken) {
-        showDeckMessage('You must be logged in to change deck preferences', 'error');
-        return;
-      }
-
-      currentDeckPreference = deckId;
-      localStorage.setItem('coupDeckPreference', deckId);
-
-      try {
-        const response = await fetch(`${API_BASE}/api/user/deck-preference`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            token: authToken,
-            deckPreference: deckId
-          })
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-          renderDeckOptions();
-          showDeckMessage('Deck preference saved successfully!', 'success');
-        } else {
-          showDeckMessage('Failed to save deck preference: ' + data.error, 'error');
-        }
-      } catch (error) {
-        console.error('Error saving deck preference:', error);
-        showDeckMessage('Error saving deck preference', 'error');
-      }
-    }
-
-    function showDeckMessage(message, type) {
-      const messageEl = document.getElementById('deckSaveMessage');
-      if (!messageEl) return;
-
-      messageEl.textContent = message;
-      messageEl.className = `mt-4 p-3 rounded ${type === 'success' ? 'bg-green-900 text-green-200' : 'bg-red-900 text-red-200'}`;
-      messageEl.classList.remove('hidden');
-
-      setTimeout(() => {
-        messageEl.classList.add('hidden');
-      }, 3000);
-    }
 
     // Load profile on page load
     loadProfile();

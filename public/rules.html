@@ -38,7 +38,14 @@
     <!-- Header -->
     <div class="flex justify-between items-center mb-8">
       <h1 class="text-5xl font-bold text-red-500">COUP - Rules</h1>
-      <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded">Back to Game</a>
+      <div class="flex gap-3">
+        <a id="profileBtn" href="/profile.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Profile
+        </a>
+        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Back to Lobby
+        </a>
+      </div>
     </div>
 
     <div class="bg-gray-800 rounded-lg p-8 space-y-6">
@@ -219,6 +226,16 @@
   </div>
   
   <script>
+    // Show Profile button if logged in
+    const authToken = localStorage.getItem('coupAuthToken');
+    const currentUser = authToken ? JSON.parse(localStorage.getItem('currentUser') || '{}') : null;
+    
+    if (currentUser && currentUser.username) {
+      const profileBtn = document.getElementById('profileBtn');
+      profileBtn.href = `/profile.html?user=${currentUser.username}`;
+      profileBtn.classList.remove('hidden');
+    }
+    
     // Socket.io connection for online user tracking
     const socketScript = document.createElement('script');
     socketScript.src = '/socket.io/socket.io.js';

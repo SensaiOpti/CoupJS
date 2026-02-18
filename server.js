@@ -103,6 +103,62 @@ app.post('/api/user/deck-preference', (req, res) => {
   }
 });
 
+// GET /api/user/settings - Get current user settings
+app.get('/api/user/settings', (req, res) => {
+  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
+  const verification = auth.verifyToken(token);
+  if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
+  
+  try {
+    const user = db.prepare('SELECT deck_preference, privacy_settings, bio FROM users WHERE id = ?').get(verification.user.id);
+    const privacy = JSON.parse(user.privacy_settings || '{}');
+    res.json({
+      deckPreference: user.deck_preference || 'default',
+      bio: user.bio || '',
+      privacy: {
+        showIndividualStats: privacy.showIndividualStats === true,
+        showWinRate: privacy.showWinRate === true,
+        showAchievements: privacy.showAchievements === true,
+        showMatchHistory: privacy.showMatchHistory === true
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching settings:', error);
+    res.status(500).json({ error: 'Failed to fetch settings' });
+  }
+});
+
+// POST /api/user/settings - Save user settings
+app.post('/api/user/settings', (req, res) => {
+  const token = req.headers.authorization?.split(' ')[1] || req.body.token;
+  const verification = auth.verifyToken(token);
+  if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
+  
+  try {
+    const { privacy, deckPreference, bio } = req.body;
+    
+    // Build update
+    const user = db.prepare('SELECT deck_preference, privacy_settings, bio FROM users WHERE id = ?').get(verification.user.id);
+    const currentPrivacy = JSON.parse(user.privacy_settings || '{}');
+    const newPrivacy = { ...currentPrivacy, ...privacy };
+    
+    const validDecks = ['default', 'anime', 'pixel', 'minimalist'];
+    const newDeck = validDecks.includes(deckPreference) ? deckPreference : user.deck_preference;
+    
+    // Limit bio to 200 characters
+    const newBio = typeof bio === 'string' ? bio.substring(0, 200) : user.bio || '';
+    
+    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ? WHERE id = ?')
+      .run(JSON.stringify(newPrivacy), newDeck, newBio, verification.user.id);
+    db.saveDatabase();
+    
+    res.json({ success: true });
+  } catch (error) {
+    console.error('Error saving settings:', error);
+    res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
 
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -120,6 +176,11 @@ app.get('/game.html', (req, res) => {
 // Serve the rules page
 app.get('/rules.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'rules.html'));
+});
+
+// Serve the settings page
+app.get('/settings.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'settings.html'));
 });
 
 // Serve the lobby page
@@ -2827,11 +2888,39 @@ app.get('/api/profile/:identifier', (req, res) => {
     // Calculate achievements
     const achievements = calculateAchievements(stats);
     
+    // Get existing unlock dates and record new ones
+    try {
+      const existingUnlocks = db.prepare(
+        'SELECT achievement_id, unlocked_at FROM achievement_unlocks WHERE user_id = ?'
+      ).all(user.id);
+      const unlockDates = {};
+      existingUnlocks.forEach(row => { unlockDates[row.achievement_id] = row.unlocked_at; });
+      
+      const insertUnlock = db.prepare(
+        'INSERT OR IGNORE INTO achievement_unlocks (user_id, achievement_id) VALUES (?, ?)'
+      );
+      let anyNew = false;
+      achievements.forEach(achievement => {
+        if (achievement.unlocked) {
+          if (!unlockDates[achievement.id]) {
+            insertUnlock.run(user.id, achievement.id);
+            unlockDates[achievement.id] = new Date().toISOString();
+            anyNew = true;
+          }
+          achievement.unlockedAt = unlockDates[achievement.id];
+        }
+      });
+      if (anyNew) db.saveDatabase();
+    } catch (e) {
+      console.error('Achievement unlock tracking error (table may need migration):', e.message);
+    }
+    
     res.json({
       user: {
         id: user.id,
         username: user.username,
-        createdAt: user.created_at
+        createdAt: user.created_at,
+        bio: user.bio || ''
       },
       stats: {
         ...stats,
@@ -2846,7 +2935,18 @@ app.get('/api/profile/:identifier', (req, res) => {
         percentile: totalPlayers.count > 0 ? ((1 - (rankData.rank / totalPlayers.count)) * 100).toFixed(1) : 0
       },
       playstyle,
-      achievements
+      achievements,
+      privacy: (() => {
+        try {
+          const p = JSON.parse(user.privacy_settings || '{}');
+          return {
+            showIndividualStats: p.showIndividualStats === true,
+            showWinRate: p.showWinRate === true,
+            showAchievements: p.showAchievements === true,
+            showMatchHistory: p.showMatchHistory === true
+          };
+        } catch { return {}; }
+      })()
     });
     
   } catch (error) {

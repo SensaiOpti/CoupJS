@@ -77,8 +77,11 @@
     <div class="flex justify-between items-center mb-8">
       <h1 class="text-4xl font-bold text-red-500">🏆 COUP LEADERBOARDS</h1>
       <div class="flex gap-3">
+        <a id="profileBtn" href="/profile.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Profile
+        </a>
         <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
-          Back to Game
+          Back to Lobby
         </a>
       </div>
     </div>
@@ -309,6 +312,13 @@
 
       const userInfo = document.getElementById('userInfo');
       userInfo.classList.remove('hidden');
+      
+      // Show and update Profile button
+      const profileBtn = document.getElementById('profileBtn');
+      if (profileBtn) {
+        profileBtn.href = `/profile.html?user=${currentUser.username}`;
+        profileBtn.classList.remove('hidden');
+      }
 
       document.getElementById('currentUsername').textContent = currentUser.username;
 

@@ -39,6 +39,20 @@ async function initDatabase() {
   } catch (e) {
     // Column already exists, ignore
   }
+  
+  // Add privacy_settings column if it doesn't exist
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN privacy_settings TEXT DEFAULT '{}'`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
+  // Add bio column if it doesn't exist
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN bio TEXT DEFAULT ''`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS user_stats (
@@ -105,6 +119,18 @@ async function initDatabase() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_username ON users(username);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_elo_rating ON user_stats(elo_rating DESC);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_game_history_date ON game_history(ended_at DESC);`);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS achievement_unlocks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      achievement_id TEXT NOT NULL,
+      unlocked_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, achievement_id),
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    );
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_achievement_unlocks ON achievement_unlocks(user_id);`);
 
   console.log('Database initialized successfully');
   saveDatabase();

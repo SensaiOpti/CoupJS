@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Settings - Coup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      background: linear-gradient(to bottom right, #7f1d1d, #1f2937, #000000);
+      min-height: 100vh;
+    }
+    
+    .stat-card {
+      background: rgba(31, 41, 55, 0.8);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(75, 85, 99, 0.3);
+    }
+    
+    /* Toggle switch */
+    input:checked ~ .toggle-bg { background: linear-gradient(to right, #3b82f6, #a855f7); }
+    input:checked ~ .toggle-dot { transform: translateX(16px); }
+    .toggle-bg { transition: background 0.2s; }
+    .toggle-dot { transition: transform 0.2s; }
+    
+    /* Deck card */
+    .deck-option {
+      background: rgba(31, 41, 55, 0.8);
+      border: 2px solid rgba(75, 85, 99, 0.3);
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+    .deck-option:hover { border-color: rgba(139, 92, 246, 0.5); }
+    .deck-option.selected { border-color: #a855f7; background: rgba(139, 92, 246, 0.15); }
+  </style>
+</head>
+<body class="text-white">
+  <div class="max-w-3xl mx-auto p-4 md:p-8">
+
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <h1 class="text-4xl font-bold text-red-500">COUP</h1>
+      <div class="flex gap-3">
+        <a id="profileLink" href="/profile.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Profile
+        </a>
+        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Back to Lobby
+        </a>
+      </div>
+    </div>
+
+    <!-- Not logged in -->
+    <div id="notLoggedIn" class="hidden stat-card rounded-lg p-8 text-center">
+      <div class="text-4xl mb-3">🔒</div>
+      <div class="text-lg font-bold text-gray-300 mb-2">Not logged in</div>
+      <div class="text-sm text-gray-400 mb-4">You must be logged in to view settings.</div>
+      <a href="/" class="bg-red-700 hover:bg-red-600 px-6 py-2 rounded transition-colors">Go to Login</a>
+    </div>
+
+    <!-- Settings Content -->
+    <div id="settingsContent" class="hidden space-y-6">
+
+      <h2 class="text-3xl font-bold">⚙️ Settings</h2>
+
+      <!-- Deck Preferences -->
+      <div class="stat-card rounded-lg p-6">
+        <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🎴 Card Deck Style</h3>
+        <p class="text-gray-400 text-sm mb-5">Choose the card art style used in your games.</p>
+        <div id="deckOptions" class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Profile Bio -->
+      <div class="stat-card rounded-lg p-6">
+        <h3 class="text-xl font-bold mb-1 flex items-center gap-2">✏️ Profile Bio</h3>
+        <p class="text-gray-400 text-sm mb-5">
+          Add a custom tagline or bio that appears on your profile. Visible to everyone. (Max 200 characters)
+        </p>
+        <textarea 
+          id="bioInput" 
+          maxlength="200" 
+          rows="3"
+          class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+          placeholder="e.g., 'Bluffing enthusiast and Duke lover' or 'Coup champion since 2023'"></textarea>
+        <div class="text-xs text-gray-400 mt-1">
+          <span id="bioCharCount">0</span> / 200 characters
+        </div>
+      </div>
+
+      <!-- Privacy Settings -->
+      <div class="stat-card rounded-lg p-6">
+        <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🔒 Profile Privacy</h3>
+        <p class="text-gray-400 text-sm mb-5">
+          Your name, join date, games played, and Elo are always public.
+          Toggle what else visitors can see on your profile.
+        </p>
+
+        <div class="space-y-4">
+          <!-- Win Rate -->
+          <div class="flex items-center justify-between py-3 border-b border-gray-700">
+            <div>
+              <div class="font-semibold">Win Rate & K/D</div>
+              <div class="text-sm text-gray-400">Show your win rate, win/loss record, and kill/death ratio</div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <div class="relative">
+                <input type="checkbox" id="privacyWinRate" class="sr-only">
+                <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot"></div>
+              </div>
+              <span class="text-gray-400 text-sm w-14" id="labelWinRate">Private</span>
+            </label>
+          </div>
+
+          <!-- Individual Stats -->
+          <div class="flex items-center justify-between py-3 border-b border-gray-700">
+            <div>
+              <div class="font-semibold">Individual Stats</div>
+              <div class="text-sm text-gray-400">Show your per-action stats (assassinations, taxes, bluffs, etc.)</div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <div class="relative">
+                <input type="checkbox" id="privacyIndividualStats" class="sr-only">
+                <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot"></div>
+              </div>
+              <span class="text-gray-400 text-sm w-14" id="labelIndividualStats">Private</span>
+            </label>
+          </div>
+
+          <!-- Achievements -->
+          <div class="flex items-center justify-between py-3 border-b border-gray-700">
+            <div>
+              <div class="font-semibold">Achievements</div>
+              <div class="text-sm text-gray-400">Show your unlocked achievements and progress</div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <div class="relative">
+                <input type="checkbox" id="privacyAchievements" class="sr-only">
+                <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot"></div>
+              </div>
+              <span class="text-gray-400 text-sm w-14" id="labelAchievements">Private</span>
+            </label>
+          </div>
+
+          <!-- Match History -->
+          <div class="flex items-center justify-between py-3">
+            <div>
+              <div class="font-semibold">Match History</div>
+              <div class="text-sm text-gray-400">Show your recent match results and stats</div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <div class="relative">
+                <input type="checkbox" id="privacyMatchHistory" class="sr-only">
+                <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot"></div>
+              </div>
+              <span class="text-gray-400 text-sm w-14" id="labelMatchHistory">Private</span>
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <!-- Save Button -->
+      <div class="flex items-center gap-4">
+        <button id="saveBtn" onclick="saveSettings()" class="bg-gradient-to-r from-blue-600 to-purple-600 hover:opacity-90 px-8 py-3 rounded font-bold transition-opacity">
+          Save Settings
+        </button>
+        <div id="saveMsg" class="hidden text-sm text-green-400">✓ Settings saved!</div>
+        <div id="saveErr" class="hidden text-sm text-red-400">✗ Failed to save. Please try again.</div>
+      </div>
+
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '';
+    const authToken = localStorage.getItem('coupAuthToken');
+    const currentUser = authToken ? JSON.parse(localStorage.getItem('currentUser') || '{}') : null;
+
+    const DECK_OPTIONS = [
+      { id: 'default', name: 'Classic', description: 'Original card designs', preview: '/images/cards/default/assassin.png' },
+      { id: 'anime', name: 'Anime', description: 'Anime-style artwork', preview: '/images/cards/anime/assassin.png' },
+      { id: 'pixel', name: 'Pixel', description: '8-bit pixel art', preview: '/images/cards/pixel/assassin.png' },
+      { id: 'minimalist', name: 'Minimalist', description: 'Clean minimal design', preview: '/images/cards/minimalist/assassin.png' }
+    ];
+
+    let currentSettings = {
+      deckPreference: 'default',
+      privacy: {
+        showWinRate: false,
+        showIndividualStats: false,
+        showAchievements: false,
+        showMatchHistory: false
+      }
+    };
+
+    async function loadSettings() {
+      if (!authToken) {
+        document.getElementById('notLoggedIn').classList.remove('hidden');
+        return;
+      }
+
+      // Update profile link
+      if (currentUser?.username) {
+        document.getElementById('profileLink').href = `/profile.html?user=${currentUser.username}`;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/user/settings`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        if (!res.ok) throw new Error('Failed to load');
+        const data = await res.json();
+        currentSettings = data;
+        renderSettings(data);
+        document.getElementById('settingsContent').classList.remove('hidden');
+      } catch (e) {
+        console.error(e);
+        document.getElementById('notLoggedIn').classList.remove('hidden');
+      }
+    }
+
+    function renderSettings(settings) {
+      // Deck options
+      const container = document.getElementById('deckOptions');
+      container.innerHTML = DECK_OPTIONS.map(deck => `
+        <div class="deck-option rounded-lg p-4 text-center ${settings.deckPreference === deck.id ? 'selected' : ''}"
+             onclick="selectDeck('${deck.id}')">
+          <img src="${deck.preview}" alt="${deck.name}" class="w-full h-24 object-contain rounded mb-2"
+               onerror="this.style.display='none'; this.nextElementSibling.style.display='block'">
+          <div style="display:none" class="text-3xl mb-2">🎴</div>
+          <div class="font-bold text-sm">${deck.name}</div>
+          <div class="text-xs text-gray-400 mt-1">${deck.description}</div>
+        </div>
+      `).join('');
+
+      // Bio field
+      const bioInput = document.getElementById('bioInput');
+      bioInput.value = settings.bio || '';
+      updateCharCount();
+      bioInput.addEventListener('input', updateCharCount);
+
+      // Privacy toggles
+      setToggle('privacyWinRate', 'labelWinRate', settings.privacy?.showWinRate);
+      setToggle('privacyIndividualStats', 'labelIndividualStats', settings.privacy?.showIndividualStats);
+      setToggle('privacyAchievements', 'labelAchievements', settings.privacy?.showAchievements);
+      setToggle('privacyMatchHistory', 'labelMatchHistory', settings.privacy?.showMatchHistory);
+
+      // Listen for toggle changes to update labels live
+      ['WinRate', 'IndividualStats', 'Achievements', 'MatchHistory'].forEach(key => {
+        document.getElementById(`privacy${key}`).addEventListener('change', (e) => {
+          document.getElementById(`label${key}`).textContent = e.target.checked ? 'Public' : 'Private';
+          document.getElementById(`label${key}`).className = e.target.checked
+            ? 'text-green-400 text-sm w-14'
+            : 'text-gray-400 text-sm w-14';
+        });
+      });
+    }
+
+    function setToggle(inputId, labelId, value) {
+      const input = document.getElementById(inputId);
+      const label = document.getElementById(labelId);
+      input.checked = !!value;
+      label.textContent = value ? 'Public' : 'Private';
+      label.className = value ? 'text-green-400 text-sm w-14' : 'text-gray-400 text-sm w-14';
+    }
+
+    function selectDeck(deckId) {
+      currentSettings.deckPreference = deckId;
+      document.querySelectorAll('.deck-option').forEach(el => el.classList.remove('selected'));
+      event.currentTarget.classList.add('selected');
+    }
+
+    function updateCharCount() {
+      const bioInput = document.getElementById('bioInput');
+      const charCount = document.getElementById('bioCharCount');
+      charCount.textContent = bioInput.value.length;
+    }
+
+    async function saveSettings() {
+      document.getElementById('saveMsg').classList.add('hidden');
+      document.getElementById('saveErr').classList.add('hidden');
+      document.getElementById('saveBtn').textContent = 'Saving...';
+
+      const privacy = {
+        showWinRate: document.getElementById('privacyWinRate').checked,
+        showIndividualStats: document.getElementById('privacyIndividualStats').checked,
+        showAchievements: document.getElementById('privacyAchievements').checked,
+        showMatchHistory: document.getElementById('privacyMatchHistory').checked
+      };
+
+      const bio = document.getElementById('bioInput').value;
+
+      try {
+        const res = await fetch(`${API_BASE}/api/user/settings`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            token: authToken,
+            deckPreference: currentSettings.deckPreference,
+            bio,
+            privacy
+          })
+        });
+
+        if (!res.ok) throw new Error('Failed to save');
+
+        // Also update localStorage for deck preference (used in game)
+        localStorage.setItem('coupDeckPreference', currentSettings.deckPreference);
+
+        document.getElementById('saveMsg').classList.remove('hidden');
+        setTimeout(() => document.getElementById('saveMsg').classList.add('hidden'), 3000);
+      } catch (e) {
+        document.getElementById('saveErr').classList.remove('hidden');
+      } finally {
+        document.getElementById('saveBtn').textContent = 'Save Settings';
+      }
+    }
+
+    // Socket.io connection for online user tracking
+    const socketScript = document.createElement('script');
+    socketScript.src = '/socket.io/socket.io.js';
+    socketScript.onload = () => {
+      const socket = io({
+        auth: { token: authToken }
+      });
+      
+      socket.on('connect', () => {
+        // For guests, get username from localStorage
+        const guestUsername = localStorage.getItem('coupGuestUsername');
+        // Server will use authenticatedUser.username if token is valid, otherwise uses this
+        socket.emit('joinLobby', { username: guestUsername });
+      });
+    };
+    document.head.appendChild(socketScript);
+
+    loadSettings();
+  </script>
+</body>
+</html>

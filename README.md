@@ -4,6 +4,14 @@ An entirely (well, 99%+) AI generated web version of the social deception card g
 
 Seriously, I know nothing about coding at all so enter at your own risk. I can promise there won't be any of those annoying emojis, though. Not once I purge them.
 
+## Non-AI Stuff
+
+To date, the only things *not* AI generated are the fonts:
+
+- In the default cards, I use Pfeffer Mediæval, which was made by the lovely Dr. Pfeffer and can be found [here](https://robert-pfeffer.net/schriftarten/englisch/). It was used with admiration, appreciation, awe and respect for all that the good doctor does.
+- In the anime card set, I use [Lollipoptron](https://www.fontspace.com/lollipoptron-font-f29782) which was designed by heaven castro as a derivative of KineticPlasma Fonts' Hi. A mouthful!
+- In the pixel card set, I use [PixelMplus](https://fontmeme.com/fonts/pixelmplus-font/) by the heroic Itou Hiroki. A font that evokes a feeling of nostalgia.
+
 ## Technologies Used
 
 ### Backend
@@ -40,10 +48,14 @@ npm install
 npm start
 ```
 
-## Non-AI Stuff
+### First Time Use / Administrators
+The first created user account is an administrator...a super one! This super admin has access to special privileges. I **strongly advise** you, as the one hosting this, to create an admin user prior to allowing others to register. 
 
-To date, the only things *not* AI generated are the fonts:
+All admin users:
+- Have access to the Admin Panel page, where they can see a list of users
+- Can timeout and ban specific users. (Or undo any of these actions!)
+- Can access moderation logs to see any recent actions performed by other admins.
 
-- In the default cards, I use Pfeffer Mediæval, which was made by the lovely Dr. Pfeffer and can be found [here](https://robert-pfeffer.net/schriftarten/englisch/). It was used with admiration, appreciation, awe and respect for all that the good doctor does.
-- In the anime card set, I use [Lollipoptron](https://www.fontspace.com/lollipoptron-font-f29782) which was designed by heaven castro as a derivative of KineticPlasma Fonts' Hi. A mouthful!
-- In the pixel card set, I use [PixelMplus](https://fontmeme.com/fonts/pixelmplus-font/) by the heroic Itou Hiroki. A font that evokes a feeling of nostalgia.
+Additionally, the super admin is able to promote users to be administrators.
+
+Please note that administrators cannot be timed out nor banned. Be careful who you promote!

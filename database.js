@@ -53,6 +53,25 @@ async function initDatabase() {
   } catch (e) {
     // Column already exists, ignore
   }
+  
+  // Add moderation columns if they don't exist
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN timeout_until DATETIME DEFAULT NULL`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS user_stats (
@@ -131,6 +150,23 @@ async function initDatabase() {
     );
   `);
   db.run(`CREATE INDEX IF NOT EXISTS idx_achievement_unlocks ON achievement_unlocks(user_id);`);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS moderation_actions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      target_user_id INTEGER NOT NULL,
+      moderator_user_id INTEGER NOT NULL,
+      action_type TEXT NOT NULL,
+      reason TEXT,
+      duration_hours INTEGER,
+      expires_at DATETIME,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (moderator_user_id) REFERENCES users(id) ON DELETE SET NULL
+    );
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_moderation_actions_target ON moderation_actions(target_user_id);`);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_moderation_actions_date ON moderation_actions(created_at DESC);`);
 
   console.log('Database initialized successfully');
   saveDatabase();

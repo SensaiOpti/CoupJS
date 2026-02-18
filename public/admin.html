@@ -1,0 +1,452 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel - Coup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+      background: linear-gradient(to bottom right, #7f1d1d, #1f2937, #000000);
+      min-height: 100vh;
+    }
+    
+    .stat-card {
+      background: rgba(31, 41, 55, 0.8);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(75, 85, 99, 0.3);
+    }
+  </style>
+</head>
+<body class="text-white">
+  <div class="max-w-7xl mx-auto p-4 md:p-8">
+
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-8">
+      <h1 class="text-4xl font-bold text-red-500">🛡️ ADMIN PANEL</h1>
+      <div class="flex gap-3">
+        <a id="profileLink" href="/profile.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Profile
+        </a>
+        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Back to Lobby
+        </a>
+      </div>
+    </div>
+
+    <!-- Access Denied -->
+    <div id="accessDenied" class="hidden stat-card rounded-lg p-8 text-center">
+      <div class="text-4xl mb-3">🔒</div>
+      <div class="text-lg font-bold text-gray-300 mb-2">Access Denied</div>
+      <div class="text-sm text-gray-400 mb-4">You must be a admin to access this page.</div>
+      <a href="/" class="bg-red-700 hover:bg-red-600 px-6 py-2 rounded transition-colors">Go to Lobby</a>
+    </div>
+
+    <!-- Content -->
+    <div id="content" class="hidden space-y-6">
+
+      <!-- Online Users -->
+      <div class="stat-card rounded-lg p-6">
+        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+          <span>👥</span>
+          <span>Online Users</span>
+          <span class="text-sm font-normal text-gray-400">(<span id="onlineCount">0</span>)</span>
+        </h2>
+        <div id="onlineUsersList" class="space-y-2 max-h-64 overflow-y-auto">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- User List -->
+      <div class="stat-card rounded-lg p-6">
+        <h2 class="text-2xl font-bold mb-4">Users</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead class="text-gray-400 border-b border-gray-700">
+              <tr>
+                <th class="text-left py-2">Username</th>
+                <th class="text-left py-2">Role</th>
+                <th class="text-left py-2">Status</th>
+                <th class="text-left py-2">Joined</th>
+                <th class="text-right py-2">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="userList" class="divide-y divide-gray-700">
+              <!-- Populated by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Admin Log -->
+      <div class="stat-card rounded-lg p-6">
+        <h2 class="text-2xl font-bold mb-4">Admin Log</h2>
+        <div class="space-y-2 max-h-96 overflow-y-auto" id="modLog">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Action Modal -->
+    <div id="actionModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50">
+      <div class="stat-card rounded-lg p-6 max-w-md w-full mx-4">
+        <h3 id="modalTitle" class="text-xl font-bold mb-4"></h3>
+        <p id="modalDesc" class="text-gray-400 text-sm mb-4"></p>
+        
+        <div class="mb-4">
+          <label class="block text-sm text-gray-400 mb-2">Reason (optional)</label>
+          <textarea 
+            id="reasonInput" 
+            rows="3"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
+            placeholder="Enter reason for this action..."></textarea>
+        </div>
+        
+        <div class="flex gap-3">
+          <button id="confirmBtn" class="flex-1 bg-red-700 hover:bg-red-600 px-4 py-2 rounded transition-colors font-bold">
+            Confirm
+          </button>
+          <button onclick="closeModal()" class="flex-1 bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+            Cancel
+          </button>
+        </div>
+        
+        <div id="modalError" class="hidden mt-3 text-red-400 text-sm"></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const API_BASE = '';
+    const authToken = localStorage.getItem('coupAuthToken');
+    const currentUser = authToken ? JSON.parse(localStorage.getItem('currentUser') || '{}') : null;
+    
+    let currentRole = 'user';
+    let users = [];
+    let currentAction = null;
+
+    async function checkAccess() {
+      if (!authToken) {
+        document.getElementById('accessDenied').classList.remove('hidden');
+        return false;
+      }
+
+      try {
+        const res = await fetch(`${API_BASE}/api/verify`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ token: authToken })
+        });
+        
+        const data = await res.json();
+        
+        if (!data.success || !data.role || (data.role !== 'moderator' && data.role !== 'admin')) {
+          document.getElementById('accessDenied').classList.remove('hidden');
+          return false;
+        }
+        
+        currentRole = data.role;
+        return true;
+      } catch (e) {
+        console.error(e);
+        document.getElementById('accessDenied').classList.remove('hidden');
+        return false;
+      }
+    }
+
+    async function loadUsers() {
+      try {
+        const res = await fetch(`${API_BASE}/api/moderation/users`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        
+        if (!res.ok) throw new Error('Failed to load');
+        
+        const data = await res.json();
+        users = data.users;
+        renderUsers();
+      } catch (e) {
+        console.error('Failed to load users:', e);
+      }
+    }
+
+    function renderUsers() {
+      const container = document.getElementById('userList');
+      
+      container.innerHTML = users.map(user => {
+        let statusBadge = '<span class="text-green-400">Active</span>';
+        if (user.banStatus.banned) {
+          statusBadge = '<span class="text-red-400 font-bold">BANNED</span>';
+        } else if (user.banStatus.timedOut) {
+          const expires = new Date(user.banStatus.expiresAt).toLocaleString();
+          statusBadge = `<span class="text-yellow-400 font-bold">TIMED OUT</span><div class="text-xs text-gray-400">Until ${expires}</div>`;
+        }
+        
+        let roleBadge = user.role === 'admin' 
+          ? '<span class="bg-red-700 px-2 py-1 rounded text-xs font-bold">SUPER ADMIN</span>'
+          : user.role === 'moderator'
+          ? '<span class="bg-blue-700 px-2 py-1 rounded text-xs font-bold">ADMIN</span>'
+          : '<span class="text-gray-400">User</span>';
+        
+        const isSelf = currentUser && user.username === currentUser.username;
+        const canModerate = user.role === 'user' || (currentRole === 'admin' && user.role === 'moderator');
+        
+        let actions = '';
+        if (!isSelf && canModerate) {
+          if (user.banStatus.banned || user.banStatus.timedOut) {
+            actions = `<button onclick="unbanUser(${user.id}, '${user.username}')" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs transition-colors">Unban</button>`;
+          } else {
+            actions = `
+              <button onclick="timeoutUser(${user.id}, '${user.username}')" class="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded text-xs transition-colors mr-2">Timeout</button>
+              <button onclick="banUser(${user.id}, '${user.username}')" class="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-xs transition-colors">Ban</button>
+            `;
+          }
+          
+          if (currentRole === 'admin') {
+            if (user.role === 'user') {
+              actions += ` <button onclick="promoteUser(${user.id}, '${user.username}')" class="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded text-xs transition-colors ml-2">Promote</button>`;
+            } else if (user.role === 'moderator') {
+              actions += ` <button onclick="demoteUser(${user.id}, '${user.username}')" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs transition-colors ml-2">Demote</button>`;
+            }
+          }
+        }
+        
+        return `
+          <tr class="hover:bg-gray-700/30 transition-colors">
+            <td class="py-3">${user.username}</td>
+            <td class="py-3">${roleBadge}</td>
+            <td class="py-3">${statusBadge}</td>
+            <td class="py-3 text-gray-400">${new Date(user.created_at).toLocaleDateString()}</td>
+            <td class="py-3 text-right">${actions}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function loadModLog() {
+      try {
+        const res = await fetch(`${API_BASE}/api/moderation/log?limit=50`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        
+        if (!res.ok) throw new Error('Failed to load');
+        
+        const data = await res.json();
+        renderModLog(data.actions);
+      } catch (e) {
+        console.error('Failed to load mod log:', e);
+      }
+    }
+
+    function renderModLog(actions) {
+      const container = document.getElementById('modLog');
+      
+      if (!actions || actions.length === 0) {
+        container.innerHTML = '<div class="text-gray-400 text-center py-4">No moderation actions yet</div>';
+        return;
+      }
+      
+      container.innerHTML = actions.map(action => {
+        const date = new Date(action.created_at).toLocaleString();
+        let actionColor = 'text-gray-400';
+        let actionText = action.action_type;
+        
+        if (action.action_type === 'ban') {
+          actionColor = 'text-red-400 font-bold';
+          actionText = 'BANNED';
+        } else if (action.action_type === 'timeout') {
+          actionColor = 'text-yellow-400 font-bold';
+          actionText = 'TIMED OUT (24h)';
+        } else if (action.action_type === 'unban') {
+          actionColor = 'text-green-400';
+          actionText = 'UNBANNED';
+        } else if (action.action_type === 'promote') {
+          actionColor = 'text-purple-400 font-bold';
+          actionText = 'PROMOTED TO ADMIN';
+        } else if (action.action_type === 'demote') {
+          actionColor = 'text-blue-400';
+          actionText = 'DEMOTED TO USER';
+        }
+        
+        return `
+          <div class="bg-gray-700/30 rounded p-3 text-sm">
+            <div class="flex items-start justify-between">
+              <div>
+                <span class="${actionColor}">${actionText}</span>
+                <span class="text-gray-400"> - </span>
+                <span class="text-white">${action.target_username || 'Unknown User'}</span>
+              </div>
+              <div class="text-xs text-gray-500">${date}</div>
+            </div>
+            <div class="text-xs text-gray-400 mt-1">
+              By: ${action.moderator_username || 'Unknown Admin'}
+              ${action.reason ? ` | Reason: ${action.reason}` : ''}
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function timeoutUser(userId, username) {
+      currentAction = { type: 'timeout', userId, username };
+      document.getElementById('modalTitle').textContent = 'Timeout User';
+      document.getElementById('modalDesc').textContent = `Timeout ${username} for 24 hours? They will not be able to access the site until the timeout expires.`;
+      document.getElementById('actionModal').classList.remove('hidden');
+    }
+
+    function banUser(userId, username) {
+      currentAction = { type: 'ban', userId, username };
+      document.getElementById('modalTitle').textContent = 'Ban User';
+      document.getElementById('modalDesc').textContent = `Permanently ban ${username}? This action will prevent them from accessing the site indefinitely.`;
+      document.getElementById('actionModal').classList.remove('hidden');
+    }
+
+    function unbanUser(userId, username) {
+      currentAction = { type: 'unban', userId, username };
+      document.getElementById('modalTitle').textContent = 'Lift Ban/Timeout';
+      document.getElementById('modalDesc').textContent = `Remove ban or timeout from ${username}? They will regain full access to the site.`;
+      document.getElementById('actionModal').classList.remove('hidden');
+    }
+
+    function promoteUser(userId, username) {
+      currentAction = { type: 'promote', userId, username };
+      document.getElementById('modalTitle').textContent = 'Promote to Admin';
+      document.getElementById('modalDesc').textContent = `Promote ${username} to moderator? They will gain access to this admin panel.`;
+      document.getElementById('actionModal').classList.remove('hidden');
+    }
+
+    function demoteUser(userId, username) {
+      currentAction = { type: 'demote', userId, username };
+      document.getElementById('modalTitle').textContent = 'Demote to User';
+      document.getElementById('modalDesc').textContent = `Demote ${username} to regular user? They will lose admin access.`;
+      document.getElementById('actionModal').classList.remove('hidden');
+    }
+
+    function closeModal() {
+      document.getElementById('actionModal').classList.add('hidden');
+      document.getElementById('reasonInput').value = '';
+      document.getElementById('modalError').classList.add('hidden');
+      currentAction = null;
+    }
+
+    document.getElementById('confirmBtn').addEventListener('click', async () => {
+      if (!currentAction) return;
+      
+      const reason = document.getElementById('reasonInput').value;
+      const errorEl = document.getElementById('modalError');
+      errorEl.classList.add('hidden');
+      
+      try {
+        const endpoint = currentAction.type === 'promote' ? '/api/moderation/promote'
+          : currentAction.type === 'demote' ? '/api/moderation/demote'
+          : `/api/moderation/${currentAction.type}`;
+        
+        const res = await fetch(`${API_BASE}${endpoint}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({
+            userId: currentAction.userId,
+            reason
+          })
+        });
+        
+        const data = await res.json();
+        
+        if (!res.ok || !data.success) {
+          errorEl.textContent = data.error || 'Failed to perform action';
+          errorEl.classList.remove('hidden');
+          return;
+        }
+        
+        closeModal();
+        loadUsers();
+        loadModLog();
+      } catch (e) {
+        console.error(e);
+        errorEl.textContent = 'Network error. Please try again.';
+        errorEl.classList.remove('hidden');
+      }
+    });
+
+    async function init() {
+      const hasAccess = await checkAccess();
+      if (hasAccess) {
+        // Update profile link
+        if (currentUser && currentUser.username) {
+          document.getElementById('profileLink').href = `/profile.html?user=${currentUser.username}`;
+        }
+        
+        document.getElementById('content').classList.remove('hidden');
+        loadUsers();
+        loadModLog();
+        initSocket();
+      }
+    }
+
+    let onlineUsers = [];
+
+    function initSocket() {
+      // Load socket.io
+      const socketScript = document.createElement('script');
+      socketScript.src = '/socket.io/socket.io.js';
+      socketScript.onload = () => {
+        const socket = io({
+          auth: { token: authToken }
+        });
+
+        socket.on('connect', () => {
+          const guestUsername = localStorage.getItem('coupGuestUsername');
+          socket.emit('joinLobby', { username: guestUsername });
+        });
+
+        socket.on('onlineUsersUpdate', (data) => {
+          onlineUsers = data.users;
+          updateOnlineUsers();
+        });
+      };
+      document.head.appendChild(socketScript);
+    }
+
+    function updateOnlineUsers() {
+      const container = document.getElementById('onlineUsersList');
+      document.getElementById('onlineCount').textContent = onlineUsers.length;
+
+      const sortedUsers = [...onlineUsers].sort((a, b) => 
+        a.username.toLowerCase().localeCompare(b.username.toLowerCase())
+      );
+
+      container.innerHTML = sortedUsers.map(user => {
+        const isAuth = user.isAuthenticated;
+        const isAdmin = user.role === 'admin' || user.role === 'moderator';
+        const statusIcon = user.inGame ? '🎮' : '💤';
+        const statusText = user.inGame ? 'In Game' : 'In Lobby';
+        
+        return `
+          <div class="bg-gray-700 rounded p-2 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="text-lg">${statusIcon}</span>
+              <div>
+                ${isAuth
+                  ? `<a href="/profile.html?user=${encodeURIComponent(user.username)}" class="font-semibold text-sm text-blue-300 hover:text-blue-100 hover:underline">${user.username}</a>`
+                  : `<div class="font-semibold text-sm">${user.username}</div>`
+                }
+                <div class="text-xs text-gray-400">${statusText}</div>
+              </div>
+            </div>
+            ${isAdmin ? '<span class="text-xs text-red-500">🛡️</span>' : isAuth ? '<span class="text-xs text-green-500">⭐</span>' : '<span class="text-xs text-gray-500">👤</span>'}
+          </div>
+        `;
+      }).join('');
+    }
+
+    init();
+  </script>
+</body>
+</html>

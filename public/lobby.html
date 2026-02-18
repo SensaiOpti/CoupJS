@@ -98,6 +98,9 @@
         <a href="/rules.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Rules
         </a>
+        <a id="moderatorBtn" href="/admin.html" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded transition-colors">
+          🛡️ Admin
+        </a>
         <a href="/login.html" id="loginBtn" class="hidden bg-green-700 hover:bg-green-600 px-4 py-2 rounded">
           🔑 Login
         </a>
@@ -229,6 +232,7 @@
     let socket = null;
     let authToken = localStorage.getItem('coupAuthToken');
     let currentUser = null;
+    let userRole = 'user';
     let onlineUsers = [];
     let rooms = [];
     let currentFilter = 'all';
@@ -269,6 +273,7 @@
         const verification = await verifyAuthToken();
         if (verification.success) {
           currentUser = verification.user;
+          userRole = verification.role || 'user';
         }
       }
       
@@ -312,6 +317,12 @@
         // Authenticated user: show logout, hide login
         document.getElementById('logoutBtn').classList.remove('hidden');
         document.getElementById('loginBtn').classList.add('hidden');
+        
+        // Show admin button for admins and moderators
+        if (userRole === 'moderator' || userRole === 'admin') {
+          document.getElementById('moderatorBtn').classList.remove('hidden');
+        }
+        
         if (currentUser.stats && currentUser.stats.elo_rating) {
           const eloEl = document.getElementById('userElo');
           eloEl.textContent = `⭐ Elo: ${currentUser.stats.elo_rating}`;
@@ -487,6 +498,7 @@
 
       container.innerHTML = sortedUsers.map(user => {
         const isAuth = user.isAuthenticated;
+        const isAdmin = user.role === 'admin' || user.role === 'moderator';
         const statusIcon = user.inGame ? '🎮' : '💤';
         const statusText = user.inGame ? 'In Game' : 'In Lobby';
         
@@ -502,7 +514,7 @@
                 <div class="text-xs text-gray-400">${statusText}</div>
               </div>
             </div>
-            ${isAuth ? '<span class="text-xs text-green-500">⭐</span>' : '<span class="text-xs text-gray-500">👤</span>'}
+            ${isAdmin ? '<span class="text-xs text-red-500">🛡️</span>' : isAuth ? '<span class="text-xs text-green-500">⭐</span>' : '<span class="text-xs text-gray-500">👤</span>'}
           </div>
         `;
       }).join('');

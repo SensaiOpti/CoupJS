@@ -46,16 +46,25 @@ function register(username, password, email = null) {
     const salt = bcrypt.genSaltSync(10);
     const passwordHash = bcrypt.hashSync(password, salt);
 
+    // Check if this is the first user (make them admin)
+    const userCount = dbModule.prepare('SELECT COUNT(*) as count FROM users').get();
+    const isFirstUser = userCount.count === 0;
+    const role = isFirstUser ? 'admin' : 'user';
+
     // Insert user
     const insertUser = dbModule.prepare(`
-      INSERT INTO users (username, password_hash, email, display_name)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO users (username, password_hash, email, display_name, role)
+      VALUES (?, ?, ?, ?, ?)
     `);
-    const result = insertUser.run(username, passwordHash, email, username);
+    const result = insertUser.run(username, passwordHash, email, username, role);
     const userId = result.lastInsertRowid;
     
     if (!userId || userId === 0) {
       throw new Error('Failed to create user');
+    }
+    
+    if (isFirstUser) {
+      console.log(`🛡️  First user '${username}' created as admin`);
     }
     
     // Create stats entry - check if already exists first

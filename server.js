@@ -50,7 +50,27 @@ app.post('/api/verify', (req, res) => {
   const result = auth.verifyToken(token);
   
   if (result.success) {
-    res.json(result);
+    // Check ban status
+    const banStatus = checkBanStatus(result.user.id);
+    if (banStatus.banned) {
+      return res.status(403).json({ 
+        success: false, 
+        error: 'Account permanently banned',
+        banned: true
+      });
+    }
+    if (banStatus.timedOut) {
+      return res.status(403).json({ 
+        success: false, 
+        error: `Account timed out until ${new Date(banStatus.expiresAt).toLocaleString()}`,
+        timedOut: true,
+        expiresAt: banStatus.expiresAt
+      });
+    }
+    
+    // Add role to response
+    const user = db.prepare('SELECT role FROM users WHERE id = ?').get(result.user.id);
+    res.json({ ...result, role: user?.role || 'user' });
   } else {
     res.status(401).json(result);
   }
@@ -159,6 +179,264 @@ app.post('/api/user/settings', (req, res) => {
   }
 });
 
+// Admin middleware
+function requireModerator(req, res, next) {
+  const token = req.headers.authorization?.split(' ')[1] || req.body.token || req.query.token;
+  const verification = auth.verifyToken(token);
+  
+  if (!verification.success) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const user = db.prepare('SELECT role FROM users WHERE id = ?').get(verification.user.id);
+  if (!user || (user.role !== 'moderator' && user.role !== 'admin')) {
+    return res.status(403).json({ error: 'Forbidden: Admin access required' });
+  }
+  
+  req.moderator = verification.user;
+  next();
+}
+
+// Check if user is banned or timed out
+function checkBanStatus(userId) {
+  const user = db.prepare('SELECT banned, timeout_until FROM users WHERE id = ?').get(userId);
+  if (!user) return { banned: false, timedOut: false };
+  
+  if (user.banned) {
+    return { banned: true, timedOut: false, permanent: true };
+  }
+  
+  if (user.timeout_until) {
+    const timeoutDate = new Date(user.timeout_until);
+    if (timeoutDate > new Date()) {
+      return { banned: false, timedOut: true, expiresAt: user.timeout_until };
+    } else {
+      // Timeout expired, clear it
+      db.prepare('UPDATE users SET timeout_until = NULL WHERE id = ?').run(userId);
+      db.saveDatabase();
+    }
+  }
+  
+  return { banned: false, timedOut: false };
+}
+
+// GET /api/moderation/users - List all users for admin panel
+app.get('/api/moderation/users', requireModerator, (req, res) => {
+  try {
+    const users = db.prepare(`
+      SELECT 
+        id, username, role, banned, timeout_until, created_at,
+        (SELECT COUNT(*) FROM game_history WHERE winner_user_id = users.id) as games_won
+      FROM users
+      ORDER BY created_at DESC
+    `).all();
+    
+    const usersWithStatus = users.map(user => ({
+      ...user,
+      banStatus: checkBanStatus(user.id)
+    }));
+    
+    res.json({ users: usersWithStatus });
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
+});
+
+// POST /api/moderation/timeout - Timeout a user for 24 hours
+app.post('/api/moderation/timeout', requireModerator, (req, res) => {
+  try {
+    const { userId, reason } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID required' });
+    }
+    
+    const targetUser = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Prevent timing out admins or other moderators
+    if (targetUser.role === 'admin' || targetUser.role === 'moderator') {
+      return res.status(403).json({ error: 'Cannot timeout admins or super admins' });
+    }
+    
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    
+    db.prepare('UPDATE users SET timeout_until = ? WHERE id = ?').run(expiresAt, userId);
+    
+    db.prepare(`
+      INSERT INTO moderation_actions (target_user_id, moderator_user_id, action_type, reason, duration_hours, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(userId, req.moderator.id, 'timeout', reason || 'No reason provided', 24, expiresAt);
+    
+    db.saveDatabase();
+    
+    res.json({ success: true, message: 'User timed out for 24 hours', expiresAt });
+  } catch (error) {
+    console.error('Error timing out user:', error);
+    res.status(500).json({ error: 'Failed to timeout user' });
+  }
+});
+
+// POST /api/moderation/ban - Permanently ban a user
+app.post('/api/moderation/ban', requireModerator, (req, res) => {
+  try {
+    const { userId, reason } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID required' });
+    }
+    
+    const targetUser = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Prevent banning admins or other moderators
+    if (targetUser.role === 'admin' || targetUser.role === 'moderator') {
+      return res.status(403).json({ error: 'Cannot ban admins or super admins' });
+    }
+    
+    db.prepare('UPDATE users SET banned = 1, timeout_until = NULL WHERE id = ?').run(userId);
+    
+    db.prepare(`
+      INSERT INTO moderation_actions (target_user_id, moderator_user_id, action_type, reason)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, req.moderator.id, 'ban', reason || 'No reason provided');
+    
+    db.saveDatabase();
+    
+    res.json({ success: true, message: 'User permanently banned' });
+  } catch (error) {
+    console.error('Error banning user:', error);
+    res.status(500).json({ error: 'Failed to ban user' });
+  }
+});
+
+// POST /api/moderation/unban - Lift ban or timeout
+app.post('/api/moderation/unban', requireModerator, (req, res) => {
+  try {
+    const { userId, reason } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID required' });
+    }
+    
+    db.prepare('UPDATE users SET banned = 0, timeout_until = NULL WHERE id = ?').run(userId);
+    
+    db.prepare(`
+      INSERT INTO moderation_actions (target_user_id, moderator_user_id, action_type, reason)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, req.moderator.id, 'unban', reason || 'Ban/timeout lifted');
+    
+    db.saveDatabase();
+    
+    res.json({ success: true, message: 'Ban/timeout lifted' });
+  } catch (error) {
+    console.error('Error unbanning user:', error);
+    res.status(500).json({ error: 'Failed to unban user' });
+  }
+});
+
+// GET /api/moderation/log - View moderation action log
+app.get('/api/moderation/log', requireModerator, (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    
+    const actions = db.prepare(`
+      SELECT 
+        ma.*,
+        target.username as target_username,
+        mod.username as moderator_username
+      FROM moderation_actions ma
+      LEFT JOIN users target ON ma.target_user_id = target.id
+      LEFT JOIN users mod ON ma.moderator_user_id = mod.id
+      ORDER BY ma.created_at DESC
+      LIMIT ?
+    `).all(limit);
+    
+    res.json({ actions });
+  } catch (error) {
+    console.error('Error fetching mod log:', error);
+    res.status(500).json({ error: 'Failed to fetch moderation log' });
+  }
+});
+
+// POST /api/moderation/promote - Promote user to admin (super admin only)
+app.post('/api/moderation/promote', requireModerator, (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1] || req.body.token;
+    const verification = auth.verifyToken(token);
+    const moderatorUser = db.prepare('SELECT role FROM users WHERE id = ?').get(verification.user.id);
+    
+    if (moderatorUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can promote users' });
+    }
+    
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID required' });
+    }
+    
+    db.prepare('UPDATE users SET role = ? WHERE id = ?').run('moderator', userId);
+    
+    // Log the promotion
+    db.prepare(`
+      INSERT INTO moderation_actions (target_user_id, moderator_user_id, action_type, reason)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, verification.user.id, 'promote', req.body.reason || 'Promoted to admin');
+    
+    db.saveDatabase();
+    
+    res.json({ success: true, message: 'User promoted to admin' });
+  } catch (error) {
+    console.error('Error promoting user:', error);
+    res.status(500).json({ error: 'Failed to promote user' });
+  }
+});
+
+// POST /api/moderation/demote - Demote admin to user (super admin only)
+app.post('/api/moderation/demote', requireModerator, (req, res) => {
+  try {
+    const token = req.headers.authorization?.split(' ')[1] || req.body.token;
+    const verification = auth.verifyToken(token);
+    const moderatorUser = db.prepare('SELECT role FROM users WHERE id = ?').get(verification.user.id);
+    
+    if (moderatorUser.role !== 'admin') {
+      return res.status(403).json({ error: 'Only admins can demote users' });
+    }
+    
+    const { userId } = req.body;
+    
+    if (!userId) {
+      return res.status(400).json({ error: 'User ID required' });
+    }
+    
+    const targetUser = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
+    if (targetUser && targetUser.role === 'admin') {
+      return res.status(403).json({ error: 'Cannot demote super admins' });
+    }
+    
+    db.prepare('UPDATE users SET role = ? WHERE id = ?').run('user', userId);
+    
+    // Log the demotion
+    db.prepare(`
+      INSERT INTO moderation_actions (target_user_id, moderator_user_id, action_type, reason)
+      VALUES (?, ?, ?, ?)
+    `).run(userId, verification.user.id, 'demote', req.body.reason || 'Demoted to user');
+    
+    db.saveDatabase();
+    
+    res.json({ success: true, message: 'User demoted to regular user' });
+  } catch (error) {
+    console.error('Error demoting user:', error);
+    res.status(500).json({ error: 'Failed to demote user' });
+  }
+});
+
 
 // Serve static files from the 'public' directory
 app.use(express.static(path.join(__dirname, 'public')));
@@ -181,6 +459,11 @@ app.get('/rules.html', (req, res) => {
 // Serve the settings page
 app.get('/settings.html', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'settings.html'));
+});
+
+// Serve the admin page
+app.get('/admin.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'public', 'admin.html'));
 });
 
 // Serve the lobby page
@@ -3348,10 +3631,23 @@ function broadcastOnlineUsers() {
       // For authenticated users, dedupe by userId
       if (!seenAuthUsers.has(user.userId)) {
         seenAuthUsers.add(user.userId);
+        
+        // Fetch user role from database
+        let role = 'user';
+        try {
+          const userRecord = db.prepare('SELECT role FROM users WHERE id = ?').get(user.userId);
+          if (userRecord && userRecord.role) {
+            role = userRecord.role;
+          }
+        } catch (e) {
+          // Ignore database errors
+        }
+        
         uniqueUsers.push({
           username: user.username,
           isAuthenticated: user.isAuthenticated,
-          inGame: user.inGame
+          inGame: user.inGame,
+          role: role
         });
       }
     } else {

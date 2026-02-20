@@ -22,6 +22,49 @@ const io = socketIO(server, {
 
 app.use(express.json());
 
+// Helper to get client IP address
+function getClientIP(req) {
+  // Check various headers for proxied requests
+  return req.headers['x-forwarded-for']?.split(',')[0].trim() ||
+         req.headers['x-real-ip'] ||
+         req.connection.remoteAddress ||
+         req.socket.remoteAddress ||
+         req.connection.socket?.remoteAddress ||
+         'unknown';
+}
+
+// Check if IP is banned
+function isIPBanned(ip) {
+  if (!ip || ip === 'unknown') return false;
+  
+  try {
+    const banned = db.prepare('SELECT id FROM banned_ips WHERE ip_address = ?').get(ip);
+    return !!banned;
+  } catch (e) {
+    console.error('Error checking IP ban:', e);
+    return false;
+  }
+}
+
+// Middleware to check IP bans on HTTP requests
+app.use((req, res, next) => {
+  const ip = getClientIP(req);
+  
+  // Skip IP check for static files
+  if (req.path.startsWith('/public/') || req.path.match(/\.(js|css|png|jpg|jpeg|gif|ico)$/)) {
+    return next();
+  }
+  
+  if (isIPBanned(ip)) {
+    return res.status(403).json({ 
+      error: 'Access denied. Your IP address has been banned.',
+      banned: true 
+    });
+  }
+  
+  next();
+});
+
 // Authentication routes
 app.post('/api/register', (req, res) => {
   const { username, password, email } = req.body;
@@ -130,11 +173,12 @@ app.get('/api/user/settings', (req, res) => {
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
   
   try {
-    const user = db.prepare('SELECT deck_preference, privacy_settings, bio FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email FROM users WHERE id = ?').get(verification.user.id);
     const privacy = JSON.parse(user.privacy_settings || '{}');
     res.json({
       deckPreference: user.deck_preference || 'default',
       bio: user.bio || '',
+      email: user.email || '',
       privacy: {
         showIndividualStats: privacy.showIndividualStats === true,
         showWinRate: privacy.showWinRate === true,
@@ -155,10 +199,10 @@ app.post('/api/user/settings', (req, res) => {
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
   
   try {
-    const { privacy, deckPreference, bio } = req.body;
+    const { privacy, deckPreference, bio, email } = req.body;
     
     // Build update
-    const user = db.prepare('SELECT deck_preference, privacy_settings, bio FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email FROM users WHERE id = ?').get(verification.user.id);
     const currentPrivacy = JSON.parse(user.privacy_settings || '{}');
     const newPrivacy = { ...currentPrivacy, ...privacy };
     
@@ -168,14 +212,57 @@ app.post('/api/user/settings', (req, res) => {
     // Limit bio to 250 characters
     const newBio = typeof bio === 'string' ? bio.substring(0, 250) : user.bio || '';
     
-    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ? WHERE id = ?')
-      .run(JSON.stringify(newPrivacy), newDeck, newBio, verification.user.id);
+    // Update email (optional, can be empty)
+    const newEmail = typeof email === 'string' ? email.trim() : user.email || '';
+    
+    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ?, email = ? WHERE id = ?')
+      .run(JSON.stringify(newPrivacy), newDeck, newBio, newEmail, verification.user.id);
     db.saveDatabase();
     
     res.json({ success: true });
   } catch (error) {
     console.error('Error saving settings:', error);
     res.status(500).json({ error: 'Failed to save settings' });
+  }
+});
+
+// POST /api/user/change-password - Change user password
+app.post('/api/user/change-password', (req, res) => {
+  const token = req.headers.authorization?.split(' ')[1] || req.body.token;
+  const verification = auth.verifyToken(token);
+  if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
+  
+  try {
+    const { currentPassword, newPassword } = req.body;
+    
+    if (!currentPassword || !newPassword) {
+      return res.status(400).json({ error: 'Current password and new password are required' });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    
+    // Get user's current password hash
+    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(verification.user.id);
+    
+    // Verify current password
+    const bcrypt = require('bcryptjs');
+    const isValid = bcrypt.compareSync(currentPassword, user.password_hash);
+    
+    if (!isValid) {
+      return res.status(400).json({ error: 'Current password is incorrect' });
+    }
+    
+    // Hash new password and update
+    const newHash = bcrypt.hashSync(newPassword, 10);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, verification.user.id);
+    db.saveDatabase();
+    
+    res.json({ success: true, message: 'Password updated successfully' });
+  } catch (error) {
+    console.error('Error changing password:', error);
+    res.status(500).json({ error: 'Failed to change password' });
   }
 });
 
@@ -434,6 +521,95 @@ app.post('/api/moderation/demote', requireModerator, (req, res) => {
   } catch (error) {
     console.error('Error demoting user:', error);
     res.status(500).json({ error: 'Failed to demote user' });
+  }
+});
+
+// POST /api/moderation/ban-ip - Ban an IP address
+app.post('/api/moderation/ban-ip', requireModerator, (req, res) => {
+  try {
+    const { ip, reason } = req.body;
+    
+    if (!ip) {
+      return res.status(400).json({ error: 'IP address required' });
+    }
+    
+    // Check if already banned
+    const existing = db.prepare('SELECT id FROM banned_ips WHERE ip_address = ?').get(ip);
+    if (existing) {
+      return res.status(400).json({ error: 'IP address already banned' });
+    }
+    
+    db.prepare(`
+      INSERT INTO banned_ips (ip_address, reason, banned_by)
+      VALUES (?, ?, ?)
+    `).run(ip, reason || 'No reason provided', req.moderator.id);
+    
+    db.saveDatabase();
+    
+    // Disconnect any active connections from this IP
+    disconnectIP(ip);
+    
+    res.json({ success: true, message: 'IP address banned' });
+  } catch (error) {
+    console.error('Error banning IP:', error);
+    res.status(500).json({ error: 'Failed to ban IP' });
+  }
+});
+
+// POST /api/moderation/unban-ip - Unban an IP address
+app.post('/api/moderation/unban-ip', requireModerator, (req, res) => {
+  try {
+    const { ip } = req.body;
+    
+    if (!ip) {
+      return res.status(400).json({ error: 'IP address required' });
+    }
+    
+    db.prepare('DELETE FROM banned_ips WHERE ip_address = ?').run(ip);
+    db.saveDatabase();
+    
+    res.json({ success: true, message: 'IP address unbanned' });
+  } catch (error) {
+    console.error('Error unbanning IP:', error);
+    res.status(500).json({ error: 'Failed to unban IP' });
+  }
+});
+
+// GET /api/moderation/banned-ips - Get list of banned IPs
+app.get('/api/moderation/banned-ips', requireModerator, (req, res) => {
+  try {
+    const bannedIPs = db.prepare(`
+      SELECT 
+        bi.*,
+        u.username as banned_by_username
+      FROM banned_ips bi
+      LEFT JOIN users u ON bi.banned_by = u.id
+      ORDER BY bi.banned_at DESC
+    `).all();
+    
+    res.json({ ips: bannedIPs });
+  } catch (error) {
+    console.error('Error fetching banned IPs:', error);
+    res.status(500).json({ error: 'Failed to fetch banned IPs' });
+  }
+});
+
+// GET /api/moderation/online-users - Get currently online users with IP addresses (admin only)
+app.get('/api/moderation/online-users', requireModerator, (req, res) => {
+  try {
+    const users = Array.from(lobbySockets.values()).map(user => ({
+      username: user.username,
+      isAuthenticated: user.isAuthenticated,
+      userId: user.userId,
+      inGame: user.inGame,
+      role: user.role || 'user',
+      ip: user.ip || 'unknown'
+    }));
+    
+    res.json({ users });
+  } catch (error) {
+    console.error('Error fetching online users:', error);
+    res.status(500).json({ error: 'Failed to fetch online users' });
   }
 });
 
@@ -3577,6 +3753,67 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
 
 // Lobby system tracking
 const lobbySockets = new Map(); // socketId -> { username, socketId, isAuthenticated, userId, inGame }
+const lobbyChatHistory = []; // Store last 30 minutes of chat messages
+const CHAT_HISTORY_DURATION = 30 * 60 * 1000; // 30 minutes in milliseconds
+
+// Clean up old chat messages
+function cleanOldChatMessages() {
+  const now = Date.now();
+  const cutoff = now - CHAT_HISTORY_DURATION;
+  
+  // Remove messages older than 30 minutes
+  while (lobbyChatHistory.length > 0 && lobbyChatHistory[0].timestamp < cutoff) {
+    lobbyChatHistory.shift();
+  }
+}
+
+// Clean old messages every 5 minutes
+setInterval(cleanOldChatMessages, 5 * 60 * 1000);
+
+// Function to disconnect all sockets from a specific IP
+function disconnectIP(ip) {
+  if (!ip || ip === 'unknown') return;
+  
+  // Disconnect from lobby
+  lobbySockets.forEach((userData, socketId) => {
+    if (userData.ip === ip) {
+      const socket = io.sockets.sockets.get(socketId);
+      if (socket) {
+        socket.emit('error', { message: 'Your IP address has been banned.' });
+        socket.disconnect(true);
+      }
+      lobbySockets.delete(socketId);
+    }
+  });
+  
+  // Disconnect from game rooms
+  Object.values(rooms).forEach(room => {
+    // Check players
+    room.players = room.players.filter(player => {
+      const socket = io.sockets.sockets.get(player.socketId);
+      if (socket && player.ip === ip) {
+        socket.emit('error', { message: 'Your IP address has been banned.' });
+        socket.disconnect(true);
+        return false;
+      }
+      return true;
+    });
+    
+    // Check spectators
+    room.spectators = room.spectators.filter(spectator => {
+      const socket = io.sockets.sockets.get(spectator.socketId);
+      if (socket && spectator.ip === ip) {
+        socket.emit('error', { message: 'Your IP address has been banned.' });
+        socket.disconnect(true);
+        return false;
+      }
+      return true;
+    });
+  });
+  
+  broadcastOnlineUsers();
+  broadcastRoomList();
+}
 const pendingLobbyRemovals = new Map(); // username -> timeout
 const LOBBY_REMOVAL_DELAY = 3000; // 3 seconds grace period for page navigation
 
@@ -3672,6 +3909,19 @@ function broadcastOnlineUsers() {
 
 // Socket.IO event handlers
 io.on('connection', (socket) => {
+  
+  // Get client IP
+  const clientIP = socket.handshake.headers['x-forwarded-for']?.split(',')[0].trim() ||
+                   socket.handshake.headers['x-real-ip'] ||
+                   socket.handshake.address ||
+                   'unknown';
+  
+  // Check if IP is banned
+  if (isIPBanned(clientIP)) {
+    socket.emit('error', { message: 'Access denied. Your IP address has been banned.' });
+    socket.disconnect(true);
+    return;
+  }
   
   // Store user info from auth token (if provided)
   let authenticatedUser = null;
@@ -4417,16 +4667,42 @@ io.on('connection', (socket) => {
     });
     
     // Add new connection
+    let userRole = 'user';
+    if (authenticatedUser && authenticatedUser.id) {
+      try {
+        const userRecord = db.prepare('SELECT role FROM users WHERE id = ?').get(authenticatedUser.id);
+        if (userRecord && userRecord.role) {
+          userRole = userRecord.role;
+        }
+      } catch (e) {
+        // Ignore database errors
+      }
+    }
+    
     lobbySockets.set(socket.id, {
       username: username,
       socketId: socket.id,
       isAuthenticated: !!authenticatedUser,
       userId: authenticatedUser ? authenticatedUser.id : null,
-      inGame: false
+      inGame: false,
+      role: userRole,
+      ip: clientIP
     });
     
     // Send initial room list to this user
     broadcastRoomList();
+    
+    // Send recent chat history (last 30 minutes)
+    cleanOldChatMessages(); // Clean up old messages first
+    const now = Date.now();
+    const cutoff = now - CHAT_HISTORY_DURATION;
+    const recentMessages = lobbyChatHistory.filter(msg => msg.timestamp >= cutoff);
+    
+    if (recentMessages.length > 0) {
+      recentMessages.forEach(msg => {
+        io.to(socket.id).emit('lobbyChatMessage', msg);
+      });
+    }
     
     // Broadcast updated online users
     broadcastOnlineUsers();
@@ -4439,14 +4715,20 @@ io.on('connection', (socket) => {
     const message = data.message.trim();
     if (!message || message.length > 200) return;
     
+    const chatMessage = {
+      username: userData.username,
+      message: message,
+      isAuthenticated: userData.isAuthenticated,
+      role: userData.role || 'user',
+      timestamp: Date.now()
+    };
+    
+    // Store in history
+    lobbyChatHistory.push(chatMessage);
+    
     // Broadcast to all lobby users
     lobbySockets.forEach((otherUserData, socketId) => {
-      io.to(socketId).emit('lobbyChatMessage', {
-        username: userData.username,
-        message: message,
-        isAuthenticated: userData.isAuthenticated,
-        timestamp: Date.now()
-      });
+      io.to(socketId).emit('lobbyChatMessage', chatMessage);
     });
   });
 

@@ -18,6 +18,28 @@
       backdrop-filter: blur(10px);
       border: 1px solid rgba(75, 85, 99, 0.3);
     }
+    
+    #chatMessages {
+      scroll-behavior: smooth;
+    }
+    
+    .fade-in {
+      animation: fadeIn 0.3s ease-in;
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    
+    /* Toggle switch styles */
+    #showOnlyOnline:checked ~ .toggle-bg {
+      background: linear-gradient(135deg, #3b82f6 0%, #a855f7 100%);
+    }
+    
+    #showOnlyOnline:checked ~ .toggle-dot {
+      transform: translateX(20px);
+    }
   </style>
 </head>
 <body class="text-white">
@@ -47,27 +69,69 @@
     <!-- Content -->
     <div id="content" class="hidden space-y-6">
 
-      <!-- Online Users -->
-      <div class="stat-card rounded-lg p-6">
-        <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
-          <span>👥</span>
-          <span>Online Users</span>
-          <span class="text-sm font-normal text-gray-400">(<span id="onlineCount">0</span>)</span>
-        </h2>
-        <div id="onlineUsersList" class="space-y-2 max-h-64 overflow-y-auto">
-          <!-- Populated by JS -->
+      <!-- Online Users & Chat -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <!-- Online Users -->
+        <div class="stat-card rounded-lg p-6">
+          <h2 class="text-xl font-bold mb-3 flex items-center gap-2">
+            <span>👥</span>
+            <span>Online Users</span>
+            <span class="text-sm font-normal text-gray-400">(<span id="onlineCount">0</span>)</span>
+          </h2>
+          <div id="onlineUsersList" class="space-y-2 overflow-y-auto" style="height: 400px;">
+            <!-- Populated by JS -->
+          </div>
+        </div>
+
+        <!-- Lobby Chat -->
+        <div class="stat-card rounded-lg p-6 flex flex-col" style="height: 500px;">
+          <h2 class="text-xl font-bold mb-3">💬 Lobby Chat</h2>
+          
+          <!-- Chat Messages -->
+          <div id="chatMessages" class="flex-1 overflow-y-auto space-y-2 mb-3 pr-2">
+            <!-- Messages will be populated here -->
+          </div>
+          
+          <!-- Chat Input -->
+          <form onsubmit="sendChatMessage(event)" class="flex gap-2">
+            <input 
+              type="text" 
+              id="chatInput"
+              placeholder="Type a message..."
+              class="flex-1 p-2 bg-gray-700 rounded border border-gray-600 text-white text-sm"
+              maxlength="200"
+              autocomplete="off"
+            />
+            <button 
+              type="submit"
+              class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded font-bold text-sm"
+            >
+              Send
+            </button>
+          </form>
         </div>
       </div>
 
-      <!-- User List -->
+      <!-- Users (All or Online) -->
       <div class="stat-card rounded-lg p-6">
-        <h2 class="text-2xl font-bold mb-4">Users</h2>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-2xl font-bold">Users</h2>
+          <label class="flex items-center gap-2 cursor-pointer">
+            <span class="text-sm text-gray-400">Show only online</span>
+            <div class="relative">
+              <input type="checkbox" id="showOnlyOnline" class="sr-only" onchange="renderUsers()">
+              <div class="toggle-bg w-11 h-6 bg-gray-600 rounded-full shadow-inner"></div>
+              <div class="toggle-dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition"></div>
+            </div>
+          </label>
+        </div>
         <div class="overflow-x-auto">
           <table class="w-full text-sm">
             <thead class="text-gray-400 border-b border-gray-700">
               <tr>
                 <th class="text-left py-2">Username</th>
                 <th class="text-left py-2">Role</th>
+                <th class="text-left py-2">IP Address</th>
                 <th class="text-left py-2">Status</th>
                 <th class="text-left py-2">Joined</th>
                 <th class="text-right py-2">Actions</th>
@@ -88,6 +152,14 @@
         </div>
       </div>
 
+      <!-- Banned IPs -->
+      <div class="stat-card rounded-lg p-6">
+        <h2 class="text-2xl font-bold mb-4">🚫 Banned IP Addresses</h2>
+        <div class="space-y-2 max-h-96 overflow-y-auto" id="bannedIPList">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
     </div>
 
     <!-- Action Modal -->
@@ -103,6 +175,13 @@
             rows="3"
             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
             placeholder="Enter reason for this action..."></textarea>
+        </div>
+        
+        <div id="banIPOption" class="hidden mb-4">
+          <label class="flex items-center gap-2 cursor-pointer">
+            <input type="checkbox" id="alsoBanIPCheckbox" class="w-4 h-4">
+            <span class="text-sm text-gray-300">Also ban their IP address <span id="ipToBan" class="text-yellow-400"></span></span>
+          </label>
         </div>
         
         <div class="flex gap-3">
@@ -128,6 +207,7 @@
     let currentRole = 'user';
     let users = [];
     let currentAction = null;
+    let onlineUsersWithIPs = [];
 
     async function checkAccess() {
       if (!authToken) {
@@ -160,6 +240,7 @@
 
     async function loadUsers() {
       try {
+        // Fetch registered users
         const res = await fetch(`${API_BASE}/api/moderation/users`, {
           headers: { 'Authorization': `Bearer ${authToken}` }
         });
@@ -167,7 +248,45 @@
         if (!res.ok) throw new Error('Failed to load');
         
         const data = await res.json();
-        users = data.users;
+        
+        // Fetch online users
+        const onlineRes = await fetch(`${API_BASE}/api/moderation/online-users`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        
+        const onlineData = await onlineRes.json();
+        onlineUsersWithIPs = onlineData.users;
+        
+        // Merge online data with registered users
+        users = data.users.map(user => {
+          const onlineUser = onlineUsersWithIPs.find(ou => ou.userId === user.id);
+          return {
+            ...user,
+            ip: onlineUser?.ip || null,
+            isOnline: !!onlineUser,
+            inGame: onlineUser?.inGame || false,
+            isGuest: false
+          };
+        });
+        
+        // Add online guests who aren't registered users
+        const guests = onlineUsersWithIPs
+          .filter(ou => !ou.isAuthenticated || !ou.userId)
+          .map(guest => ({
+            id: null,
+            username: guest.username,
+            role: 'user',
+            ip: guest.ip,
+            isOnline: true,
+            inGame: guest.inGame,
+            isGuest: true,
+            created_at: null,
+            banStatus: { banned: false, timedOut: false }
+          }));
+        
+        // Add guests to the users list
+        users = [...users, ...guests];
+        
         renderUsers();
       } catch (e) {
         console.error('Failed to load users:', e);
@@ -176,14 +295,37 @@
 
     function renderUsers() {
       const container = document.getElementById('userList');
+      const showOnlyOnline = document.getElementById('showOnlyOnline').checked;
       
-      container.innerHTML = users.map(user => {
-        let statusBadge = '<span class="text-green-400">Active</span>';
-        if (user.banStatus.banned) {
+      // Filter users based on toggle
+      let filteredUsers = showOnlyOnline ? users.filter(u => u.isOnline) : users;
+      
+      if (filteredUsers.length === 0) {
+        container.innerHTML = '<tr><td colspan="6" class="py-4 text-center text-gray-400">No users found</td></tr>';
+        return;
+      }
+      
+      container.innerHTML = filteredUsers.map(user => {
+        // Username with guest indicator
+        const usernameDisplay = user.isGuest 
+          ? `${user.username} <span class="text-xs text-gray-500">(guest)</span>`
+          : user.username;
+        
+        // Status: Show connection state if online, otherwise account state
+        let statusBadge = '';
+        if (user.isOnline) {
+          if (user.inGame) {
+            statusBadge = '<span class="text-blue-400">🎮 In Game</span>';
+          } else {
+            statusBadge = '<span class="text-green-400">💤 In Lobby</span>';
+          }
+        } else if (user.banStatus.banned) {
           statusBadge = '<span class="text-red-400 font-bold">BANNED</span>';
         } else if (user.banStatus.timedOut) {
           const expires = new Date(user.banStatus.expiresAt).toLocaleString();
           statusBadge = `<span class="text-yellow-400 font-bold">TIMED OUT</span><div class="text-xs text-gray-400">Until ${expires}</div>`;
+        } else {
+          statusBadge = '<span class="text-gray-400">Offline</span>';
         }
         
         let roleBadge = user.role === 'admin' 
@@ -192,35 +334,62 @@
           ? '<span class="bg-blue-700 px-2 py-1 rounded text-xs font-bold">ADMIN</span>'
           : '<span class="text-gray-400">User</span>';
         
+        // IP Address
+        const ipDisplay = user.ip 
+          ? `<span class="font-mono text-sm text-gray-300">${user.ip}</span>`
+          : '<span class="text-gray-500 text-xs">—</span>';
+        
+        // Joined date
+        const joinedDisplay = user.created_at 
+          ? new Date(user.created_at).toLocaleDateString()
+          : '<span class="text-gray-500 text-xs">—</span>';
+        
         const isSelf = currentUser && user.username === currentUser.username;
         const canModerate = user.role === 'user' || (currentRole === 'admin' && user.role === 'moderator');
         
         let actions = '';
         if (!isSelf && canModerate) {
-          if (user.banStatus.banned || user.banStatus.timedOut) {
-            actions = `<button onclick="unbanUser(${user.id}, '${user.username}')" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs transition-colors">Unban</button>`;
-          } else {
-            actions = `
-              <button onclick="timeoutUser(${user.id}, '${user.username}')" class="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded text-xs transition-colors mr-2">Timeout</button>
-              <button onclick="banUser(${user.id}, '${user.username}')" class="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-xs transition-colors">Ban</button>
-            `;
-          }
+          // Escape username for use in onclick handlers (replace single quotes)
+          const escapedUsername = user.username.replace(/'/g, "\\'");
           
-          if (currentRole === 'admin') {
-            if (user.role === 'user') {
-              actions += ` <button onclick="promoteUser(${user.id}, '${user.username}')" class="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded text-xs transition-colors ml-2">Promote</button>`;
-            } else if (user.role === 'moderator') {
-              actions += ` <button onclick="demoteUser(${user.id}, '${user.username}')" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs transition-colors ml-2">Demote</button>`;
+          // For guests, only show Ban IP button
+          if (user.isGuest) {
+            if (user.ip && user.ip !== 'unknown') {
+              actions = `<button onclick="banIP('${user.ip}', '${escapedUsername}')" class="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded text-xs transition-colors">Ban IP</button>`;
+            }
+          } else {
+            // For registered users, show full moderation options
+            if (user.banStatus.banned || user.banStatus.timedOut) {
+              actions = `<button onclick="unbanUser(${user.id}, '${escapedUsername}')" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs transition-colors">Unban</button>`;
+            } else {
+              actions = `
+                <button onclick="timeoutUser(${user.id}, '${escapedUsername}')" class="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded text-xs transition-colors mr-2">Timeout</button>
+                <button onclick="banUser(${user.id}, '${escapedUsername}')" class="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-xs transition-colors">Ban</button>
+              `;
+            }
+            
+            // Add IP ban button if user is online
+            if (user.ip && user.ip !== 'unknown') {
+              actions += ` <button onclick="banIP('${user.ip}', '${escapedUsername}')" class="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded text-xs transition-colors ml-2">Ban IP</button>`;
+            }
+            
+            if (currentRole === 'admin') {
+              if (user.role === 'user') {
+                actions += ` <button onclick="promoteUser(${user.id}, '${escapedUsername}')" class="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded text-xs transition-colors ml-2">Promote</button>`;
+              } else if (user.role === 'moderator') {
+                actions += ` <button onclick="demoteUser(${user.id}, '${escapedUsername}')" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs transition-colors ml-2">Demote</button>`;
+              }
             }
           }
         }
         
         return `
           <tr class="hover:bg-gray-700/30 transition-colors">
-            <td class="py-3">${user.username}</td>
+            <td class="py-3">${usernameDisplay}</td>
             <td class="py-3">${roleBadge}</td>
+            <td class="py-3">${ipDisplay}</td>
             <td class="py-3">${statusBadge}</td>
-            <td class="py-3 text-gray-400">${new Date(user.created_at).toLocaleDateString()}</td>
+            <td class="py-3 text-gray-400">${joinedDisplay}</td>
             <td class="py-3 text-right">${actions}</td>
           </tr>
         `;
@@ -292,16 +461,44 @@
     }
 
     function timeoutUser(userId, username) {
-      currentAction = { type: 'timeout', userId, username };
+      // Find user's IP if they're online
+      const onlineUser = onlineUsersWithIPs.find(u => u.username === username);
+      const userIP = onlineUser?.ip;
+      
+      currentAction = { type: 'timeout', userId, username, ip: userIP };
       document.getElementById('modalTitle').textContent = 'Timeout User';
       document.getElementById('modalDesc').textContent = `Timeout ${username} for 24 hours? They will not be able to access the site until the timeout expires.`;
+      
+      // Show/hide IP ban option
+      if (userIP && userIP !== 'unknown') {
+        document.getElementById('banIPOption').classList.remove('hidden');
+        document.getElementById('ipToBan').textContent = `(${userIP})`;
+        document.getElementById('alsoBanIPCheckbox').checked = false;
+      } else {
+        document.getElementById('banIPOption').classList.add('hidden');
+      }
+      
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
     function banUser(userId, username) {
-      currentAction = { type: 'ban', userId, username };
+      // Find user's IP if they're online
+      const onlineUser = onlineUsersWithIPs.find(u => u.username === username);
+      const userIP = onlineUser?.ip;
+      
+      currentAction = { type: 'ban', userId, username, ip: userIP };
       document.getElementById('modalTitle').textContent = 'Ban User';
       document.getElementById('modalDesc').textContent = `Permanently ban ${username}? This action will prevent them from accessing the site indefinitely.`;
+      
+      // Show/hide IP ban option
+      if (userIP && userIP !== 'unknown') {
+        document.getElementById('banIPOption').classList.remove('hidden');
+        document.getElementById('ipToBan').textContent = `(${userIP})`;
+        document.getElementById('alsoBanIPCheckbox').checked = true; // Default to checked for bans
+      } else {
+        document.getElementById('banIPOption').classList.add('hidden');
+      }
+      
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
@@ -309,13 +506,15 @@
       currentAction = { type: 'unban', userId, username };
       document.getElementById('modalTitle').textContent = 'Lift Ban/Timeout';
       document.getElementById('modalDesc').textContent = `Remove ban or timeout from ${username}? They will regain full access to the site.`;
+      document.getElementById('banIPOption').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
     function promoteUser(userId, username) {
       currentAction = { type: 'promote', userId, username };
       document.getElementById('modalTitle').textContent = 'Promote to Admin';
-      document.getElementById('modalDesc').textContent = `Promote ${username} to moderator? They will gain access to this admin panel.`;
+      document.getElementById('modalDesc').textContent = `Promote ${username} to admin? They will gain access to this admin panel.`;
+      document.getElementById('banIPOption').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
@@ -323,6 +522,7 @@
       currentAction = { type: 'demote', userId, username };
       document.getElementById('modalTitle').textContent = 'Demote to User';
       document.getElementById('modalDesc').textContent = `Demote ${username} to regular user? They will lose admin access.`;
+      document.getElementById('banIPOption').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
@@ -330,6 +530,7 @@
       document.getElementById('actionModal').classList.add('hidden');
       document.getElementById('reasonInput').value = '';
       document.getElementById('modalError').classList.add('hidden');
+      document.getElementById('banIPOption').classList.add('hidden');
       currentAction = null;
     }
 
@@ -341,6 +542,62 @@
       errorEl.classList.add('hidden');
       
       try {
+        // Handle IP ban separately
+        if (currentAction.type === 'banIP') {
+          const res = await fetch(`${API_BASE}/api/moderation/ban-ip`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+              ip: currentAction.ip,
+              reason: reason || `Banned from ${currentAction.username}'s connection`
+            })
+          });
+          
+          const data = await res.json();
+          
+          if (!res.ok || !data.success) {
+            errorEl.textContent = data.error || 'Failed to ban IP';
+            errorEl.classList.remove('hidden');
+            return;
+          }
+          
+          closeModal();
+          loadUsers();
+          loadBannedIPs();
+          return;
+        }
+        
+        // Handle IP unban separately
+        if (currentAction.type === 'unbanIP') {
+          const res = await fetch(`${API_BASE}/api/moderation/unban-ip`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+              ip: currentAction.ip
+            })
+          });
+          
+          const data = await res.json();
+          
+          if (!res.ok || !data.success) {
+            errorEl.textContent = data.error || 'Failed to unban IP';
+            errorEl.classList.remove('hidden');
+            return;
+          }
+          
+          closeModal();
+          loadUsers();
+          loadBannedIPs();
+          return;
+        }
+        
+        // Handle user-based actions
         const endpoint = currentAction.type === 'promote' ? '/api/moderation/promote'
           : currentAction.type === 'demote' ? '/api/moderation/demote'
           : `/api/moderation/${currentAction.type}`;
@@ -365,6 +622,23 @@
           return;
         }
         
+        // Check if we should also ban the IP
+        const alsoBanIP = document.getElementById('alsoBanIPCheckbox').checked;
+        if (alsoBanIP && currentAction.ip && currentAction.ip !== 'unknown') {
+          await fetch(`${API_BASE}/api/moderation/ban-ip`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+              ip: currentAction.ip,
+              reason: reason || `Banned with user ${currentAction.username}`
+            })
+          });
+          loadBannedIPs();
+        }
+        
         closeModal();
         loadUsers();
         loadModLog();
@@ -386,18 +660,26 @@
         document.getElementById('content').classList.remove('hidden');
         loadUsers();
         loadModLog();
+        loadBannedIPs();
         initSocket();
+        
+        // Refresh users and banned IPs every 10 seconds
+        setInterval(() => {
+          loadUsers();
+          loadBannedIPs();
+        }, 10000);
       }
     }
 
     let onlineUsers = [];
+    let socket = null;
 
     function initSocket() {
       // Load socket.io
       const socketScript = document.createElement('script');
       socketScript.src = '/socket.io/socket.io.js';
       socketScript.onload = () => {
-        const socket = io({
+        socket = io({
           auth: { token: authToken }
         });
 
@@ -409,6 +691,10 @@
         socket.on('onlineUsersUpdate', (data) => {
           onlineUsers = data.users;
           updateOnlineUsers();
+        });
+
+        socket.on('lobbyChatMessage', (data) => {
+          addChatMessage(data);
         });
       };
       document.head.appendChild(socketScript);
@@ -444,6 +730,106 @@
           </div>
         `;
       }).join('');
+    }
+
+    function addChatMessage(data) {
+      const container = document.getElementById('chatMessages');
+      const messageEl = document.createElement('div');
+      messageEl.className = 'fade-in text-sm';
+      
+      const isAuth = data.isAuthenticated;
+      const isAdmin = data.role === 'admin' || data.role === 'moderator';
+      const badge = isAdmin ? '<span class="text-red-500 text-xs">🛡️</span>' : isAuth ? '<span class="text-green-500 text-xs">⭐</span>' : '';
+      const nameHtml = isAuth
+        ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
+        : `<span class="font-bold text-blue-400">${data.username}</span>`;
+      
+      messageEl.innerHTML = `
+        <div class="bg-gray-700 rounded p-2">
+          ${nameHtml}
+          ${badge}
+          <span class="text-gray-500 text-xs ml-2">${new Date(data.timestamp).toLocaleTimeString()}</span>
+          <div class="text-gray-200 mt-1">${escapeHtml(data.message)}</div>
+        </div>
+      `;
+      
+      container.appendChild(messageEl);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function sendChatMessage(event) {
+      event.preventDefault();
+      const input = document.getElementById('chatInput');
+      const message = input.value.trim();
+      
+      if (!message || !socket) return;
+      
+      socket.emit('lobbyChatMessage', { message });
+      input.value = '';
+    }
+
+    async function loadBannedIPs() {
+      try {
+        const res = await fetch(`${API_BASE}/api/moderation/banned-ips`, {
+          headers: { 'Authorization': `Bearer ${authToken}` }
+        });
+        
+        if (!res.ok) throw new Error('Failed to load');
+        
+        const data = await res.json();
+        renderBannedIPs(data.ips);
+      } catch (e) {
+        console.error('Failed to load banned IPs:', e);
+      }
+    }
+
+    function renderBannedIPs(ips) {
+      const container = document.getElementById('bannedIPList');
+      
+      if (!ips || ips.length === 0) {
+        container.innerHTML = '<div class="text-gray-400 text-center py-4">No banned IP addresses</div>';
+        return;
+      }
+      
+      container.innerHTML = ips.map(ip => {
+        const date = new Date(ip.banned_at).toLocaleDateString();
+        return `
+          <div class="bg-gray-700/30 rounded p-3 text-sm flex items-center justify-between">
+            <div>
+              <div class="font-mono text-white">${ip.ip_address}</div>
+              <div class="text-xs text-gray-400 mt-1">
+                Banned on ${date} by ${ip.banned_by_username || 'Unknown'}
+                ${ip.reason ? ` | ${ip.reason}` : ''}
+              </div>
+            </div>
+            <button onclick="unbanIP('${ip.ip_address}')" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs transition-colors">
+              Unban
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function banIP(ip, username) {
+      currentAction = { type: 'banIP', ip, username };
+      document.getElementById('modalTitle').textContent = 'Ban IP Address';
+      document.getElementById('modalDesc').textContent = `Ban IP address ${ip} (${username})? This will immediately disconnect them and prevent reconnection.`;
+      document.getElementById('banIPOption').classList.add('hidden');
+      document.getElementById('actionModal').classList.remove('hidden');
+    }
+
+    function unbanIP(ip) {
+      currentAction = { type: 'unbanIP', ip };
+      document.getElementById('modalTitle').textContent = 'Unban IP Address';
+      document.getElementById('modalDesc').textContent = `Unban IP address ${ip}? This will allow connections from this IP address again.`;
+      document.getElementById('banIPOption').classList.add('hidden');
+      document.getElementById('actionModal').classList.remove('hidden');
     }
 
     init();

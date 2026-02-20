@@ -168,6 +168,18 @@ async function initDatabase() {
   db.run(`CREATE INDEX IF NOT EXISTS idx_moderation_actions_target ON moderation_actions(target_user_id);`);
   db.run(`CREATE INDEX IF NOT EXISTS idx_moderation_actions_date ON moderation_actions(created_at DESC);`);
 
+  db.run(`
+    CREATE TABLE IF NOT EXISTS banned_ips (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip_address TEXT NOT NULL UNIQUE,
+      reason TEXT,
+      banned_by INTEGER,
+      banned_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (banned_by) REFERENCES users(id) ON DELETE SET NULL
+    );
+  `);
+  db.run(`CREATE INDEX IF NOT EXISTS idx_banned_ips_address ON banned_ips(ip_address);`);
+
   console.log('Database initialized successfully');
   saveDatabase();
 }

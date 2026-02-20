@@ -526,7 +526,8 @@
       messageEl.className = 'fade-in text-sm';
       
       const isAuth = data.isAuthenticated;
-      const badge = isAuth ? '<span class="text-green-500 text-xs">⭐</span>' : '';
+      const isAdmin = data.role === 'admin' || data.role === 'moderator';
+      const badge = isAdmin ? '<span class="text-red-500 text-xs">🛡️</span>' : isAuth ? '<span class="text-green-500 text-xs">⭐</span>' : '';
       const nameHtml = isAuth
         ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
         : `<span class="font-bold text-blue-400">${data.username}</span>`;

@@ -90,20 +90,23 @@
         <h2 class="text-2xl text-gray-300">Game Lobby</h2>
       </div>
       <div class="flex gap-3">
-        <a href="/leaderboards.html" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded transition-colors">
+        <a href="/leaderboards.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Leaderboards
         </a>
         <a id="profileBtn" href="/profile.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Profile
         </a>
+        <a id="settingsBtn" href="/settings.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Settings
+        </a>
         <a href="/rules.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Rules
         </a>
         <a id="moderatorBtn" href="/admin.html" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded transition-colors">
-          🛡️ Admin
+          Admin
         </a>
         <a href="/login.html" id="loginBtn" class="hidden bg-green-700 hover:bg-green-600 px-4 py-2 rounded">
-          🔑 Login
+          Login
         </a>
         <button id="logoutBtn" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded">
           Logout
@@ -319,6 +322,9 @@
         document.getElementById('logoutBtn').classList.remove('hidden');
         document.getElementById('loginBtn').classList.add('hidden');
         
+        // Show Settings button
+        document.getElementById('settingsBtn').classList.remove('hidden');
+        
         // Show admin button for admins and moderators
         if (userRole === 'moderator' || userRole === 'admin') {
           document.getElementById('moderatorBtn').classList.remove('hidden');
@@ -432,6 +438,9 @@
         const canJoin = isWaiting && !isFull;
         const statusColor = isWaiting ? 'bg-green-600' : 'bg-blue-600';
         const statusText = isWaiting ? 'Waiting for players' : 'Game in progress';
+        
+        // Check if current user is a player in this room (for rejoin)
+        const isMyGame = currentUser && room.playerUserIds && room.playerUserIds.includes(currentUser.id);
 
         return `
           <div class="room-item bg-gray-700 rounded-lg p-4 border-l-4 ${isWaiting ? 'border-green-500' : 'border-blue-500'}">
@@ -442,12 +451,19 @@
                   <span class="${statusColor} text-xs px-2 py-1 rounded">${statusText}</span>
                 </div>
                 <div class="text-sm text-gray-400">
-                  ${room.name ? `<span class="text-gray-500 mr-2">#${room.code}</span>` : ''}${room.playerCount}/6 players
+                  ${room.name ? `<span class="text-gray-500 mr-2">#${room.code}</span>` : ''}${room.playerCount}/${room.maxPlayers || 6} players
                   ${room.spectatorCount > 0 ? `· ${room.spectatorCount} spectators` : ''}
                 </div>
               </div>
               <div class="flex gap-2">
-                ${canJoin ? `
+                ${isMyGame ? `
+                  <button 
+                    onclick="spectateRoom('${room.code}')" 
+                    class="bg-orange-600 hover:bg-orange-700 px-4 py-2 rounded font-bold text-sm"
+                  >
+                    🔄 Rejoin
+                  </button>
+                ` : canJoin ? `
                   <button 
                     onclick="joinRoom('${room.code}')" 
                     class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold text-sm"
@@ -482,6 +498,7 @@
                 room.chatMode === 'separate' ? '<span class="bg-green-900 px-2 py-1 rounded">💬 Separate Chat</span>' : 
                 '<span class="bg-gray-600 px-2 py-1 rounded">🚫 No Chat</span>'}
               ${room.anonymousMode ? '<span class="bg-orange-900 px-2 py-1 rounded">🎭 Anonymous</span>' : ''}
+              ${room.allowLargeGames ? '<span class="bg-purple-900 px-2 py-1 rounded">👥 Large Game (up to 10)</span>' : ''}
             </div>
           </div>
         `;

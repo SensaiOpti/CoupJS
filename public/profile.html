@@ -72,17 +72,33 @@
   <div class="max-w-7xl mx-auto p-4 md:p-8">
     <!-- Header -->
     <div class="flex justify-between items-center mb-8">
-      <h1 class="text-4xl font-bold text-red-500">COUP</h1>
+      <div class="flex items-center gap-4">
+        <h1 class="text-4xl font-bold text-red-500">COUP</h1>
+        <span class="text-gray-400">|</span>
+        <h2 class="text-2xl text-gray-300">Profile</h2>
+      </div>
       <div class="flex gap-3">
-        <a href="/leaderboards.html" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded transition-colors">
+        <a href="/leaderboards.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Leaderboards
         </a>
         <a id="settingsBtn" href="/settings.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Settings
         </a>
-        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
-          Back to Lobby
+        <a href="/rules.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Rules
         </a>
+        <a href="/" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded transition-colors">
+          Game Lobby
+        </a>
+        <a id="moderatorBtn" href="/admin.html" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded transition-colors">
+          Admin
+        </a>
+        <a href="/login.html" id="loginBtn" class="hidden bg-green-700 hover:bg-green-600 px-4 py-2 rounded">
+          Login
+        </a>
+        <button id="logoutBtn" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded">
+          Logout
+        </button>
       </div>
     </div>
 
@@ -278,6 +294,29 @@
       // Show settings button for profile owner
       if (isMyProfile) {
         document.getElementById('settingsBtn').classList.remove('hidden');
+      }
+      
+      // Show moderator button if user is admin or moderator
+      if (currentUserData.role === 'admin' || currentUserData.role === 'moderator') {
+        const moderatorBtn = document.getElementById('moderatorBtn');
+        if (moderatorBtn) moderatorBtn.classList.remove('hidden');
+      }
+      
+      // Show logout button if logged in, otherwise show login button
+      if (authToken && currentUserData.username) {
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+          logoutBtn.classList.remove('hidden');
+          logoutBtn.addEventListener('click', () => {
+            localStorage.removeItem('coupAuthToken');
+            window.location.href = '/login.html';
+          });
+        }
+        const loginBtn = document.getElementById('loginBtn');
+        if (loginBtn) loginBtn.classList.add('hidden');
+      } else {
+        const loginBtn = document.getElementById('loginBtn');
+        if (loginBtn) loginBtn.classList.remove('hidden');
       }
       
       // User info

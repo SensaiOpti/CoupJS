@@ -37,14 +37,33 @@
   <div class="max-w-4xl mx-auto p-8">
     <!-- Header -->
     <div class="flex justify-between items-center mb-8">
-      <h1 class="text-5xl font-bold text-red-500">COUP - Rules</h1>
+      <div class="flex items-center gap-4">
+        <h1 class="text-4xl font-bold text-red-500">COUP</h1>
+        <span class="text-gray-400">|</span>
+        <h2 class="text-2xl text-gray-300">Rules</h2>
+      </div>
       <div class="flex gap-3">
+        <a href="/leaderboards.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Leaderboards
+        </a>
         <a id="profileBtn" href="/profile.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Profile
         </a>
-        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
-          Back to Lobby
+        <a id="settingsBtn" href="/settings.html" class="hidden bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Settings
         </a>
+        <a href="/" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded transition-colors">
+          Game Lobby
+        </a>
+        <a id="moderatorBtn" href="/admin.html" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded transition-colors">
+          Admin
+        </a>
+        <a href="/login.html" id="loginBtn" class="hidden bg-green-700 hover:bg-green-600 px-4 py-2 rounded">
+          Login
+        </a>
+        <button id="logoutBtn" class="hidden bg-red-700 hover:bg-red-600 px-4 py-2 rounded">
+          Logout
+        </button>
       </div>
     </div>
 
@@ -234,6 +253,30 @@
       const profileBtn = document.getElementById('profileBtn');
       profileBtn.href = `/profile.html?user=${currentUser.username}`;
       profileBtn.classList.remove('hidden');
+      
+      // Show Settings button
+      const settingsBtn = document.getElementById('settingsBtn');
+      if (settingsBtn) settingsBtn.classList.remove('hidden');
+      
+      // Show moderator button if user is admin or moderator
+      if (currentUser.role === 'admin' || currentUser.role === 'moderator') {
+        const moderatorBtn = document.getElementById('moderatorBtn');
+        if (moderatorBtn) moderatorBtn.classList.remove('hidden');
+      }
+      
+      // Show logout button
+      const logoutBtn = document.getElementById('logoutBtn');
+      if (logoutBtn) {
+        logoutBtn.classList.remove('hidden');
+        logoutBtn.addEventListener('click', () => {
+          localStorage.removeItem('coupAuthToken');
+          window.location.href = '/login.html';
+        });
+      }
+    } else {
+      // Show login button if not logged in
+      const loginBtn = document.getElementById('loginBtn');
+      if (loginBtn) loginBtn.classList.remove('hidden');
     }
     
     // Socket.io connection for online user tracking

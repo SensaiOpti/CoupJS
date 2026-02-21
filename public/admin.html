@@ -48,14 +48,30 @@
 
     <!-- Header -->
     <div class="flex justify-between items-center mb-8">
-      <h1 class="text-4xl font-bold text-red-500">🛡️ ADMIN PANEL</h1>
+      <div class="flex items-center gap-4">
+        <h1 class="text-4xl font-bold text-red-500">COUP</h1>
+        <span class="text-gray-400">|</span>
+        <h2 class="text-2xl text-gray-300">Admin Panel</h2>
+      </div>
       <div class="flex gap-3">
+        <a href="/leaderboards.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Leaderboards
+        </a>
         <a id="profileLink" href="/profile.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Profile
         </a>
-        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
-          Back to Lobby
+        <a id="settingsBtn" href="/settings.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Settings
         </a>
+        <a href="/rules.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
+          Rules
+        </a>
+        <a href="/" class="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded transition-colors">
+          Game Lobby
+        </a>
+        <button id="logoutBtn" class="bg-red-700 hover:bg-red-600 px-4 py-2 rounded">
+          Logout
+        </button>
       </div>
     </div>
 
@@ -733,6 +749,15 @@
         // Update profile link
         if (currentUser && currentUser.username) {
           document.getElementById('profileLink').href = `/profile.html?user=${currentUser.username}`;
+        }
+        
+        // Add logout handler
+        const logoutBtn = document.getElementById('logoutBtn');
+        if (logoutBtn) {
+          logoutBtn.addEventListener('click', () => {
+            localStorage.removeItem('coupAuthToken');
+            window.location.href = '/login.html';
+          });
         }
         
         document.getElementById('content').classList.remove('hidden');

@@ -453,7 +453,7 @@
               console.log('Successfully reconnected to game!');
               roomCode = storedRoomCode;
               isSpectator = false;
-              gameState = response.gameState;
+              // Server will emit gameState which will update everything
             } else {
               console.log('Could not reconnect:', response.error);
               // Clear stored room if reconnection failed
@@ -665,7 +665,8 @@
         chatMode: 'separate',
         password: null,
         ranked: true,
-        anonymousMode: false
+        anonymousMode: false,
+        allowLargeGames: false
       };
       
       if (settingsJSON) {
@@ -691,6 +692,7 @@
         password: settings.password,
         ranked: settings.ranked,
         anonymousMode: settings.anonymousMode || false,
+        allowLargeGames: settings.allowLargeGames || false,
         persistentPlayerId: getOrCreatePlayerId()
       }, (response) => {
         if (response.success) {
@@ -774,6 +776,9 @@
             localStorage.setItem('coupCurrentRoom', roomCode);
             localStorage.setItem('coupIsSpectator', 'false');
           }
+        } else if (response.shouldReconnect) {
+          // Authenticated user trying to reconnect from different device
+          attemptReconnect(previewRoomCode);
         } else {
           alert(response.error);
           // Clear password on error
@@ -801,8 +806,37 @@
           
           // Clear password from storage
           localStorage.removeItem('coupRoomPassword');
+        } else if (response.shouldReconnect) {
+          // Authenticated user trying to reconnect from different device
+          attemptReconnect(previewRoomCode);
         } else {
           alert(response.error);
+          // Clear password on error
+          localStorage.removeItem('coupRoomPassword');
+        }
+      });
+    }
+
+    function attemptReconnect(targetRoomCode) {
+      socket.emit('attemptReconnect', {
+        roomCode: targetRoomCode,
+        persistentPlayerId: getOrCreatePlayerId()
+      }, (response) => {
+        if (response.success) {
+          console.log('Successfully reconnected to game!');
+          roomCode = targetRoomCode;
+          isSpectator = false;
+          previewMode = false;
+          previewRoomCode = '';
+          previewData = null;
+          
+          // Clear password from storage
+          localStorage.removeItem('coupRoomPassword');
+          localStorage.setItem('coupCurrentRoom', roomCode);
+          localStorage.setItem('coupIsSpectator', 'false');
+          // Server will emit gameState which will update everything
+        } else {
+          alert(response.error || 'Failed to reconnect');
           // Clear password on error
           localStorage.removeItem('coupRoomPassword');
         }
@@ -2553,29 +2587,67 @@
           // This is a rejoin — the connect handler's attemptReconnect will handle it.
           // Just wait here; don't show the preview or we'll end up with only "Watch".
         } else {
-          // Fresh join — show preview so user can choose player or spectator
+          // Fresh join — but first check if we should attempt reconnection
           joinCode = lobbyJoinCode;
           
           const checkSocket = setInterval(() => {
             if (socket && socket.connected) {
               clearInterval(checkSocket);
               
-              socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
-                if (response.success) {
-                  previewMode = true;
-                  previewRoomCode = lobbyJoinCode;
-                  previewData = response.roomData;
-                  players = previewData.players;
-                  spectators = previewData.spectators;
-                  useInquisitor = previewData.useInquisitor;
-                  allowSpectators = previewData.allowSpectators;
-                  chatMode = previewData.chatMode || 'separate';
-                  gameState = 'lobby';
-                  render();
-                } else {
-                  alert('Room not found: ' + lobbyJoinCode);
-                }
-              });
+              // If authenticated user, try reconnecting first
+              if (currentUser) {
+                socket.emit('attemptReconnect', {
+                  roomCode: lobbyJoinCode,
+                  persistentPlayerId: getOrCreatePlayerId()
+                }, (reconnectResponse) => {
+                  if (reconnectResponse.success) {
+                    // Successfully reconnected!
+                    console.log('Successfully reconnected to game from lobby!');
+                    roomCode = lobbyJoinCode;
+                    isSpectator = false;
+                    localStorage.setItem('coupCurrentRoom', roomCode);
+                    localStorage.setItem('coupIsSpectator', 'false');
+                    // Server will emit gameState which will update everything via socket handler
+                  } else {
+                    // Not a rejoin, show preview as normal
+                    console.log('Not a rejoin, showing preview');
+                    socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
+                      if (response.success) {
+                        previewMode = true;
+                        previewRoomCode = lobbyJoinCode;
+                        previewData = response.roomData;
+                        players = previewData.players;
+                        spectators = previewData.spectators;
+                        useInquisitor = previewData.useInquisitor;
+                        allowSpectators = previewData.allowSpectators;
+                        chatMode = previewData.chatMode || 'separate';
+                        gameState = 'lobby';
+                        render();
+                      } else {
+                        alert('Room not found: ' + lobbyJoinCode);
+                      }
+                    });
+                  }
+                });
+              } else {
+                // Guest user, show preview
+                socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
+                  if (response.success) {
+                    previewMode = true;
+                    previewRoomCode = lobbyJoinCode;
+                    previewData = response.roomData;
+                    players = previewData.players;
+                    spectators = previewData.spectators;
+                    useInquisitor = previewData.useInquisitor;
+                    allowSpectators = previewData.allowSpectators;
+                    chatMode = previewData.chatMode || 'separate';
+                    gameState = 'lobby';
+                    render();
+                  } else {
+                    alert('Room not found: ' + lobbyJoinCode);
+                  }
+                });
+              }
             }
           }, 100);
         }

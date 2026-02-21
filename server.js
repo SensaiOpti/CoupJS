@@ -728,11 +728,20 @@ function fisherYatesShuffle(array) {
   return array;
 }
 
-function shuffleDeck(useInquisitor = false) {
+function shuffleDeck(useInquisitor = false, playerCount = 0) {
   const deck = [];
   const cardSet = useInquisitor ? INQUISITOR_CARDS : CARDS;
+  
+  // Determine how many of each card based on player count
+  let cardsPerRole = 3; // Default: 2-6 players
+  if (playerCount >= 9) {
+    cardsPerRole = 5; // 9-10 players
+  } else if (playerCount >= 7) {
+    cardsPerRole = 4; // 7-8 players
+  }
+  
   cardSet.forEach(card => {
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < cardsPerRole; i++) {
       deck.push(card);
     }
   });
@@ -757,6 +766,7 @@ function createRoom(roomCode, options = {}) {
     password: options.password || null, // Optional password protection
     ranked: options.ranked !== false, // Default to ranked (true)
     anonymousMode: options.anonymousMode || false, // Default to false
+    allowLargeGames: options.allowLargeGames || false, // Default to false
     gameStartTime: null, // Track when game starts
     gameEndTime: null, // Track when game ends
     eliminationOrder: [] // Track order of elimination: [{playerId, playerName, coins, placement}]
@@ -944,8 +954,10 @@ function getPublicGameState(room, socketId, isSpectator = false) {
 }
 
 function startGame(room) {
-  if (room.players.length < 2 || room.players.length > 6) {
-    return { success: false, error: 'Need 2-6 players' };
+  // Validate player count based on game mode
+  const maxPlayers = room.allowLargeGames ? 10 : 6;
+  if (room.players.length < 2 || room.players.length > maxPlayers) {
+    return { success: false, error: `Need 2-${maxPlayers} players` };
   }
 
   // Randomize player order with proper Fisher-Yates shuffle
@@ -959,7 +971,7 @@ function startGame(room) {
     });
   }
 
-  room.deck = shuffleDeck(room.useInquisitor);
+  room.deck = shuffleDeck(room.useInquisitor, room.players.length);
   room.state = 'playing';
   room.currentPlayerIndex = 0;
   room.gameStartTime = new Date(); // Record game start time
@@ -2297,8 +2309,9 @@ function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedU
     return { success: false, error: 'Spectator not found' };
   }
 
-  if (room.players.length >= 6) {
-    return { success: false, error: 'Game is full (6 players max)' };
+  const maxPlayers = room.allowLargeGames ? 10 : 6;
+  if (room.players.length >= maxPlayers) {
+    return { success: false, error: `Game is full (${maxPlayers} players max)` };
   }
 
   if (room.state !== 'lobby') {
@@ -3875,6 +3888,11 @@ function broadcastRoomList() {
       const activePlayers = room.players.filter(p => !p.hasLeft);
       const activeSpectators = room.spectators.filter(s => !s.hasLeft);
       
+      // Get user IDs of players (for detecting if current user can rejoin)
+      const playerUserIds = activePlayers
+        .filter(p => p.userId)
+        .map(p => p.userId);
+      
       return {
         code: code,
         name: room.name,
@@ -3887,6 +3905,9 @@ function broadcastRoomList() {
         hasPassword: !!room.password,
         ranked: room.ranked,
         anonymousMode: room.anonymousMode,
+        allowLargeGames: room.allowLargeGames,
+        maxPlayers: room.allowLargeGames ? 10 : 6,
+        playerUserIds: playerUserIds, // For detecting rejoins
         _hasActivePlayers: activePlayers.length > 0 || activeSpectators.length > 0
       };
     })
@@ -4001,7 +4022,8 @@ io.on('connection', (socket) => {
       chatMode: data.chatMode || 'separate',
       password: data.password || null,
       ranked: data.ranked !== false,
-      anonymousMode: data.anonymousMode || false
+      anonymousMode: data.anonymousMode || false,
+      allowLargeGames: data.allowLargeGames || false
     });
     
     // Fetch stats if authenticated
@@ -4173,7 +4195,22 @@ io.on('connection', (socket) => {
     if (persistentPlayerId) {
       const existingPlayer = room.players.find(p => p.persistentId === persistentPlayerId && !p.hasLeft);
       if (existingPlayer && existingPlayer.socketId !== socket.id) {
-        callback({ success: false, error: 'You are already connected in another tab/window' });
+        // Don't block if this is an authenticated user trying to reconnect with their userId
+        const isAuthReconnect = authenticatedUser && existingPlayer.userId === authenticatedUser.id;
+        if (!isAuthReconnect) {
+          callback({ success: false, error: 'You are already connected in another tab/window' });
+          return;
+        }
+      }
+    }
+    
+    // Check if authenticated user is trying to reconnect to their existing player slot
+    // This needs to happen BEFORE checking game state, so they reconnect instead of spectating
+    if (authenticatedUser) {
+      const existingPlayerByUserId = room.players.find(p => p.userId === authenticatedUser.id && !p.hasLeft);
+      if (existingPlayerByUserId) {
+        // This is a reconnection from a different device - trigger attemptReconnect
+        callback({ success: false, shouldReconnect: true, roomCode: roomCode });
         return;
       }
     }
@@ -4200,7 +4237,8 @@ io.on('connection', (socket) => {
     }
 
     // In lobby - check if joining as spectator or player
-    if (asSpectator || room.players.length >= 6) {
+    const maxPlayers = room.allowLargeGames ? 10 : 6;
+    if (asSpectator || room.players.length >= maxPlayers) {
       if (!room.allowSpectators) {
         callback({ success: false, error: 'Spectators not allowed in this room' });
         return;
@@ -4268,8 +4306,13 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Find player by persistent ID
-    const player = room.players.find(p => p.persistentId === persistentPlayerId);
+    // Find player by persistent ID OR by userId for authenticated users
+    let player = room.players.find(p => p.persistentId === persistentPlayerId);
+    
+    // If not found by persistentId, try matching by userId for authenticated users
+    if (!player && authenticatedUser) {
+      player = room.players.find(p => p.userId === authenticatedUser.id);
+    }
     
     if (!player) {
       callback({ success: false, error: 'Player not found in this room' });
@@ -4281,15 +4324,22 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Cancel disconnection timer if exists
-    const timerKey = `${roomCode}-${persistentPlayerId}`;
-    if (disconnectionTimers.has(timerKey)) {
-      clearTimeout(disconnectionTimers.get(timerKey));
-      disconnectionTimers.delete(timerKey);
+    // Cancel disconnection timer if exists (try both old and new persistent IDs)
+    const oldTimerKey = `${roomCode}-${player.persistentId}`;
+    const newTimerKey = `${roomCode}-${persistentPlayerId}`;
+    
+    if (disconnectionTimers.has(oldTimerKey)) {
+      clearTimeout(disconnectionTimers.get(oldTimerKey));
+      disconnectionTimers.delete(oldTimerKey);
+    }
+    if (disconnectionTimers.has(newTimerKey)) {
+      clearTimeout(disconnectionTimers.get(newTimerKey));
+      disconnectionTimers.delete(newTimerKey);
     }
 
-    // Update socket ID and mark as reconnected
+    // Update socket ID, persistent ID, and mark as reconnected
     player.socketId = socket.id;
+    player.persistentId = persistentPlayerId; // Update to new device's persistent ID
     player.disconnected = false;
     socket.join(roomCode);
 
@@ -4358,7 +4408,7 @@ io.on('connection', (socket) => {
       }
     }
     
-    callback({ success: true, gameState: room.state });
+    callback({ success: true, gameState: getPublicGameState(room, socket.id, false) });
     emitToRoom(roomCode, 'gameState');
   });
 

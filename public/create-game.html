@@ -210,6 +210,30 @@
         </div>
       </div>
 
+      <!-- Large Games -->
+      <div class="setting-card bg-gray-800 rounded-lg p-6">
+        <div class="flex items-start gap-4">
+          <div class="text-4xl">👥</div>
+          <div class="flex-1">
+            <h3 class="text-xl font-bold mb-2">Large Games (7-10 Players)</h3>
+            <p class="text-gray-400 text-sm mb-4">Allow more than 6 players with adjusted deck size</p>
+            <label class="flex items-center gap-3 cursor-pointer">
+              <input 
+                type="checkbox" 
+                id="allowLargeGames" 
+                class="w-6 h-6 cursor-pointer"
+              />
+              <span class="font-semibold">Allow 7-10 player games</span>
+            </label>
+            <div class="mt-3 p-3 bg-purple-900 bg-opacity-30 rounded border border-purple-600">
+              <p class="text-xs text-purple-200">
+                💡 <strong>Deck adjustments:</strong> 7-8 players use 4 of each card (20 total). 9-10 players use 5 of each card (25 total). Games with 2-6 players use the standard 3 of each card (15 total).
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
     </div>
 
     <!-- Create Button -->
@@ -301,6 +325,10 @@
       const anonymous = document.getElementById('anonymousMode').checked;
       summary.push(`🎭 Identities: ${anonymous ? 'Anonymous' : 'Visible'}`);
       
+      // Large games
+      const allowLargeGames = document.getElementById('allowLargeGames').checked;
+      summary.push(`👥 Max Players: ${allowLargeGames ? '10 (large game mode)' : '6 (standard)'}`);
+      
       document.getElementById('summaryText').innerHTML = summary.map(s => `<div>${s}</div>`).join('');
     }
     
@@ -325,7 +353,8 @@
         chatMode: document.getElementById('chatMode').value,
         password: password,
         ranked: document.getElementById('rankedMode').checked,
-        anonymousMode: document.getElementById('anonymousMode').checked
+        anonymousMode: document.getElementById('anonymousMode').checked,
+        allowLargeGames: document.getElementById('allowLargeGames').checked
       };
       
       // Store in localStorage
@@ -343,6 +372,7 @@
     document.getElementById('chatMode').addEventListener('change', updateSummary);
     document.getElementById('rankedMode').addEventListener('change', updateSummary);
     document.getElementById('anonymousMode').addEventListener('change', updateSummary);
+    document.getElementById('allowLargeGames').addEventListener('change', updateSummary);
 
     function updateChatOptions() {
       const allowSpectators = document.getElementById('allowSpectators').checked;

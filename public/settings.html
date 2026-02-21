@@ -179,6 +179,28 @@
         </div>
       </div>
 
+      <!-- Profanity Filter -->
+      <div class="stat-card rounded-lg p-6">
+        <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🤐 Profanity Filter</h3>
+        <p class="text-gray-400 text-sm mb-5">
+          Filter out profanity from chat messages you see. This is a personal setting - it only affects what you see.
+        </p>
+        <div class="flex items-center justify-between py-3 border-b border-gray-700">
+          <div>
+            <div class="font-semibold">Enable Profanity Filter</div>
+            <div class="text-sm text-gray-400">Replace offensive words with asterisks in lobby and game chat</div>
+          </div>
+          <label class="flex items-center gap-2 cursor-pointer select-none">
+            <div class="relative">
+              <input type="checkbox" id="profanityFilter" class="sr-only">
+              <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg"></div>
+              <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot"></div>
+            </div>
+            <span class="text-gray-400 text-sm w-14" id="labelProfanityFilter">Off</span>
+          </label>
+        </div>
+      </div>
+
       <!-- Change Password -->
       <div class="stat-card rounded-lg p-6">
         <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🔑 Change Password</h3>
@@ -308,6 +330,20 @@
       setToggle('privacyAchievements', 'labelAchievements', settings.privacy?.showAchievements);
       setToggle('privacyMatchHistory', 'labelMatchHistory', settings.privacy?.showMatchHistory);
 
+      // Profanity filter toggle
+      const profanityInput = document.getElementById('profanityFilter');
+      const profanityLabel = document.getElementById('labelProfanityFilter');
+      profanityInput.checked = settings.profanityFilter === true;
+      profanityLabel.textContent = settings.profanityFilter ? 'On' : 'Off';
+      profanityLabel.className = settings.profanityFilter ? 'text-green-400 text-sm w-14' : 'text-gray-400 text-sm w-14';
+      
+      profanityInput.addEventListener('change', (e) => {
+        profanityLabel.textContent = e.target.checked ? 'On' : 'Off';
+        profanityLabel.className = e.target.checked ? 'text-green-400 text-sm w-14' : 'text-gray-400 text-sm w-14';
+        // Store in localStorage for immediate use
+        localStorage.setItem('coupProfanityFilter', e.target.checked ? '1' : '0');
+      });
+
       // Listen for toggle changes to update labels live
       ['WinRate', 'IndividualStats', 'Achievements', 'MatchHistory'].forEach(key => {
         document.getElementById(`privacy${key}`).addEventListener('change', (e) => {
@@ -353,6 +389,7 @@
 
       const bio = document.getElementById('bioInput').value;
       const email = document.getElementById('emailInput').value;
+      const profanityFilter = document.getElementById('profanityFilter').checked;
 
       try {
         const res = await fetch(`${API_BASE}/api/user/settings`, {
@@ -366,6 +403,7 @@
             deckPreference: currentSettings.deckPreference,
             bio,
             email,
+            profanityFilter,
             privacy
           })
         });

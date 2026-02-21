@@ -454,7 +454,7 @@
         }
         
         const unlockedDate = achievement.unlockedAt 
-          ? new Date(achievement.unlockedAt).toISOString().split('T')[0]
+          ? new Date(achievement.unlockedAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
           : null;
         
         return `

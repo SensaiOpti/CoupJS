@@ -54,6 +54,13 @@ async function initDatabase() {
     // Column already exists, ignore
   }
   
+  // Add profanity_filter column if it doesn't exist
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN profanity_filter INTEGER DEFAULT 0`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
   // Add moderation columns if they don't exist
   try {
     db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`);

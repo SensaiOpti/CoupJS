@@ -173,12 +173,13 @@ app.get('/api/user/settings', (req, res) => {
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
   
   try {
-    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email, profanity_filter FROM users WHERE id = ?').get(verification.user.id);
     const privacy = JSON.parse(user.privacy_settings || '{}');
     res.json({
       deckPreference: user.deck_preference || 'default',
       bio: user.bio || '',
       email: user.email || '',
+      profanityFilter: user.profanity_filter === 1,
       privacy: {
         showIndividualStats: privacy.showIndividualStats === true,
         showWinRate: privacy.showWinRate === true,
@@ -199,10 +200,10 @@ app.post('/api/user/settings', (req, res) => {
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
   
   try {
-    const { privacy, deckPreference, bio, email } = req.body;
+    const { privacy, deckPreference, bio, email, profanityFilter } = req.body;
     
     // Build update
-    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email, profanity_filter FROM users WHERE id = ?').get(verification.user.id);
     const currentPrivacy = JSON.parse(user.privacy_settings || '{}');
     const newPrivacy = { ...currentPrivacy, ...privacy };
     
@@ -215,8 +216,11 @@ app.post('/api/user/settings', (req, res) => {
     // Update email (optional, can be empty)
     const newEmail = typeof email === 'string' ? email.trim() : user.email || '';
     
-    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ?, email = ? WHERE id = ?')
-      .run(JSON.stringify(newPrivacy), newDeck, newBio, newEmail, verification.user.id);
+    // Profanity filter (boolean to integer)
+    const newProfanityFilter = profanityFilter === true ? 1 : 0;
+    
+    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ?, email = ?, profanity_filter = ? WHERE id = ?')
+      .run(JSON.stringify(newPrivacy), newDeck, newBio, newEmail, newProfanityFilter, verification.user.id);
     db.saveDatabase();
     
     res.json({ success: true });
@@ -263,6 +267,44 @@ app.post('/api/user/change-password', (req, res) => {
   } catch (error) {
     console.error('Error changing password:', error);
     res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// POST /api/moderation/reset-password - Reset user password (admin only)
+app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
+  try {
+    const { userId, newPassword } = req.body;
+    
+    if (!userId || !newPassword) {
+      return res.status(400).json({ error: 'User ID and new password are required' });
+    }
+    
+    if (newPassword.length < 6) {
+      return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    
+    const targetUser = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    // Hash new password and update
+    const bcrypt = require('bcryptjs');
+    const newHash = bcrypt.hashSync(newPassword, 10);
+    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, userId);
+    
+    // Log the action
+    db.prepare(`
+      INSERT INTO moderation_actions (target_user_id, moderator_user_id, action_type, reason, created_at)
+      VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+    `).run(userId, req.moderator.id, 'password_reset', 'Password reset by admin');
+    
+    db.saveDatabase();
+    
+    res.json({ success: true, message: 'Password reset successfully' });
+  } catch (error) {
+    console.error('Error resetting password:', error);
+    res.status(500).json({ error: 'Failed to reset password' });
   }
 });
 
@@ -677,6 +719,15 @@ function generateRoomCode() {
   return Math.random().toString(36).substring(2, 8).toUpperCase();
 }
 
+// Fisher-Yates shuffle algorithm - guarantees truly random shuffle
+function fisherYatesShuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
+
 function shuffleDeck(useInquisitor = false) {
   const deck = [];
   const cardSet = useInquisitor ? INQUISITOR_CARDS : CARDS;
@@ -685,7 +736,7 @@ function shuffleDeck(useInquisitor = false) {
       deck.push(card);
     }
   });
-  return deck.sort(() => Math.random() - 0.5);
+  return fisherYatesShuffle(deck);
 }
 
 function createRoom(roomCode, options = {}) {
@@ -897,8 +948,8 @@ function startGame(room) {
     return { success: false, error: 'Need 2-6 players' };
   }
 
-  // Randomize player order
-  room.players.sort(() => Math.random() - 0.5);
+  // Randomize player order with proper Fisher-Yates shuffle
+  fisherYatesShuffle(room.players);
 
   // Generate anonymous names if in anonymous mode
   if (room.anonymousMode) {
@@ -1314,7 +1365,7 @@ function handleChallenge(room, challengerId) {
     if (cardIndex !== -1 && room.deck.length > 0) {
       actor.influences[cardIndex].card = room.deck.pop();
       room.deck.unshift(actionData.card);
-      room.deck.sort(() => Math.random() - 0.5);
+      fisherYatesShuffle(room.deck);
       addLogToRoom(room, `${actor.name} returns the card and draws a new one`, 'info');
     }
     
@@ -1546,7 +1597,7 @@ function challengeBlock(room, socketId) {
     if (cardIndex !== -1 && room.deck.length > 0) {
       blocker.influences[cardIndex].card = room.deck.pop();
       room.deck.unshift(action.blockCard);
-      room.deck.sort(() => Math.random() - 0.5);
+      fisherYatesShuffle(room.deck);
       addLogToRoom(room, `${blocker.name} returns the card and draws a new one`, 'info');
     }
     
@@ -1771,7 +1822,7 @@ function completeExchange(room, playerId, keepIndices) {
     .filter((_, idx) => !keepIndices.includes(idx))
     .map(cardObj => cardObj.card);
   room.deck.push(...returnedCards);
-  room.deck.sort(() => Math.random() - 0.5);
+  fisherYatesShuffle(room.deck);
 
   // Update player's influences
   player.influences = keptCards;
@@ -1843,7 +1894,7 @@ function completeExamine(room, playerId, forceExchange) {
       const oldCard = target.influences[cardIndex].card;
       target.influences[cardIndex].card = room.deck.pop();
       room.deck.push(oldCard);
-      room.deck.sort(() => Math.random() - 0.5);
+      fisherYatesShuffle(room.deck);
       
       // Track forced exchange stat
       if (player.gameStats) {

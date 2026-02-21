@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Admin Panel - Coup</title>
+  <script src="/profanity-filter.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
@@ -168,13 +169,23 @@
         <h3 id="modalTitle" class="text-xl font-bold mb-4"></h3>
         <p id="modalDesc" class="text-gray-400 text-sm mb-4"></p>
         
-        <div class="mb-4">
+        <div id="reasonField" class="mb-4">
           <label class="block text-sm text-gray-400 mb-2">Reason (optional)</label>
           <textarea 
             id="reasonInput" 
             rows="3"
             class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
             placeholder="Enter reason for this action..."></textarea>
+        </div>
+        
+        <div id="passwordField" class="hidden mb-4">
+          <label class="block text-sm text-gray-400 mb-2">New Password</label>
+          <input 
+            type="password"
+            id="passwordInput" 
+            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-teal-500"
+            placeholder="Enter new password (6+ characters)">
+          <p class="text-xs text-gray-500 mt-1">Password will be changed immediately. User will need to use this new password to log in.</p>
         </div>
         
         <div id="banIPOption" class="hidden mb-4">
@@ -373,6 +384,9 @@
               actions += ` <button onclick="banIP('${user.ip}', '${escapedUsername}')" class="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded text-xs transition-colors ml-2">Ban IP</button>`;
             }
             
+            // Add Reset Password button for registered users
+            actions += ` <button onclick="resetPassword(${user.id}, '${escapedUsername}')" class="bg-teal-700 hover:bg-teal-600 px-3 py-1 rounded text-xs transition-colors ml-2">Reset Password</button>`;
+            
             if (currentRole === 'admin') {
               if (user.role === 'user') {
                 actions += ` <button onclick="promoteUser(${user.id}, '${escapedUsername}')" class="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded text-xs transition-colors ml-2">Promote</button>`;
@@ -478,6 +492,8 @@
         document.getElementById('banIPOption').classList.add('hidden');
       }
       
+      document.getElementById('reasonField').classList.remove('hidden');
+      document.getElementById('passwordField').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
@@ -499,6 +515,8 @@
         document.getElementById('banIPOption').classList.add('hidden');
       }
       
+      document.getElementById('reasonField').classList.remove('hidden');
+      document.getElementById('passwordField').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
@@ -507,6 +525,8 @@
       document.getElementById('modalTitle').textContent = 'Lift Ban/Timeout';
       document.getElementById('modalDesc').textContent = `Remove ban or timeout from ${username}? They will regain full access to the site.`;
       document.getElementById('banIPOption').classList.add('hidden');
+      document.getElementById('reasonField').classList.remove('hidden');
+      document.getElementById('passwordField').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
@@ -515,6 +535,8 @@
       document.getElementById('modalTitle').textContent = 'Promote to Admin';
       document.getElementById('modalDesc').textContent = `Promote ${username} to admin? They will gain access to this admin panel.`;
       document.getElementById('banIPOption').classList.add('hidden');
+      document.getElementById('reasonField').classList.remove('hidden');
+      document.getElementById('passwordField').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
@@ -523,12 +545,26 @@
       document.getElementById('modalTitle').textContent = 'Demote to User';
       document.getElementById('modalDesc').textContent = `Demote ${username} to regular user? They will lose admin access.`;
       document.getElementById('banIPOption').classList.add('hidden');
+      document.getElementById('reasonField').classList.remove('hidden');
+      document.getElementById('passwordField').classList.add('hidden');
+      document.getElementById('actionModal').classList.remove('hidden');
+    }
+
+    function resetPassword(userId, username) {
+      currentAction = { type: 'resetPassword', userId, username };
+      document.getElementById('modalTitle').textContent = 'Reset Password';
+      document.getElementById('modalDesc').textContent = `Reset password for ${username}? They will need to use the new password to log in.`;
+      document.getElementById('banIPOption').classList.add('hidden');
+      document.getElementById('reasonField').classList.add('hidden');
+      document.getElementById('passwordField').classList.remove('hidden');
+      document.getElementById('passwordInput').value = '';
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
     function closeModal() {
       document.getElementById('actionModal').classList.add('hidden');
       document.getElementById('reasonInput').value = '';
+      document.getElementById('passwordInput').value = '';
       document.getElementById('modalError').classList.add('hidden');
       document.getElementById('banIPOption').classList.add('hidden');
       currentAction = null;
@@ -594,6 +630,48 @@
           closeModal();
           loadUsers();
           loadBannedIPs();
+          return;
+        }
+        
+        // Handle password reset separately
+        if (currentAction.type === 'resetPassword') {
+          const newPassword = document.getElementById('passwordInput').value.trim();
+          
+          if (!newPassword) {
+            errorEl.textContent = 'Password is required';
+            errorEl.classList.remove('hidden');
+            return;
+          }
+          
+          if (newPassword.length < 6) {
+            errorEl.textContent = 'Password must be at least 6 characters';
+            errorEl.classList.remove('hidden');
+            return;
+          }
+          
+          const res = await fetch(`${API_BASE}/api/moderation/reset-password`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({
+              userId: currentAction.userId,
+              newPassword
+            })
+          });
+          
+          const data = await res.json();
+          
+          if (!res.ok || !data.success) {
+            errorEl.textContent = data.error || 'Failed to reset password';
+            errorEl.classList.remove('hidden');
+            return;
+          }
+          
+          closeModal();
+          loadUsers();
+          loadModLog();
           return;
         }
         
@@ -744,12 +822,15 @@
         ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
         : `<span class="font-bold text-blue-400">${data.username}</span>`;
       
+      // Apply profanity filter
+      const filteredMessage = filterProfanity(data.message);
+      
       messageEl.innerHTML = `
         <div class="bg-gray-700 rounded p-2">
           ${nameHtml}
           ${badge}
           <span class="text-gray-500 text-xs ml-2">${new Date(data.timestamp).toLocaleTimeString()}</span>
-          <div class="text-gray-200 mt-1">${escapeHtml(data.message)}</div>
+          <div class="text-gray-200 mt-1">${escapeHtml(filteredMessage)}</div>
         </div>
       `;
       
@@ -772,6 +853,7 @@
       
       socket.emit('lobbyChatMessage', { message });
       input.value = '';
+      input.focus();
     }
 
     async function loadBannedIPs() {
@@ -821,6 +903,8 @@
       document.getElementById('modalTitle').textContent = 'Ban IP Address';
       document.getElementById('modalDesc').textContent = `Ban IP address ${ip} (${username})? This will immediately disconnect them and prevent reconnection.`;
       document.getElementById('banIPOption').classList.add('hidden');
+      document.getElementById('reasonField').classList.remove('hidden');
+      document.getElementById('passwordField').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 
@@ -829,6 +913,8 @@
       document.getElementById('modalTitle').textContent = 'Unban IP Address';
       document.getElementById('modalDesc').textContent = `Unban IP address ${ip}? This will allow connections from this IP address again.`;
       document.getElementById('banIPOption').classList.add('hidden');
+      document.getElementById('reasonField').classList.remove('hidden');
+      document.getElementById('passwordField').classList.add('hidden');
       document.getElementById('actionModal').classList.remove('hidden');
     }
 

@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Coup - Multiplayer Card Game</title>
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="/profanity-filter.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
@@ -2357,9 +2358,10 @@
                         const isSpectatorChat = log.isSpectator;
                         const chatColor = isSpectatorChat ? 'border-blue-500' : 'border-green-500';
                         const badge = isSpectatorChat ? '<span class="text-xs bg-blue-600 px-1 rounded">SPEC</span>' : '';
+                        const filteredMessage = filterProfanity(log.message);
                         return `
                           <div class="text-sm text-white border-l-2 ${chatColor} pl-3 py-1 rounded-r">
-                            <span class="font-bold">${log.playerName}</span> ${badge}: ${log.message}
+                            <span class="font-bold">${log.playerName}</span> ${badge}: ${filteredMessage}
                           </div>
                         `;
                       } else {

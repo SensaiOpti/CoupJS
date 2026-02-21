@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Lobby - Coup</title>
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
+  <script src="/profanity-filter.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
@@ -532,12 +533,15 @@
         ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
         : `<span class="font-bold text-blue-400">${data.username}</span>`;
       
+      // Apply profanity filter
+      const filteredMessage = filterProfanity(data.message);
+      
       messageEl.innerHTML = `
         <div class="bg-gray-700 rounded p-2">
           ${nameHtml}
           ${badge}
           <span class="text-gray-500 text-xs ml-2">${new Date(data.timestamp).toLocaleTimeString()}</span>
-          <div class="text-gray-200 mt-1">${escapeHtml(data.message)}</div>
+          <div class="text-gray-200 mt-1">${escapeHtml(filteredMessage)}</div>
         </div>
       `;
       

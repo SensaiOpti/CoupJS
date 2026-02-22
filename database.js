@@ -61,6 +61,13 @@ async function initDatabase() {
     // Column already exists, ignore
   }
   
+  // Add avatar column if it doesn't exist
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN avatar TEXT DEFAULT '👤'`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
   // Add moderation columns if they don't exist
   try {
     db.run(`ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'user'`);

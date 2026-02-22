@@ -173,13 +173,14 @@ app.get('/api/user/settings', (req, res) => {
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
   
   try {
-    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email, profanity_filter FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email, profanity_filter, avatar FROM users WHERE id = ?').get(verification.user.id);
     const privacy = JSON.parse(user.privacy_settings || '{}');
     res.json({
       deckPreference: user.deck_preference || 'default',
       bio: user.bio || '',
       email: user.email || '',
       profanityFilter: user.profanity_filter === 1,
+      avatar: user.avatar || '👤',
       privacy: {
         showIndividualStats: privacy.showIndividualStats === true,
         showWinRate: privacy.showWinRate === true,
@@ -200,10 +201,10 @@ app.post('/api/user/settings', (req, res) => {
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
   
   try {
-    const { privacy, deckPreference, bio, email, profanityFilter } = req.body;
+    const { privacy, deckPreference, bio, email, profanityFilter, avatar } = req.body;
     
     // Build update
-    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email, profanity_filter FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email, profanity_filter, avatar FROM users WHERE id = ?').get(verification.user.id);
     const currentPrivacy = JSON.parse(user.privacy_settings || '{}');
     const newPrivacy = { ...currentPrivacy, ...privacy };
     
@@ -219,8 +220,11 @@ app.post('/api/user/settings', (req, res) => {
     // Profanity filter (boolean to integer)
     const newProfanityFilter = profanityFilter === true ? 1 : 0;
     
-    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ?, email = ?, profanity_filter = ? WHERE id = ?')
-      .run(JSON.stringify(newPrivacy), newDeck, newBio, newEmail, newProfanityFilter, verification.user.id);
+    // Avatar (must be a valid emoji/string, default to existing)
+    const newAvatar = typeof avatar === 'string' && avatar.length > 0 && avatar.length <= 10 ? avatar : user.avatar || '👤';
+    
+    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ?, email = ?, profanity_filter = ?, avatar = ? WHERE id = ?')
+      .run(JSON.stringify(newPrivacy), newDeck, newBio, newEmail, newProfanityFilter, newAvatar, verification.user.id);
     db.saveDatabase();
     
     res.json({ success: true });
@@ -3443,7 +3447,8 @@ app.get('/api/profile/:identifier', (req, res) => {
         id: user.id,
         username: user.username,
         createdAt: user.created_at,
-        bio: user.bio || ''
+        bio: user.bio || '',
+        avatar: user.avatar || '👤'
       },
       stats: {
         ...stats,

@@ -6,11 +6,11 @@ Seriously, I know nothing about coding at all so enter at your own risk. I can p
 
 ## Non-AI Stuff
 
-To date, the only things *not* AI generated are the fonts:
+There are a handful of items that are not AI generated. I've listed them below with extreme praise and thanks to their creator:
 
-- In the default cards, I use Pfeffer Mediæval, which was made by the lovely Dr. Pfeffer and can be found [here](https://robert-pfeffer.net/schriftarten/englisch/). It was used with admiration, appreciation, awe and respect for all that the good doctor does.
-- In the anime card set, I use [Lollipoptron](https://www.fontspace.com/lollipoptron-font-f29782) which was designed by heaven castro as a derivative of KineticPlasma Fonts' Hi. A mouthful!
-- In the pixel card set, I use [PixelMplus](https://fontmeme.com/fonts/pixelmplus-font/) by the heroic Itou Hiroki. A font that evokes a feeling of nostalgia.
+- In the default cards, I use a font called Pfeffer Mediæval, which was made by the lovely Dr. Pfeffer and can be found [here](https://robert-pfeffer.net/schriftarten/englisch/). It was used with admiration, appreciation, awe and respect for all that the good doctor does.
+- In the anime card set, I use a font called [Lollipoptron](https://www.fontspace.com/lollipoptron-font-f29782) which was designed by heaven castro as a derivative of KineticPlasma Fonts' Hi. A mouthful!
+- In the pixel card set, I use a font called [PixelMplus](https://fontmeme.com/fonts/pixelmplus-font/) by the heroic Itou Hiroki. A font that evokes a feeling of nostalgia.
 
 ## Technologies Used
 

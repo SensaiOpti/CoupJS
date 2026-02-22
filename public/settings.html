@@ -34,10 +34,22 @@
     }
     .deck-option:hover { border-color: rgba(139, 92, 246, 0.5); }
     .deck-option.selected { border-color: #a855f7; background: rgba(139, 92, 246, 0.15); }
+    
+    /* Avatar option */
+    .avatar-option {
+      transition: all 0.2s;
+      cursor: pointer;
+    }
+    .avatar-option:hover {
+      transform: scale(1.1);
+    }
+    .avatar-option.selected {
+      background: rgba(59, 130, 246, 0.2) !important;
+    }
   </style>
 </head>
 <body class="text-white">
-  <div class="max-w-3xl mx-auto p-4 md:p-8">
+  <div class="max-w-7xl mx-auto p-4 md:p-8">
 
     <!-- Header -->
     <div class="flex justify-between items-center mb-8">
@@ -86,6 +98,25 @@
         <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🎴 Card Deck Style</h3>
         <p class="text-gray-400 text-sm mb-5">Choose the card art style used in your games.</p>
         <div id="deckOptions" class="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <!-- Populated by JS -->
+        </div>
+      </div>
+
+      <!-- Avatar Selection -->
+      <div class="stat-card rounded-lg p-6">
+        <h3 class="text-xl font-bold mb-1 flex items-center gap-2">Profile Avatar</h3>
+        <p class="text-gray-400 text-sm mb-5">Choose an icon to represent you throughout the site.</p>
+        
+        <!-- Current Avatar Preview -->
+        <div class="flex items-center gap-4 mb-4">
+          <div class="text-sm text-gray-400">Current Avatar:</div>
+          <div id="currentAvatar" class="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center text-3xl">
+            👤
+          </div>
+        </div>
+        
+        <!-- Avatar Options -->
+        <div id="avatarOptions" class="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-2">
           <!-- Populated by JS -->
         </div>
       </div>
@@ -280,6 +311,34 @@
       { id: 'minimalist', name: 'Minimalist', description: 'Clean minimal design', preview: '/images/cards/minimalist/assassin.png' }
     ];
 
+    const AVATAR_OPTIONS = [
+      // People & Faces
+      '👤', '👨', '👩', '🧑', '👦', '👧', '🧒', '👶',
+      '👨‍💼', '👩‍💼', '🧑‍💼', '👨‍🎓', '👩‍🎓', '🧑‍🎓',
+      '🧙', '🧙‍♂️', '🧙‍♀️', '🧝', '🧝‍♂️', '🧝‍♀️',
+      '🧛', '🧛‍♂️', '🧛‍♀️', '🧟', '🧟‍♂️', '🧟‍♀️',
+      
+      // Animals
+      '🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼',
+      '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🐔',
+      '🐧', '🐦', '🐤', '🦆', '🦅', '🦉', '🦇', '🐺',
+      '🐗', '🐴', '🦄', '🐝', '🐛', '🦋', '🐌', '🐞',
+      '🐢', '🐍', '🦎', '🦖', '🦕', '🐙', '🦑', '🦐',
+      '🐠', '🐟', '🐡', '🦈', '🐳', '🐬', '🐊', '🦓',
+      
+      // Fantasy & Symbols
+      '👑', '💎', '🔱', '⚔️', '🛡️', '🏆', '🎯', '🎲',
+      '🃏', '🎴', '🎭', '👻', '💀', '☠️', '👽', '🤖',
+      '🎃', '😈', '👿', '🌟', '⭐', '✨', '💫', '🔥',
+      '💧', '⚡', '☀️', '🌙', '🌈', '☁️', '❄️', '🌪️',
+      
+      // Food & Objects
+      '🍕', '🍔', '🍟', '🌮', '🌯', '🍿', '🍩', '🍪',
+      '🎂', '🍰', '🧁', '🍦', '🍨', '☕', '🍺', '🍷',
+      '⚽', '🏀', '🏈', '⚾', '🎾', '🏐', '🎱', '🎮',
+      '🎸', '🎹', '🎤', '🎧', '🎬', '📷', '📚', '✏️'
+    ];
+
     let currentSettings = {
       deckPreference: 'default',
       privacy: {
@@ -345,6 +404,20 @@
         </div>
       `).join('');
 
+      // Avatar options
+      const avatarContainer = document.getElementById('avatarOptions');
+      const selectedAvatar = settings.avatar || '👤';
+      
+      avatarContainer.innerHTML = AVATAR_OPTIONS.map(avatar => `
+        <div class="avatar-option w-12 h-12 rounded-full flex items-center justify-center text-2xl cursor-pointer transition-all hover:scale-110 ${avatar === selectedAvatar ? 'selected ring-2 ring-blue-500' : 'bg-gray-700 hover:bg-gray-600'}"
+             onclick="selectAvatar('${avatar}')">
+          ${avatar}
+        </div>
+      `).join('');
+      
+      // Update current avatar preview
+      document.getElementById('currentAvatar').textContent = selectedAvatar;
+
       // Bio field
       const bioInput = document.getElementById('bioInput');
       bioInput.value = settings.bio || '';
@@ -400,6 +473,19 @@
       event.currentTarget.classList.add('selected');
     }
 
+    function selectAvatar(avatar) {
+      currentSettings.avatar = avatar;
+      document.querySelectorAll('.avatar-option').forEach(el => {
+        el.classList.remove('selected', 'ring-2', 'ring-blue-500');
+        el.classList.add('bg-gray-700', 'hover:bg-gray-600');
+      });
+      event.currentTarget.classList.add('selected', 'ring-2', 'ring-blue-500');
+      event.currentTarget.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+      
+      // Update preview
+      document.getElementById('currentAvatar').textContent = avatar;
+    }
+
     function updateCharCount() {
       const bioInput = document.getElementById('bioInput');
       const charCount = document.getElementById('bioCharCount');
@@ -432,6 +518,7 @@
           body: JSON.stringify({
             token: authToken,
             deckPreference: currentSettings.deckPreference,
+            avatar: currentSettings.avatar,
             bio,
             email,
             profanityFilter,

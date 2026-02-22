@@ -813,7 +813,8 @@
 
       container.innerHTML = sortedUsers.map(user => {
         const isAuth = user.isAuthenticated;
-        const isAdmin = user.role === 'admin' || user.role === 'moderator';
+        const isAdmin = user.role === 'admin';
+        const isMod = user.role === 'moderator';
         const statusIcon = user.inGame ? '🎮' : '💤';
         const statusText = user.inGame ? 'In Game' : 'In Lobby';
         
@@ -829,7 +830,7 @@
                 <div class="text-xs text-gray-400">${statusText}</div>
               </div>
             </div>
-            ${isAdmin ? '<span class="text-xs text-red-500">🛡️</span>' : isAuth ? '<span class="text-xs text-green-500">⭐</span>' : '<span class="text-xs text-gray-500">👤</span>'}
+            ${isAdmin ? '<span class="text-xs text-red-500">🛡️</span>' : isMod ? '<span class="text-xs text-yellow-500">⭐</span>' : ''}
           </div>
         `;
       }).join('');
@@ -841,8 +842,9 @@
       messageEl.className = 'fade-in text-sm';
       
       const isAuth = data.isAuthenticated;
-      const isAdmin = data.role === 'admin' || data.role === 'moderator';
-      const badge = isAdmin ? '<span class="text-red-500 text-xs">🛡️</span>' : isAuth ? '<span class="text-green-500 text-xs">⭐</span>' : '';
+      const isAdmin = data.role === 'admin';
+      const isMod = data.role === 'moderator';
+      const badge = isAdmin ? '<span class="text-red-500 text-xs">🛡️</span>' : isMod ? '<span class="text-yellow-500 text-xs">⭐</span>' : '';
       const nameHtml = isAuth
         ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
         : `<span class="font-bold text-blue-400">${data.username}</span>`;

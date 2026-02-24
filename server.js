@@ -643,14 +643,39 @@ app.get('/api/moderation/banned-ips', requireModerator, (req, res) => {
 // GET /api/moderation/online-users - Get currently online users with IP addresses (admin only)
 app.get('/api/moderation/online-users', requireModerator, (req, res) => {
   try {
-    const users = Array.from(lobbySockets.values()).map(user => ({
-      username: user.username,
-      isAuthenticated: user.isAuthenticated,
-      userId: user.userId,
-      inGame: user.inGame,
-      role: user.role || 'user',
-      ip: user.ip || 'unknown'
-    }));
+    const users = Array.from(lobbySockets.values()).map(user => {
+      let avatar = '👤';
+      let elo = null;
+      
+      // Fetch avatar and elo from database for authenticated users
+      if (user.isAuthenticated && user.userId) {
+        try {
+          const userRecord = db.prepare('SELECT avatar FROM users WHERE id = ?').get(user.userId);
+          if (userRecord && userRecord.avatar) {
+            avatar = userRecord.avatar;
+          }
+          
+          // Fetch Elo rating
+          const statsRecord = db.prepare('SELECT elo_rating FROM user_stats WHERE user_id = ?').get(user.userId);
+          if (statsRecord && statsRecord.elo_rating) {
+            elo = statsRecord.elo_rating;
+          }
+        } catch (e) {
+          // Ignore database errors
+        }
+      }
+      
+      return {
+        username: user.username,
+        isAuthenticated: user.isAuthenticated,
+        userId: user.userId,
+        inGame: user.inGame,
+        role: user.role || 'user',
+        ip: user.ip || 'unknown',
+        avatar: avatar,
+        elo: elo
+      };
+    });
     
     res.json({ users });
   } catch (error) {
@@ -906,6 +931,7 @@ function getPublicGameState(room, socketId, isSpectator = false) {
         username: p.username || null,
         isGuest: p.isGuest === true,
         userId: p.userId || null,
+        avatar: p.avatar || '👤',
         stats: p.stats || null,
         coins: p.coins,
         influenceCount: p.influences.length,
@@ -3946,12 +3972,21 @@ function broadcastOnlineUsers() {
       if (!seenAuthUsers.has(user.userId)) {
         seenAuthUsers.add(user.userId);
         
-        // Fetch user role from database
+        // Fetch user role, avatar, and elo from database
         let role = 'user';
+        let avatar = '👤';
+        let elo = null;
         try {
-          const userRecord = db.prepare('SELECT role FROM users WHERE id = ?').get(user.userId);
-          if (userRecord && userRecord.role) {
-            role = userRecord.role;
+          const userRecord = db.prepare('SELECT role, avatar FROM users WHERE id = ?').get(user.userId);
+          if (userRecord) {
+            if (userRecord.role) role = userRecord.role;
+            if (userRecord.avatar) avatar = userRecord.avatar;
+          }
+          
+          // Fetch Elo rating from user_stats
+          const statsRecord = db.prepare('SELECT elo_rating FROM user_stats WHERE user_id = ?').get(user.userId);
+          if (statsRecord && statsRecord.elo_rating) {
+            elo = statsRecord.elo_rating;
           }
         } catch (e) {
           // Ignore database errors
@@ -3961,7 +3996,9 @@ function broadcastOnlineUsers() {
           username: user.username,
           isAuthenticated: user.isAuthenticated,
           inGame: user.inGame,
-          role: role
+          role: role,
+          avatar: avatar,
+          elo: elo
         });
       }
     } else {
@@ -4045,6 +4082,7 @@ io.on('connection', (socket) => {
       userId: authenticatedUser ? authenticatedUser.id : null,
       username: authenticatedUser ? authenticatedUser.username : null,
       isGuest: !authenticatedUser,
+      avatar: authenticatedUser ? (authenticatedUser.avatar || '👤') : '👤',
       stats: stats,
       coins: 2,
       influences: [],
@@ -4278,6 +4316,7 @@ io.on('connection', (socket) => {
       userId: authenticatedUser ? authenticatedUser.id : null,
       username: authenticatedUser ? authenticatedUser.username : null,
       isGuest: !authenticatedUser,
+      avatar: authenticatedUser ? (authenticatedUser.avatar || '👤') : '👤',
       stats: stats,
       coins: 2,
       influences: [],
@@ -4821,11 +4860,25 @@ io.on('connection', (socket) => {
     const message = data.message.trim();
     if (!message || message.length > 200) return;
     
+    // Get avatar from database for authenticated users
+    let avatar = '👤';
+    if (userData.isAuthenticated && userData.userId) {
+      try {
+        const userRecord = db.prepare('SELECT avatar FROM users WHERE id = ?').get(userData.userId);
+        if (userRecord && userRecord.avatar) {
+          avatar = userRecord.avatar;
+        }
+      } catch (e) {
+        // Ignore database errors
+      }
+    }
+    
     const chatMessage = {
       username: userData.username,
       message: message,
       isAuthenticated: userData.isAuthenticated,
       role: userData.role || 'user',
+      avatar: avatar,
       timestamp: Date.now()
     };
     
@@ -5004,6 +5057,9 @@ io.on('connection', (socket) => {
     if (!player && !spectator) return;
     
     const senderName = player ? player.name : spectator.name;
+    const senderAvatar = player ? (player.avatar || '👤') : '👤';
+    const senderUsername = player ? player.username : null;
+    const senderIsGuest = player ? player.isGuest : true;
     const isSpectatorMessage = !!spectator;
     
     // Add message to game log
@@ -5011,6 +5067,9 @@ io.on('connection', (socket) => {
       time: Date.now(),
       type: 'chat',
       playerName: senderName,
+      avatar: senderAvatar,
+      username: senderUsername,
+      isGuest: senderIsGuest,
       message: message,
       isSpectator: isSpectatorMessage
     };

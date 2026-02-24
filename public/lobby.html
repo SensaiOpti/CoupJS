@@ -114,28 +114,6 @@
       </div>
     </div>
 
-    <!-- User Info Bar -->
-    <div id="userInfoBar" class="bg-gray-800 rounded-lg p-4 mb-6 flex justify-between items-center">
-      <div class="flex items-center gap-4">
-        <div class="flex items-center gap-2">
-          <div class="w-3 h-3 bg-green-500 rounded-full pulse-dot"></div>
-          <span class="text-gray-300">Connected as:</span>
-          <span id="currentUsername" class="font-bold text-white"></span>
-        </div>
-        <div id="userElo" class="hidden text-yellow-500 font-semibold"></div>
-      </div>
-      <div class="flex items-center gap-6">
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">Online:</span>
-          <span id="onlineCount" class="font-bold text-green-400">0</span>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-gray-400">Active Games:</span>
-          <span id="activeGamesCount" class="font-bold text-blue-400">0</span>
-        </div>
-      </div>
-    </div>
-
     <!-- Main Content -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Left Column: Room List -->
@@ -191,11 +169,14 @@
       <div class="space-y-4">
         <!-- Online Users -->
         <div class="bg-gray-800 rounded-lg p-4">
-          <h3 class="text-lg font-bold mb-3 flex items-center gap-2">
-            <span class="w-3 h-3 bg-green-500 rounded-full pulse-dot"></span>
-            Online Users
+          <h3 class="text-lg font-bold mb-3 flex items-center justify-between">
+            <div class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full pulse-dot" style="background-color: #22c55e;"></span>
+              <span id="onlineCount" class="text-base font-normal pulse-dot" style="color: #22c55e;">0</span>
+              Online Users
+            </div>
           </h3>
-          <div id="onlineUsersList" class="space-y-2 max-h-64 overflow-y-auto">
+          <div id="onlineUsersList" class="space-y-1 max-h-64 overflow-y-auto">
             <!-- Users will be populated here -->
           </div>
         </div>
@@ -205,7 +186,7 @@
           <h3 class="text-lg font-bold mb-3">💬 Lobby Chat</h3>
           
           <!-- Chat Messages -->
-          <div id="chatMessages" class="flex-1 overflow-y-auto space-y-2 mb-3 pr-2">
+          <div id="chatMessages" class="flex-1 overflow-y-auto space-y-1 mb-3 pr-2">
             <!-- Messages will be populated here -->
           </div>
           
@@ -302,14 +283,11 @@
         }
       }
       
-      const el = document.getElementById('currentUsername');
+      // Update profile button link
       if (currentUser) {
-        el.innerHTML = `<a href="/profile.html?user=${encodeURIComponent(username)}" class="hover:text-blue-300 hover:underline">${username}</a>`;
         const profileBtn = document.getElementById('profileBtn');
         profileBtn.href = `/profile.html?user=${encodeURIComponent(username)}`;
         profileBtn.classList.remove('hidden');
-      } else {
-        el.textContent = username;
       }
 
       // Initialize socket
@@ -328,12 +306,6 @@
         // Show admin button for admins and moderators
         if (userRole === 'moderator' || userRole === 'admin') {
           document.getElementById('moderatorBtn').classList.remove('hidden');
-        }
-        
-        if (currentUser.stats && currentUser.stats.elo_rating) {
-          const eloEl = document.getElementById('userElo');
-          eloEl.textContent = `⭐ Elo: ${currentUser.stats.elo_rating}`;
-          eloEl.classList.remove('hidden');
         }
       } else {
         // Guest user: show login, hide logout
@@ -421,7 +393,6 @@
       document.getElementById('countAll').textContent = rooms.length;
       document.getElementById('countWaiting').textContent = rooms.filter(r => r.state === 'lobby').length;
       document.getElementById('countPlaying').textContent = rooms.filter(r => r.state === 'playing').length;
-      document.getElementById('activeGamesCount').textContent = rooms.length;
 
       if (filteredRooms.length === 0) {
         container.classList.add('hidden');
@@ -509,31 +480,46 @@
       const container = document.getElementById('onlineUsersList');
       document.getElementById('onlineCount').textContent = onlineUsers.length;
 
-      // Sort users alphabetically by username (case-insensitive)
-      const sortedUsers = [...onlineUsers].sort((a, b) => 
-        a.username.toLowerCase().localeCompare(b.username.toLowerCase())
-      );
+      // Get current username
+      const myUsername = currentUser?.username || localStorage.getItem('coupGuestUsername') || '';
+
+      // Sort: current user first, then alphabetically
+      const sortedUsers = [...onlineUsers].sort((a, b) => {
+        // Current user always first
+        if (a.username === myUsername) return -1;
+        if (b.username === myUsername) return 1;
+        
+        // Everyone else sorted alphabetically
+        return a.username.toLowerCase().localeCompare(b.username.toLowerCase());
+      });
 
       container.innerHTML = sortedUsers.map(user => {
         const isAuth = user.isAuthenticated;
         const isAdmin = user.role === 'admin';
         const isMod = user.role === 'moderator';
-        const statusIcon = user.inGame ? '🎮' : '💤';
+        const badge = isAdmin ? '<span class="text-xs text-yellow-500 ml-1">👑</span>' : isMod ? '<span class="text-xs text-yellow-500 ml-1">⭐</span>' : '';
+        const avatar = user.avatar || '👤';
         const statusText = user.inGame ? 'In Game' : 'In Lobby';
+        const eloDisplay = user.elo ? `<span class="text-base text-yellow-500 font-bold">${user.elo}</span>` : '';
         
         return `
-          <div class="online-user bg-gray-700 rounded p-2 flex items-center justify-between">
-            <div class="flex items-center gap-2">
-              <span class="text-lg">${statusIcon}</span>
-              <div>
-                ${isAuth
-                  ? `<a href="/profile.html?user=${encodeURIComponent(user.username)}" class="font-semibold text-sm text-blue-300 hover:text-blue-100 hover:underline">${user.username}</a>`
-                  : `<div class="font-semibold text-sm">${user.username}</div>`
-                }
+          <div class="online-user p-2 flex items-center justify-between">
+            <div class="flex items-center gap-2 flex-1 min-w-0">
+              <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
+                ${avatar}
+              </div>
+              <div class="flex-1 min-w-0">
+                <div class="flex items-center">
+                  ${isAuth
+                    ? `<a href="/profile.html?user=${encodeURIComponent(user.username)}" class="font-semibold text-sm text-blue-300 hover:text-blue-100 hover:underline">${user.username}</a>`
+                    : `<span class="font-semibold text-sm">${user.username}</span>`
+                  }
+                  ${badge}
+                </div>
                 <div class="text-xs text-gray-400">${statusText}</div>
               </div>
             </div>
-            ${isAdmin ? '<span class="text-xs text-yellow-500">👑</span>' : isMod ? '<span class="text-xs text-yellow-500">⭐</span>' : ''}
+            ${eloDisplay}
           </div>
         `;
       }).join('');
@@ -552,15 +538,24 @@
         ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
         : `<span class="font-bold text-blue-400">${data.username}</span>`;
       
+      const avatar = data.avatar || '👤';
+      
       // Apply profanity filter
       const filteredMessage = filterProfanity(data.message);
       
       messageEl.innerHTML = `
-        <div class="bg-gray-700 rounded p-2">
-          ${nameHtml}
-          ${badge}
-          <span class="text-gray-500 text-xs ml-2">${new Date(data.timestamp).toLocaleTimeString()}</span>
-          <div class="text-gray-200 mt-1">${escapeHtml(filteredMessage)}</div>
+        <div class="p-2 flex gap-2">
+          <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
+            ${avatar}
+          </div>
+          <div class="flex-1 min-w-0">
+            <div>
+              ${nameHtml}
+              ${badge}
+              <span class="text-gray-500 text-xs ml-2">${new Date(data.timestamp).toLocaleTimeString()}</span>
+            </div>
+            <div class="text-gray-200 mt-1 break-words">${escapeHtml(filteredMessage)}</div>
+          </div>
         </div>
       `;
       

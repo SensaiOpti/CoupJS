@@ -1331,6 +1331,12 @@
       render();
     }
 
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
     function cancelPreview() {
       window.location.href = '/lobby.html';
     }
@@ -1811,18 +1817,22 @@
                       </button>
                     ` : ''}
                   </h3>
-                  <div class="space-y-2">
+                  <div class="space-y-1">
                     ${players.map(player => {
-                      const isAuth = player.username && !player.isGuest;
+                      const avatar = player.avatar || '👤';
                       const eloRating = player.stats ? player.stats.elo_rating : null;
                       return `
-                        <div class="bg-gray-700 p-3 rounded flex items-center justify-between">
-                          <div class="flex items-center gap-2">
-                            <span>${player.name}</span>
-                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">⭐ USER</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">👤 GUEST</span>`}
-                            ${isAuth && eloRating ? `<span class="text-xs text-yellow-400">Elo: ${eloRating}</span>` : ''}
+                        <div class="p-2 flex items-center justify-between">
+                          <div class="flex items-center gap-2 flex-1 min-w-0">
+                            <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
+                              ${avatar}
+                            </div>
+                            <span class="font-semibold text-sm">${player.name}</span>
                           </div>
-                          ${player.isMe ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">YOU</span>' : ''}
+                          <div class="flex items-center gap-2">
+                            ${eloRating ? `<span class="text-base text-yellow-500 font-bold">${eloRating}</span>` : ''}
+                            ${player.isMe ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">YOU</span>' : ''}
+                          </div>
                         </div>
                       `;
                     }).join('')}
@@ -1843,10 +1853,10 @@
                         </button>
                       ` : ''}
                     </h3>
-                    <div class="space-y-2">
+                    <div class="space-y-1">
                       ${spectators.map(spectator => `
-                        <div class="bg-gray-700 p-3 rounded flex items-center justify-between">
-                          <span>${spectator.name}</span>
+                        <div class="p-2 flex items-center justify-between">
+                          <span class="font-semibold text-sm">${spectator.name}</span>
                           ${spectator.isMe ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded">YOU</span>' : ''}
                         </div>
                       `).join('')}
@@ -1946,25 +1956,22 @@
               <div class="lg:col-span-2">
                 <div class="grid grid-cols-2 gap-4 mb-6">
                   ${players.map(player => {
-                    const isAuth = player.username && !player.isGuest;
-                    const eloRating = player.stats ? player.stats.elo_rating : null;
+                    const avatar = player.avatar || '👤';
                     
                     return `
                     <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500 pulse-ring' : ''} ${!player.alive ? 'eliminate' : ''} ${player.disconnected ? 'opacity-75' : ''}">
                       <div class="flex justify-between items-start mb-3">
                         <div class="flex-1">
                           <div class="flex items-center gap-2 mb-1">
+                            <div class="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-base flex-shrink-0">
+                              ${avatar}
+                            </div>
                             <h3 class="font-bold text-lg">
                               ${player.name}
                               ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
-                              ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
+                              ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
                               ${player.hasLeft ? '<span class="text-xs ml-2 text-gray-400">LEFT</span>' : ''}
                             </h3>
-                          </div>
-                          <div class="flex items-center gap-2 flex-wrap">
-                            ${isAuth ? `<span class="text-xs bg-green-600 px-2 py-1 rounded">⭐</span>` : `<span class="text-xs bg-gray-600 px-2 py-1 rounded">👤</span>`}
-                            ${isAuth && eloRating ? `<span class="text-xs text-yellow-400 font-semibold">${eloRating}</span>` : ''}
-                            ${player.id === currentPlayerId ? '<span class="text-xs bg-red-600 px-2 py-1 rounded">TURN</span>' : ''}
                           </div>
                         </div>
                         <div class="flex items-center gap-1 text-yellow-500">
@@ -2350,7 +2357,7 @@
                       <span class="font-bold text-white">${deckSize}</span> cards in deck
                     </div>
                   </div>
-                  <div class="space-y-2">
+                  <div class="space-y-1">
                     ${gameLog.filter(log => {
                       // Filter chat messages
                       if (log.type === 'chat') {
@@ -2390,12 +2397,29 @@
                       if (log.type === 'chat') {
                         // Chat message styling
                         const isSpectatorChat = log.isSpectator;
-                        const chatColor = isSpectatorChat ? 'border-blue-500' : 'border-green-500';
-                        const badge = isSpectatorChat ? '<span class="text-xs bg-blue-600 px-1 rounded">SPEC</span>' : '';
-                        const filteredMessage = filterProfanity(log.message);
+                        const avatar = log.avatar || '👤';
+                        // Non-clickable names - white for players, light blue for spectators
+                        const nameColor = isSpectatorChat ? 'text-blue-300' : 'text-white';
+                        const nameHtml = `<span class="font-bold ${nameColor}">${log.playerName}</span>`;
+                        const badge = isSpectatorChat ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded ml-1">SPEC</span>' : '';
+                        const timestamp = log.time ? new Date(log.time).toLocaleTimeString() : '';
+                        const filteredMessage = escapeHtml(filterProfanity(log.message));
+                        
                         return `
-                          <div class="text-sm text-white border-l-2 ${chatColor} pl-3 py-1 rounded-r">
-                            <span class="font-bold">${log.playerName}</span> ${badge}: ${filteredMessage}
+                          <div class="text-sm fade-in">
+                            <div class="p-2 flex gap-2">
+                              <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
+                                ${avatar}
+                              </div>
+                              <div class="flex-1 min-w-0">
+                                <div>
+                                  ${nameHtml}
+                                  ${badge}
+                                  <span class="text-gray-500 text-xs ml-2">${timestamp}</span>
+                                </div>
+                                <div class="text-gray-200 mt-1 break-words">${filteredMessage}</div>
+                              </div>
+                            </div>
                           </div>
                         `;
                       } else {

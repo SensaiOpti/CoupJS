@@ -185,7 +185,7 @@ function verifyToken(token) {
     
     // Get user data
     const getUserById = dbModule.prepare(`
-      SELECT id, username, display_name, deck_preference, created_at, last_login
+      SELECT id, username, display_name, deck_preference, avatar, created_at, last_login
       FROM users
       WHERE id = ?
     `);
@@ -209,6 +209,7 @@ function verifyToken(token) {
         username: user.username,
         display_name: user.display_name,
         deck_preference: user.deck_preference || 'default',
+        avatar: user.avatar || '👤',
         created_at: user.created_at,
         stats: stats
       }

@@ -1956,21 +1956,22 @@
               <div class="lg:col-span-2">
                 <div class="grid grid-cols-2 gap-4 mb-6">
                   ${players.map(player => {
-                    const avatar = player.avatar || '👤';
+                    const avatar = anonymousMode ? '🎭' : (player.avatar || '👤');
                     
                     return `
                     <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500 pulse-ring' : ''} ${!player.alive ? 'eliminate' : ''} ${player.disconnected ? 'opacity-75' : ''}">
                       <div class="flex justify-between items-start mb-3">
                         <div class="flex-1">
                           <div class="flex items-center gap-2 mb-1">
-                            <div class="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-base flex-shrink-0">
-                              ${avatar}
-                            </div>
+                            ${!anonymousMode ? `
+                              <div class="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-base flex-shrink-0">
+                                ${avatar}
+                              </div>
+                            ` : ''}
                             <h3 class="font-bold text-lg">
                               ${player.name}
                               ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
-                              ${player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
-                              ${player.hasLeft ? '<span class="text-xs ml-2 text-gray-400">LEFT</span>' : ''}
+                              ${player.hasLeft ? '<span class="text-xs ml-2 text-gray-400">LEFT</span>' : player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
                             </h3>
                           </div>
                         </div>
@@ -2397,7 +2398,7 @@
                       if (log.type === 'chat') {
                         // Chat message styling
                         const isSpectatorChat = log.isSpectator;
-                        const avatar = log.avatar || '👤';
+                        const avatar = anonymousMode ? '🎭' : (log.avatar || '👤');
                         // Non-clickable names - white for players, light blue for spectators
                         const nameColor = isSpectatorChat ? 'text-blue-300' : 'text-white';
                         const nameHtml = `<span class="font-bold ${nameColor}">${log.playerName}</span>`;
@@ -2408,9 +2409,11 @@
                         return `
                           <div class="text-sm fade-in">
                             <div class="p-2 flex gap-2">
-                              <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
-                                ${avatar}
-                              </div>
+                              ${!anonymousMode ? `
+                                <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
+                                  ${avatar}
+                                </div>
+                              ` : ''}
                               <div class="flex-1 min-w-0">
                                 <div>
                                   ${nameHtml}

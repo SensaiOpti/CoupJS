@@ -811,6 +811,14 @@ function addLogToRoom(room, message, type = 'info', character = null) {
   });
 }
 
+function getDisplayName(room, player) {
+  // In anonymous mode during gameplay, use anonymous names
+  if (room.anonymousMode && room.state === 'playing' && player.anonymousName) {
+    return player.anonymousName;
+  }
+  return player.name;
+}
+
 function getPlayerBySocketId(room, socketId) {
   return room.players.find(p => p.socketId === socketId);
 }
@@ -1058,9 +1066,9 @@ function startGame(room) {
   });
 
   const cardType = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
-  addLogToRoom(room, `ðŸŽ® Game started! Each player has 2 influence cards and 2 coins.`, 'info');
-  addLogToRoom(room, `ðŸŽ² ${room.players[0].name} will go first!`, 'info');
-  addLogToRoom(room, `--- ${room.players[0].name}'s turn ---`, 'info');
+  addLogToRoom(room, `🎮 Game started! Each player has 2 influence cards and 2 coins.`, 'info');
+  addLogToRoom(room, `🎲 ${getDisplayName(room, room.players[0])} will go first!`, 'info');
+  addLogToRoom(room, `--- ${getDisplayName(room, room.players[0])}'s turn ---`, 'info');
   return { success: true };
 }
 
@@ -1152,18 +1160,18 @@ function performAction(room, socketId, action, targetId) {
 
   // Generate appropriate log message
   if (action === 'foreignAid') {
-    addLogToRoom(room, `${player.name} takes Foreign Aid`, 'action', 'ForeignAid');
+    addLogToRoom(room, `${getDisplayName(room, player)} takes Foreign Aid`, 'action', 'ForeignAid');
   } else if (action === 'tax') {
-    addLogToRoom(room, `${player.name} claims to be the Duke and uses Tax (+3 coins)`, 'action', 'Duke');
+    addLogToRoom(room, `${getDisplayName(room, player)} claims to be the Duke and uses Tax (+3 coins)`, 'action', 'Duke');
   } else if (action === 'assassinate') {
-    addLogToRoom(room, `${player.name} claims to be the Assassin and attempts to assassinate ${targetPlayer.name}`, 'action', 'Assassin');
+    addLogToRoom(room, `${getDisplayName(room, player)} claims to be the Assassin and attempts to assassinate ${getDisplayName(room, targetPlayer)}`, 'action', 'Assassin');
   } else if (action === 'steal') {
-    addLogToRoom(room, `${player.name} claims to be the Captain and attempts to steal from ${targetPlayer.name}`, 'action', 'Captain');
+    addLogToRoom(room, `${getDisplayName(room, player)} claims to be the Captain and attempts to steal from ${getDisplayName(room, targetPlayer)}`, 'action', 'Captain');
   } else if (action === 'exchange') {
     const card = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
-    addLogToRoom(room, `${player.name} claims to be the ${card} and uses Exchange`, 'action', card);
+    addLogToRoom(room, `${getDisplayName(room, player)} claims to be the ${card} and uses Exchange`, 'action', card);
   } else if (action === 'examine') {
-    addLogToRoom(room, `${player.name} claims to be the Inquisitor and examines ${targetPlayer.name}`, 'action', 'Inquisitor');
+    addLogToRoom(room, `${getDisplayName(room, player)} claims to be the Inquisitor and examines ${getDisplayName(room, targetPlayer)}`, 'action', 'Inquisitor');
   }
 
   // If action can be challenged or blocked, wait for responses
@@ -1199,7 +1207,7 @@ function performAction(room, socketId, action, targetId) {
     
     if (targetIsDisconnected) {
       room.actionInProgress.pausedForDisconnection = true;
-      addLogToRoom(room, `âš ï¸ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
+      addLogToRoom(room, `âš ï¸ Waiting for ${getDisplayName(room, targetPlayer)} to reconnect to respond to this action...`, 'info');
     } else {
       // Set timeout for responses (12 seconds)
       const timeoutId = setTimeout(() => {
@@ -1359,7 +1367,7 @@ function respondToAction(room, socketId, response) {
         // Target is disconnected - pause and wait
         if (!room.actionInProgress.pausedForDisconnection) {
           room.actionInProgress.pausedForDisconnection = true;
-          addLogToRoom(room, `âš ï¸ Waiting for ${targetPlayer.name} to reconnect to respond to this action...`, 'info');
+          addLogToRoom(room, `âš ï¸ Waiting for ${getDisplayName(room, targetPlayer)} to reconnect to respond to this action...`, 'info');
           
           // Clear any existing timeout
           if (room.actionInProgress.responseTimeout) {
@@ -1386,15 +1394,15 @@ function handleChallenge(room, challengerId) {
     action.responseTimeout = null;
   }
 
-  addLogToRoom(room, `${challenger.name} challenges ${actor.name}!`, 'challenge');
+  addLogToRoom(room, `${getDisplayName(room, challenger)} challenges ${getDisplayName(room, actor)}!`, 'challenge');
 
   // Check if actor has the claimed card
   const hasCard = actor.influences.some(inf => !inf.revealed && inf.card === actionData.card);
 
   if (hasCard) {
     // Challenge failed - challenger loses influence
-    addLogToRoom(room, `${actor.name} reveals the ${actionData.card}! The challenge fails.`, 'fail', actionData.card);
-    addLogToRoom(room, `${challenger.name} loses an influence`, 'info');
+    addLogToRoom(room, `${getDisplayName(room, actor)} reveals the ${actionData.card}! The challenge fails.`, 'fail', actionData.card);
+    addLogToRoom(room, `${getDisplayName(room, challenger)} loses an influence`, 'info');
     
     // Track stats
     if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
@@ -1408,28 +1416,28 @@ function handleChallenge(room, challengerId) {
       actor.influences[cardIndex].card = room.deck.pop();
       room.deck.unshift(actionData.card);
       fisherYatesShuffle(room.deck);
-      addLogToRoom(room, `${actor.name} returns the card and draws a new one`, 'info');
+      addLogToRoom(room, `${getDisplayName(room, actor)} returns the card and draws a new one`, 'info');
     }
     
     // Log the successful action
     if (action.action === 'tax') {
-      addLogToRoom(room, `${actor.name} successfully uses Tax and takes 3 coins`, 'success', 'Duke');
+      addLogToRoom(room, `${getDisplayName(room, actor)} successfully uses Tax and takes 3 coins`, 'success', 'Duke');
     } else if (action.action === 'steal') {
-      addLogToRoom(room, `${actor.name} successfully steals from ${action.targetName}`, 'success', 'Captain');
+      addLogToRoom(room, `${getDisplayName(room, actor)} successfully steals from ${getDisplayName(room, getPlayerById(room, action.targetId))}`, 'success', 'Captain');
     } else if (action.action === 'assassinate') {
-      addLogToRoom(room, `${actor.name} successfully assassinates ${action.targetName}`, 'success', 'Assassin');
+      addLogToRoom(room, `${getDisplayName(room, actor)} successfully assassinates ${getDisplayName(room, getPlayerById(room, action.targetId))}`, 'success', 'Assassin');
     } else if (action.action === 'exchange') {
       const card = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
-      addLogToRoom(room, `${actor.name} successfully exchanges cards`, 'success', card);
+      addLogToRoom(room, `${getDisplayName(room, actor)} successfully exchanges cards`, 'success', card);
     } else if (action.action === 'examine') {
-      addLogToRoom(room, `${actor.name} successfully examines ${action.targetName}`, 'success', 'Inquisitor');
+      addLogToRoom(room, `${getDisplayName(room, actor)} successfully examines ${getDisplayName(room, getPlayerById(room, action.targetId))}`, 'success', 'Inquisitor');
     }
     
     resolveAction(room);
   } else {
     // Challenge succeeded - actor loses influence (was bluffing)
-    addLogToRoom(room, `${actor.name} doesn't have the ${actionData.card}! The challenge succeeds.`, 'success', actionData.card);
-    addLogToRoom(room, `${actor.name} loses an influence and the action fails`, 'info');
+    addLogToRoom(room, `${getDisplayName(room, actor)} doesn't have the ${actionData.card}! The challenge succeeds.`, 'success', actionData.card);
+    addLogToRoom(room, `${getDisplayName(room, actor)} loses an influence and the action fails`, 'info');
     
     // Track stats
     if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
@@ -1455,9 +1463,9 @@ function handleBlock(room, blockerId, blockCard) {
   const blocker = getPlayerById(room, blockerId);
   
   if (action.action === 'foreignAid') {
-    addLogToRoom(room, `${blocker.name} claims to be the ${blockCard} and blocks Foreign Aid`, 'block', blockCard);
+    addLogToRoom(room, `${getDisplayName(room, blocker)} claims to be the ${blockCard} and blocks Foreign Aid`, 'block', blockCard);
   } else {
-    addLogToRoom(room, `${blocker.name} claims to be the ${blockCard} and blocks!`, 'block', blockCard);
+    addLogToRoom(room, `${getDisplayName(room, blocker)} claims to be the ${blockCard} and blocks!`, 'block', blockCard);
   }
   
   // Now the block can be challenged by ANY player
@@ -1598,14 +1606,14 @@ function challengeBlock(room, socketId) {
     action.responseTimeout = null;
   }
   
-  addLogToRoom(room, `${challenger.name} challenges the block!`, 'challenge');
+  addLogToRoom(room, `${getDisplayName(room, challenger)} challenges the block!`, 'challenge');
   
   const hasCard = blocker.influences.some(inf => !inf.revealed && inf.card === action.blockCard);
   
   if (hasCard) {
     // Challenge failed - blocker had the card
-    addLogToRoom(room, `${blocker.name} reveals the ${action.blockCard}! The block challenge fails.`, 'fail', action.blockCard);
-    addLogToRoom(room, `${challenger.name} loses an influence`, 'info');
+    addLogToRoom(room, `${getDisplayName(room, blocker)} reveals the ${action.blockCard}! The block challenge fails.`, 'fail', action.blockCard);
+    addLogToRoom(room, `${getDisplayName(room, challenger)} loses an influence`, 'info');
     
     // Track stats
     if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
@@ -1640,7 +1648,7 @@ function challengeBlock(room, socketId) {
       blocker.influences[cardIndex].card = room.deck.pop();
       room.deck.unshift(action.blockCard);
       fisherYatesShuffle(room.deck);
-      addLogToRoom(room, `${blocker.name} returns the card and draws a new one`, 'info');
+      addLogToRoom(room, `${getDisplayName(room, blocker)} returns the card and draws a new one`, 'info');
     }
     
     if (action.action === 'foreignAid') {
@@ -1652,8 +1660,8 @@ function challengeBlock(room, socketId) {
     nextTurn(room);
   } else {
     // Challenge succeeded - blocker was bluffing
-    addLogToRoom(room, `${blocker.name} doesn't have the ${action.blockCard}! The block challenge succeeds.`, 'success', action.blockCard);
-    addLogToRoom(room, `${blocker.name} loses an influence and the action proceeds`, 'info');
+    addLogToRoom(room, `${getDisplayName(room, blocker)} doesn't have the ${action.blockCard}! The block challenge succeeds.`, 'success', action.blockCard);
+    addLogToRoom(room, `${getDisplayName(room, blocker)} loses an influence and the action proceeds`, 'info');
     
     // Track stats
     if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
@@ -1721,21 +1729,21 @@ function resolveAction(room) {
       if (actor.gameStats) actor.gameStats.coinsEarned += 1;
       if (actor.gameStats) actor.gameStats.incomeTaken += 1;
       if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
-      addLogToRoom(room, `${actor.name} takes Income and receives 1 coin`, 'success', 'Income');
+      addLogToRoom(room, `${getDisplayName(room, actor)} takes Income and receives 1 coin`, 'success', 'Income');
       break;
     case 'foreignAid':
       actor.coins += 2;
       if (actor.gameStats) actor.gameStats.coinsEarned += 2;
       if (actor.gameStats) actor.gameStats.foreignaidAccepted += 1;
       if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
-      addLogToRoom(room, `${actor.name} receives 2 coins from Foreign Aid`, 'success', 'ForeignAid');
+      addLogToRoom(room, `${getDisplayName(room, actor)} receives 2 coins from Foreign Aid`, 'success', 'ForeignAid');
       break;
     case 'tax':
       actor.coins += 3;
       if (actor.gameStats) actor.gameStats.coinsEarned += 3;
       if (actor.gameStats) actor.gameStats.taxSucceeded += 1;
       if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
-      addLogToRoom(room, `${actor.name} receives 3 coins from Tax`, 'success', 'Duke');
+      addLogToRoom(room, `${getDisplayName(room, actor)} receives 3 coins from Tax`, 'success', 'Duke');
       break;
     case 'steal':
       if (target) {
@@ -1746,14 +1754,14 @@ function resolveAction(room) {
         if (actor.gameStats) actor.gameStats.coinsStolen += stolen;
         if (target.gameStats) target.gameStats.coinsLost += stolen;
         if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
-        addLogToRoom(room, `${actor.name} steals ${stolen} coin${stolen !== 1 ? 's' : ''} from ${target.name}`, 'success', 'Captain');
+        addLogToRoom(room, `${getDisplayName(room, actor)} steals ${stolen} coin${stolen !== 1 ? 's' : ''} from ${getDisplayName(room, target)}`, 'success', 'Captain');
       }
       break;
     case 'assassinate':
       if (target) {
         if (actor.gameStats) actor.gameStats.assassinationsSucceeded += 1;
         if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
-        addLogToRoom(room, `${target.name} must lose an influence`, 'info');
+        addLogToRoom(room, `${getDisplayName(room, target)} must lose an influence`, 'info');
         loseInfluence(room, target.id, 1, action.playerId);
       }
       break;
@@ -1766,7 +1774,7 @@ function resolveAction(room) {
           const drawnCards = [room.deck.pop()];
           actor.exchangeCards = drawnCards;
           actor.mustChooseExchange = true;
-          addLogToRoom(room, `${actor.name} draws 1 card to exchange`, 'info', 'Inquisitor');
+          addLogToRoom(room, `${getDisplayName(room, actor)} draws 1 card to exchange`, 'info', 'Inquisitor');
           room.actionInProgress = null;
           emitToRoom(room.code, 'gameState');
           return;
@@ -1777,13 +1785,13 @@ function resolveAction(room) {
           const drawnCards = [room.deck.pop(), room.deck.pop()];
           actor.exchangeCards = drawnCards;
           actor.mustChooseExchange = true;
-          addLogToRoom(room, `${actor.name} draws 2 cards to exchange`, 'info', 'Ambassador');
+          addLogToRoom(room, `${getDisplayName(room, actor)} draws 2 cards to exchange`, 'info', 'Ambassador');
           room.actionInProgress = null;
           emitToRoom(room.code, 'gameState');
           return;
         }
       }
-      addLogToRoom(room, `${actor.name} exchanges cards (not enough cards in deck)`, 'info');
+      addLogToRoom(room, `${getDisplayName(room, actor)} exchanges cards (not enough cards in deck)`, 'info');
       break;
     case 'examine':
       // Inquisitor power: look at another player's card and optionally force exchange
@@ -1795,12 +1803,12 @@ function resolveAction(room) {
           actor.mustChooseExamine = true;
           target.mustShowCardToExaminer = true;
           target.examinedBy = actor.id;
-          addLogToRoom(room, `${target.name} must show a card to ${actor.name}`, 'info', 'Inquisitor');
+          addLogToRoom(room, `${getDisplayName(room, target)} must show a card to ${getDisplayName(room, actor)}`, 'info', 'Inquisitor');
           room.actionInProgress = null;
           emitToRoom(room.code, 'gameState');
           return;
         } else {
-          addLogToRoom(room, `${target.name} has no cards to examine`, 'info');
+          addLogToRoom(room, `${getDisplayName(room, target)} has no cards to examine`, 'info');
         }
       }
       break;
@@ -1808,7 +1816,7 @@ function resolveAction(room) {
       if (target) {
         if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
         if (actor.gameStats) actor.gameStats.coupsEnacted += 1;
-        addLogToRoom(room, `${actor.name} launches a Coup against ${target.name} who must lose an influence`, 'info', 'Coup');
+        addLogToRoom(room, `${getDisplayName(room, actor)} launches a Coup against ${getDisplayName(room, target)} who must lose an influence`, 'info', 'Coup');
         loseInfluence(room, target.id, 1, actor.id);
       }
       break;
@@ -1877,7 +1885,7 @@ function completeExchange(room, playerId, keepIndices) {
   }
 
   const card = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
-  addLogToRoom(room, `${player.name} completes the exchange`, 'success', card);
+  addLogToRoom(room, `${getDisplayName(room, player)} completes the exchange`, 'success', card);
   nextTurn(room);
 
   return { success: true };
@@ -1908,7 +1916,7 @@ function showCardToExaminer(room, playerId, cardIndex) {
   player.mustShowCardToExaminer = false;
   player.examinedBy = null;
 
-  addLogToRoom(room, `${player.name} shows a card to ${examiner.name}`, 'info', 'Inquisitor');
+  addLogToRoom(room, `${getDisplayName(room, player)} shows a card to ${getDisplayName(room, examiner)}`, 'info', 'Inquisitor');
 
   return { success: true };
 }
@@ -1943,10 +1951,10 @@ function completeExamine(room, playerId, forceExchange) {
         player.gameStats.influenceForced += 1;
       }
       
-      addLogToRoom(room, `${player.name} forces ${target.name} to exchange their card`, 'info', 'Inquisitor');
+      addLogToRoom(room, `${getDisplayName(room, player)} forces ${getDisplayName(room, target)} to exchange their card`, 'info', 'Inquisitor');
     }
   } else {
-    addLogToRoom(room, `${player.name} allows ${target.name} to keep their card`, 'info', 'Inquisitor');
+    addLogToRoom(room, `${getDisplayName(room, player)} allows ${getDisplayName(room, target)} to keep their card`, 'info', 'Inquisitor');
   }
 
   player.examineTargetId = null;
@@ -1979,7 +1987,7 @@ function revealInfluence(room, playerId, cardIndex) {
   // Track stat
   if (player.gameStats) player.gameStats.influencesLost += 1;
   
-  addLogToRoom(room, `${player.name} reveals and loses their ${influence.card}`, 'info', influence.card);
+  addLogToRoom(room, `${getDisplayName(room, player)} reveals and loses their ${influence.card}`, 'info', influence.card);
 
   const stillAlive = player.influences.some(inf => !inf.revealed);
   if (!stillAlive) {
@@ -2009,7 +2017,7 @@ function revealInfluence(room, playerId, cardIndex) {
       }
     }
     
-    addLogToRoom(room, `${player.name} is eliminated from the game!`, 'info');
+    addLogToRoom(room, `${getDisplayName(room, player)} is eliminated from the game!`, 'info');
     checkWinCondition(room);
     return { success: true };
   }
@@ -2058,7 +2066,7 @@ function checkWinCondition(room) {
     // Sort by placement (ascending - 1st, 2nd, 3rd, etc.)
     room.eliminationOrder.sort((a, b) => a.placement - b.placement);
     
-    addLogToRoom(room, `ðŸŽ‰ ${winner.name} wins the game! ðŸŽ‰`, 'success');
+    addLogToRoom(room, `ðŸŽ‰ ${getDisplayName(room, winner)} wins the game! ðŸŽ‰`, 'success');
     room.state = 'ended';
     
     // Save game results to database
@@ -2330,7 +2338,7 @@ function nextTurn(room) {
   }
   
   room.currentPlayerIndex = next;
-  addLogToRoom(room, `--- ${room.players[next].name}'s turn ---`, 'info');
+  addLogToRoom(room, `--- ${getDisplayName(room, room.players[next])}'s turn ---`, 'info');
 }
 
 function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedUser = null) {
@@ -4191,6 +4199,7 @@ io.on('connection', (socket) => {
     
     if (playerIndex !== -1) {
       oldRoom.players[playerIndex].hasLeft = true;
+      oldRoom.players[playerIndex].disconnected = false; // Clear disconnected flag
       oldRoom.players.splice(playerIndex, 1);
     } else if (spectatorIndex !== -1) {
       oldRoom.spectators[spectatorIndex].hasLeft = true;
@@ -4387,7 +4396,7 @@ io.on('connection', (socket) => {
     player.disconnected = false;
     socket.join(roomCode);
 
-    addLogToRoom(room, `âœ… ${player.name} reconnected!`, 'info');
+    addLogToRoom(room, `âœ… ${getDisplayName(room, player)} reconnected!`, 'info');
     
     // Check if there's an action paused waiting for this player
     if (room.actionInProgress && room.actionInProgress.pausedForDisconnection) {
@@ -4666,6 +4675,7 @@ io.on('connection', (socket) => {
       
       // Mark player as having left so they stop receiving updates
       player.hasLeft = true;
+      player.disconnected = false; // Clear disconnected flag if they were disconnected
       
       // Remove socket from the room
       socket.leave(roomCode);
@@ -4705,10 +4715,10 @@ io.on('connection', (socket) => {
         player.influencesToLose = 0;
         
         // Log the forfeit and reveal cards
-        addLogToRoom(room, `${player.name} left the game and forfeits!`, 'info');
+        addLogToRoom(room, `${getDisplayName(room, player)} left the game and forfeits!`, 'info');
         if (revealedCards.length > 0) {
           const cardList = revealedCards.join(' and ');
-          addLogToRoom(room, `${player.name}'s cards are revealed: ${cardList}`, 'info');
+          addLogToRoom(room, `${getDisplayName(room, player)}'s cards are revealed: ${cardList}`, 'info');
         }
         
         // Check win condition
@@ -4904,7 +4914,7 @@ io.on('connection', (socket) => {
         if (room.state === 'playing' && !player.hasLeft) {
           // Start grace period for reconnection
           player.disconnected = true;
-          addLogToRoom(room, `âš ï¸ ${player.name} disconnected. Waiting 30 seconds to reconnect...`, 'info');
+          addLogToRoom(room, `âš ï¸ ${getDisplayName(room, player)} disconnected. Waiting 30 seconds to reconnect...`, 'info');
           
           const timerKey = `${roomCode}-${player.persistentId}`;
           const forfeitTimer = setTimeout(() => {
@@ -4914,6 +4924,7 @@ io.on('connection', (socket) => {
             const currentPlayer = room.players[playerIndex];
             if (currentPlayer && currentPlayer.disconnected) {
               currentPlayer.hasLeft = true;
+              currentPlayer.disconnected = false; // Clear disconnected flag since they're now marked as left
               
               // Forfeit - reveal all influences and eliminate
               const revealedCards = [];
@@ -4947,10 +4958,10 @@ io.on('connection', (socket) => {
               currentPlayer.mustShowCardToExaminer = false;
               currentPlayer.influencesToLose = 0;
               
-              addLogToRoom(room, `${currentPlayer.name} failed to reconnect and forfeits!`, 'info');
+              addLogToRoom(room, `${getDisplayName(room, currentPlayer)} failed to reconnect and forfeits!`, 'info');
               if (revealedCards.length > 0) {
                 const cardList = revealedCards.join(' and ');
-                addLogToRoom(room, `${currentPlayer.name}'s cards are revealed: ${cardList}`, 'info');
+                addLogToRoom(room, `${getDisplayName(room, currentPlayer)}'s cards are revealed: ${cardList}`, 'info');
               }
               
               // Check win condition
@@ -4984,6 +4995,7 @@ io.on('connection', (socket) => {
         } else {
           // In lobby, just remove them
           player.hasLeft = true;
+          player.disconnected = false; // Clear disconnected flag
           room.players.splice(playerIndex, 1);
           
           // Check if there are any active players or spectators left
@@ -5056,7 +5068,7 @@ io.on('connection', (socket) => {
     
     if (!player && !spectator) return;
     
-    const senderName = player ? player.name : spectator.name;
+    const senderName = player ? getDisplayName(room, player) : spectator.name;
     const senderAvatar = player ? (player.avatar || '👤') : '👤';
     const senderUsername = player ? player.username : null;
     const senderIsGuest = player ? player.isGuest : true;

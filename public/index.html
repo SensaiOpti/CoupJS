@@ -139,6 +139,25 @@
     .text-duke { color: #432762; }
     .text-inquisitor { color: #EAC01E; }
     
+    /* Custom scrollbar styling */
+    #gameLogContainer::-webkit-scrollbar {
+      width: 8px;
+    }
+    
+    #gameLogContainer::-webkit-scrollbar-track {
+      background: rgba(31, 41, 55, 0.5);
+      border-radius: 4px;
+    }
+    
+    #gameLogContainer::-webkit-scrollbar-thumb {
+      background: rgba(75, 85, 99, 0.8);
+      border-radius: 4px;
+    }
+    
+    #gameLogContainer::-webkit-scrollbar-thumb:hover {
+      background: rgba(107, 114, 128, 0.9);
+    }
+    
     .bg-ambassador { background-color: #5a7d62; } /* Darkened from #739C7B for better contrast with white text */
     .bg-ambassador:hover { background-color: #4a6d52; }
     .bg-assassin { background-color: #2a2a2a; } /* Lightened from #0E0E0E for better contrast with white text */
@@ -185,6 +204,7 @@
     let selectedExchangeCards = [];
     let useInquisitor = false;
     let allowSpectators = true;
+    let allowLargeGames = false;
     let isSpectator = false;
     let gameStats = null; // Store end game statistics (placement, coins, kills)
     let leftRooms = new Set();
@@ -495,6 +515,10 @@
           allowSpectators = state.allowSpectators;
         }
 
+        if (state.allowLargeGames !== undefined) {
+          allowLargeGames = state.allowLargeGames;
+        }
+
         if (state.chatMode !== undefined) {
           chatMode = state.chatMode;
         }
@@ -741,6 +765,7 @@
           spectators = previewData.spectators;
           useInquisitor = previewData.useInquisitor;
           allowSpectators = previewData.allowSpectators;
+          allowLargeGames = previewData.allowLargeGames || false;
           chatMode = previewData.chatMode || 'separate';
           anonymousMode = previewData.anonymousMode || false;
           gameState = 'lobby';
@@ -937,8 +962,11 @@
 
     function completeExchange() {
       const myPlayer = players.find(p => p.id === myPlayerId);
-      if (selectedExchangeCards.length !== myPlayer.influences.length) {
-        alert(`You must select exactly ${myPlayer.influences.length} cards to keep`);
+      const unrevealedInfluences = myPlayer.influences.filter(inf => !inf.revealed);
+      const numToKeep = unrevealedInfluences.length;
+      
+      if (selectedExchangeCards.length !== numToKeep) {
+        alert(`You must select exactly ${numToKeep} cards to keep`);
         return;
       }
 
@@ -1085,10 +1113,11 @@
           
           // Store the new room code and redirect
           localStorage.setItem('coupJoinCode', response.newRoomCode);
+          localStorage.setItem('coupPlayAgainAutoJoin', 'true'); // Flag to auto-join as player
           localStorage.removeItem('coupCurrentRoom');
           localStorage.removeItem('coupIsSpectator');
           
-          // Reload the page - will show preview screen with new room
+          // Reload the page - will auto-join as player
           window.location.reload();
         } else {
           console.error('Failed to create new game:', response.error);
@@ -1806,7 +1835,10 @@
               <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <div>
                   <h3 class="text-xl mb-4 flex items-center justify-between">
-                    <span>Players (${players.length}/6)</span>
+                    <div class="flex items-center gap-2">
+                      <span>Players</span>
+                      <span class="text-sm text-gray-400">${players.length}${allowLargeGames ? '' : '/6'}</span>
+                    </div>
                     ${!previewMode && isSpectator && !roomIsPlaying ? `
                       <button 
                         onclick="switchToPlayer()" 
@@ -1843,7 +1875,10 @@
                 ${allowSpectators ? `
                   <div>
                     <h3 class="text-xl mb-4 flex items-center justify-between">
-                      <span>Spectators (${spectators.length})</span>
+                      <div class="flex items-center gap-2">
+                        <span>Spectators</span>
+                        <span class="text-sm text-gray-400">${spectators.length}</span>
+                      </div>
                       ${!previewMode && !isSpectator && !roomIsPlaying ? `
                         <button 
                           onclick="switchToSpectator()" 
@@ -2142,9 +2177,12 @@
                 ${mustExchange ? `
                   <div class="mb-6 bg-teal-900 border-2 border-teal-600 rounded-lg p-6">
                     <h3 class="text-xl font-bold mb-4 text-teal-300">Exchange Cards</h3>
-                    <p class="mb-4 text-teal-100">You drew ${myPlayer.exchangeCards.length} card(s). Select ${myPlayer.influences.length} card(s) to KEEP (the rest will be returned to the deck).</p>
+                    ${myPlayer.influences.filter(inf => inf.revealed).length > 0 ? `
+                      <p class="mb-2 text-teal-100 text-sm">Your revealed influence(s) will be kept automatically.</p>
+                    ` : ''}
+                    <p class="mb-4 text-teal-100">You drew ${myPlayer.exchangeCards.length} card(s). Select ${myPlayer.influences.filter(inf => !inf.revealed).length} card(s) to KEEP (the rest will be returned to the deck).</p>
                     <div class="grid grid-cols-2 gap-3 mb-4">
-                      ${[...myPlayer.influences, ...myPlayer.exchangeCards].map((card, idx) => {
+                      ${[...myPlayer.influences.filter(inf => !inf.revealed), ...myPlayer.exchangeCards].map((card, idx) => {
                         const cardName = (card.card || card).toLowerCase();
                         return `
                         <button 
@@ -2160,17 +2198,18 @@
                             ${selectedExchangeCards.includes(idx) ? '✓ Keep' : 'Click to keep'}
                           </div>
                         </button>
-                      `}).join('')}
+                      `;
+                      }).join('')}
                     </div>
                     <div class="text-center mb-3">
-                      <span class="text-teal-200">Selected: ${selectedExchangeCards.length}/${myPlayer.influences.length}</span>
+                      <span class="text-teal-200">Selected: ${selectedExchangeCards.length}/${myPlayer.influences.filter(inf => !inf.revealed).length}</span>
                     </div>
                     <button 
                       onclick="completeExchange()" 
                       class="w-full bg-teal-600 hover:bg-teal-700 p-4 rounded font-bold ${
-                        selectedExchangeCards.length !== myPlayer.influences.length ? 'opacity-50 cursor-not-allowed' : ''
+                        selectedExchangeCards.length !== myPlayer.influences.filter(inf => !inf.revealed).length ? 'opacity-50 cursor-not-allowed' : ''
                       }"
-                      ${selectedExchangeCards.length !== myPlayer.influences.length ? 'disabled' : ''}
+                      ${selectedExchangeCards.length !== myPlayer.influences.filter(inf => !inf.revealed).length ? 'disabled' : ''}
                     >
                       Confirm Exchange
                     </button>
@@ -2604,10 +2643,12 @@
       
       // Check if coming from lobby with a join code
       const lobbyJoinCode = localStorage.getItem('coupJoinCode');
+      const playAgainAutoJoin = localStorage.getItem('coupPlayAgainAutoJoin');
       
       if (lobbyJoinCode) {
-        // Clear the stored value
+        // Clear the stored values
         localStorage.removeItem('coupJoinCode');
+        localStorage.removeItem('coupPlayAgainAutoJoin');
 
         const storedRoomCode = localStorage.getItem('coupCurrentRoom');
         if (lobbyJoinCode === storedRoomCode) {
@@ -2620,6 +2661,31 @@
           const checkSocket = setInterval(() => {
             if (socket && socket.connected) {
               clearInterval(checkSocket);
+              
+              // Check if this is a "Play Again" auto-join
+              if (playAgainAutoJoin === 'true') {
+                // Auto-join as player without showing preview
+                console.log('Auto-joining as player from Play Again');
+                socket.emit('joinRoom', {
+                  roomCode: lobbyJoinCode,
+                  playerName: currentUser ? currentUser.username : (localStorage.getItem('coupGuestUsername') || 'Guest'),
+                  asSpectator: false,
+                  persistentPlayerId: getOrCreatePlayerId(),
+                  password: null
+                }, (joinResponse) => {
+                  if (joinResponse.success) {
+                    roomCode = lobbyJoinCode;
+                    isSpectator = false;
+                    localStorage.setItem('coupCurrentRoom', roomCode);
+                    localStorage.setItem('coupIsSpectator', 'false');
+                    // Server will emit gameState
+                  } else {
+                    alert('Failed to join game: ' + (joinResponse.error || 'Unknown error'));
+                    window.location.href = '/lobby.html';
+                  }
+                });
+                return;
+              }
               
               // If authenticated user, try reconnecting first
               if (currentUser) {
@@ -2647,6 +2713,7 @@
                         spectators = previewData.spectators;
                         useInquisitor = previewData.useInquisitor;
                         allowSpectators = previewData.allowSpectators;
+                        allowLargeGames = previewData.allowLargeGames || false;
                         chatMode = previewData.chatMode || 'separate';
                         gameState = 'lobby';
                         render();
@@ -2667,6 +2734,7 @@
                     spectators = previewData.spectators;
                     useInquisitor = previewData.useInquisitor;
                     allowSpectators = previewData.allowSpectators;
+                    allowLargeGames = previewData.allowLargeGames || false;
                     chatMode = previewData.chatMode || 'separate';
                     gameState = 'lobby';
                     render();

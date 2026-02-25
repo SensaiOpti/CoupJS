@@ -41,6 +41,29 @@
       scroll-behavior: smooth;
     }
     
+    /* Custom scrollbar styling */
+    #chatMessages::-webkit-scrollbar,
+    #onlineUsersList::-webkit-scrollbar {
+      width: 8px;
+    }
+    
+    #chatMessages::-webkit-scrollbar-track,
+    #onlineUsersList::-webkit-scrollbar-track {
+      background: rgba(31, 41, 55, 0.5);
+      border-radius: 4px;
+    }
+    
+    #chatMessages::-webkit-scrollbar-thumb,
+    #onlineUsersList::-webkit-scrollbar-thumb {
+      background: rgba(75, 85, 99, 0.8);
+      border-radius: 4px;
+    }
+    
+    #chatMessages::-webkit-scrollbar-thumb:hover,
+    #onlineUsersList::-webkit-scrollbar-thumb:hover {
+      background: rgba(107, 114, 128, 0.9);
+    }
+    
     .room-item {
       transition: all 0.2s ease;
     }
@@ -422,7 +445,7 @@
                   <span class="${statusColor} text-xs px-2 py-1 rounded">${statusText}</span>
                 </div>
                 <div class="text-sm text-gray-400">
-                  ${room.name ? `<span class="text-gray-500 mr-2">#${room.code}</span>` : ''}${room.playerCount}/${room.maxPlayers || 6} players
+                  ${room.playerCount}/${room.maxPlayers || 6} players
                   ${room.spectatorCount > 0 ? `· ${room.spectatorCount} spectators` : ''}
                 </div>
               </div>

@@ -925,6 +925,7 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     state: room.state,
     useInquisitor: room.useInquisitor,
     allowSpectators: room.allowSpectators,
+    allowLargeGames: room.allowLargeGames,
     chatMode: room.chatMode,
     hasPassword: !!room.password, // Only expose if password exists, not the actual password
     ranked: room.ranked,
@@ -1020,13 +1021,16 @@ function startGame(room) {
       { card: room.deck.pop(), revealed: false },
       { card: room.deck.pop(), revealed: false }
     ];
-    player.coins = 2;
+    
+    // Special rule: In 2-player games, the first player starts with only 1 coin
+    const startingCoins = (room.players.length === 2 && idx === 0) ? 1 : 2;
+    player.coins = startingCoins;
     player.alive = true;
     
     // Initialize game stats tracking
     player.gameStats = {
       // Core stats
-      coinsEarned: 2, // Start with the 2 coins everyone gets
+      coinsEarned: startingCoins, // Track actual starting coins
       coinsSpent: 0,
       coinsLost: 0,
       coinsStolen: 0,
@@ -1066,7 +1070,11 @@ function startGame(room) {
   });
 
   const cardType = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
-  addLogToRoom(room, `🎮 Game started! Each player has 2 influence cards and 2 coins.`, 'info');
+  if (room.players.length === 2) {
+    addLogToRoom(room, `🎮 Game started! Each player has 2 influence cards. ${getDisplayName(room, room.players[0])} starts with 1 coin, ${getDisplayName(room, room.players[1])} starts with 2 coins.`, 'info');
+  } else {
+    addLogToRoom(room, `🎮 Game started! Each player has 2 influence cards and 2 coins.`, 'info');
+  }
   addLogToRoom(room, `🎲 ${getDisplayName(room, room.players[0])} will go first!`, 'info');
   addLogToRoom(room, `--- ${getDisplayName(room, room.players[0])}'s turn ---`, 'info');
   return { success: true };
@@ -1141,6 +1149,13 @@ function performAction(room, socketId, action, targetId) {
   if (room.actionInProgress && room.actionInProgress.responseTimeout) {
     clearTimeout(room.actionInProgress.responseTimeout);
     room.actionInProgress.responseTimeout = null;
+  }
+
+  // Deduct assassinate cost immediately (before blocking/challenging)
+  // This is different from other actions - assassinate costs 3 coins upfront
+  if (action === 'assassinate' && actionData.cost) {
+    player.coins -= actionData.cost;
+    if (player.gameStats) player.gameStats.coinsSpent += actionData.cost;
   }
 
   room.actionInProgress = {
@@ -1716,8 +1731,8 @@ function resolveAction(room) {
     }
   }
 
-  // Apply costs
-  if (actionData.cost) {
+  // Apply costs (skip assassinate as it was already deducted upfront)
+  if (actionData.cost && action.action !== 'assassinate') {
     actor.coins -= actionData.cost;
     if (actor.gameStats) actor.gameStats.coinsSpent += actionData.cost;
   }
@@ -1846,36 +1861,40 @@ function completeExchange(room, playerId, keepIndices) {
     return { success: false, error: 'Not in exchange mode' };
   }
 
-  const totalCards = player.influences.length + player.exchangeCards.length;
-  const cardsToKeep = player.influences.length; // Keep same number as current influences
+  // Separate revealed (dead) and unrevealed (alive) influences
+  const revealedInfluences = player.influences.filter(inf => inf.revealed);
+  const unrevealedInfluences = player.influences.filter(inf => !inf.revealed);
+  
+  // Total cards to choose from: unrevealed influences + drawn cards
+  const exchangeableCards = [
+    ...unrevealedInfluences,
+    ...player.exchangeCards.map(card => ({ card, revealed: false }))
+  ];
+  
+  // Player must keep the same number of unrevealed cards they started with
+  const cardsToKeep = unrevealedInfluences.length;
 
   if (!Array.isArray(keepIndices) || keepIndices.length !== cardsToKeep) {
     return { success: false, error: `Must choose exactly ${cardsToKeep} cards to keep` };
   }
 
-  // Combine current influences and drawn cards into a uniform format
-  const allCards = [
-    ...player.influences, // These are already objects with {card, revealed}
-    ...player.exchangeCards.map(card => ({ card, revealed: false })) // Convert drawn cards to objects
-  ];
-  
   // Validate indices
-  if (keepIndices.some(idx => idx < 0 || idx >= allCards.length)) {
+  if (keepIndices.some(idx => idx < 0 || idx >= exchangeableCards.length)) {
     return { success: false, error: 'Invalid card indices' };
   }
 
   // Keep the selected cards
-  const keptCards = keepIndices.map(idx => allCards[idx]);
+  const keptCards = keepIndices.map(idx => exchangeableCards[idx]);
   
   // Return the rest to deck (just the card names)
-  const returnedCards = allCards
+  const returnedCards = exchangeableCards
     .filter((_, idx) => !keepIndices.includes(idx))
     .map(cardObj => cardObj.card);
   room.deck.push(...returnedCards);
   fisherYatesShuffle(room.deck);
 
-  // Update player's influences
-  player.influences = keptCards;
+  // Update player's influences: revealed influences + chosen cards
+  player.influences = [...revealedInfluences, ...keptCards];
   player.exchangeCards = null;
   player.mustChooseExchange = false;
 
@@ -4133,6 +4152,7 @@ io.on('connection', (socket) => {
         state: room.state,
         useInquisitor: room.useInquisitor,
         allowSpectators: room.allowSpectators,
+        allowLargeGames: room.allowLargeGames,
         chatMode: room.chatMode,
         anonymousMode: room.anonymousMode,
         players: room.players.map(p => ({

@@ -6,6 +6,7 @@
   <title>Lobby - Coup</title>
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <script src="/profanity-filter.js"></script>
+  <script src="/avatar-helper.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
@@ -525,11 +526,13 @@
         const statusText = user.inGame ? 'In Game' : 'In Lobby';
         const eloDisplay = user.elo ? `<span class="text-base text-yellow-500 font-bold">${user.elo}</span>` : '';
         
+        const isImageAvatar = avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
+        
         return `
           <div class="online-user p-2 flex items-center justify-between">
             <div class="flex items-center gap-2 flex-1 min-w-0">
-              <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
-                ${avatar}
+              <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
+                ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
               </div>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center">
@@ -562,14 +565,15 @@
         : `<span class="font-bold text-blue-400">${data.username}</span>`;
       
       const avatar = data.avatar || '👤';
+      const isImageAvatar = avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
       
       // Apply profanity filter
       const filteredMessage = filterProfanity(data.message);
       
       messageEl.innerHTML = `
         <div class="p-2 flex gap-2">
-          <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
-            ${avatar}
+          <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
+            ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
           </div>
           <div class="flex-1 min-w-0">
             <div>

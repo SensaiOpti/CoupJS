@@ -105,18 +105,25 @@
       <!-- Avatar Selection -->
       <div class="stat-card rounded-lg p-6">
         <h3 class="text-xl font-bold mb-1 flex items-center gap-2">Profile Avatar</h3>
-        <p class="text-gray-400 text-sm mb-5">Choose an icon to represent you throughout the site.</p>
+        <p class="text-gray-400 text-sm mb-5">Choose an icon or portrait to represent you throughout the site.</p>
         
         <!-- Current Avatar Preview -->
         <div class="flex items-center gap-4 mb-4">
           <div class="text-sm text-gray-400">Current Avatar:</div>
-          <div id="currentAvatar" class="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center text-3xl">
+          <div id="currentAvatar" class="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center text-3xl overflow-hidden">
             👤
           </div>
         </div>
         
-        <!-- Avatar Options -->
-        <div id="avatarOptions" class="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-2">
+        <!-- Emoji Avatars -->
+        <h4 class="text-lg font-semibold mb-2">Emoji Icons</h4>
+        <div id="avatarOptions" class="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-6">
+          <!-- Populated by JS -->
+        </div>
+        
+        <!-- Image Avatars -->
+        <h4 class="text-lg font-semibold mb-2">Portrait Avatars</h4>
+        <div id="imageAvatarOptions" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
           <!-- Populated by JS -->
         </div>
       </div>
@@ -404,19 +411,40 @@
         </div>
       `).join('');
 
-      // Avatar options
+      // Avatar options - Emoji
       const avatarContainer = document.getElementById('avatarOptions');
       const selectedAvatar = settings.avatar || '👤';
       
       avatarContainer.innerHTML = AVATAR_OPTIONS.map(avatar => `
         <div class="avatar-option w-12 h-12 rounded-full flex items-center justify-center text-2xl cursor-pointer transition-all hover:scale-110 ${avatar === selectedAvatar ? 'selected ring-2 ring-blue-500' : 'bg-gray-700 hover:bg-gray-600'}"
-             onclick="selectAvatar('${avatar}')">
+             onclick="selectAvatar('${avatar}', 'emoji')">
           ${avatar}
         </div>
       `).join('');
       
+      // Load image avatars
+      fetch('/api/avatars/images')
+        .then(res => res.json())
+        .then(data => {
+          const imageContainer = document.getElementById('imageAvatarOptions');
+          if (data.images && data.images.length > 0) {
+            imageContainer.innerHTML = data.images.map(img => `
+              <div class="avatar-option w-16 h-16 rounded-full overflow-hidden cursor-pointer transition-all hover:scale-110 ${img === selectedAvatar ? 'selected ring-2 ring-blue-500' : 'ring-2 ring-gray-600'}"
+                   onclick="selectAvatar('${img}', 'image')">
+                <img src="/images/avatars/${img}" alt="Avatar" class="w-full h-full object-cover">
+              </div>
+            `).join('');
+          } else {
+            imageContainer.innerHTML = '<p class="text-gray-500 text-sm col-span-full">No portrait avatars available yet.</p>';
+          }
+        })
+        .catch(err => {
+          console.error('Failed to load avatar images:', err);
+          document.getElementById('imageAvatarOptions').innerHTML = '<p class="text-gray-500 text-sm col-span-full">Failed to load portrait avatars.</p>';
+        });
+      
       // Update current avatar preview
-      document.getElementById('currentAvatar').textContent = selectedAvatar;
+      updateAvatarPreview(selectedAvatar);
 
       // Bio field
       const bioInput = document.getElementById('bioInput');
@@ -473,17 +501,36 @@
       event.currentTarget.classList.add('selected');
     }
 
-    function selectAvatar(avatar) {
+    function selectAvatar(avatar, type) {
       currentSettings.avatar = avatar;
       document.querySelectorAll('.avatar-option').forEach(el => {
         el.classList.remove('selected', 'ring-2', 'ring-blue-500');
-        el.classList.add('bg-gray-700', 'hover:bg-gray-600');
+        if (el.querySelector('img')) {
+          el.classList.add('ring-2', 'ring-gray-600');
+        } else {
+          el.classList.add('bg-gray-700', 'hover:bg-gray-600');
+        }
       });
       event.currentTarget.classList.add('selected', 'ring-2', 'ring-blue-500');
-      event.currentTarget.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+      event.currentTarget.classList.remove('bg-gray-700', 'hover:bg-gray-600', 'ring-gray-600');
       
       // Update preview
-      document.getElementById('currentAvatar').textContent = avatar;
+      updateAvatarPreview(avatar);
+    }
+    
+    function updateAvatarPreview(avatar) {
+      const preview = document.getElementById('currentAvatar');
+      if (isImageAvatar(avatar)) {
+        preview.innerHTML = `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover rounded-full">`;
+      } else {
+        preview.innerHTML = '';
+        preview.textContent = avatar;
+      }
+    }
+    
+    function isImageAvatar(avatar) {
+      // Check if avatar is a filename (has extension) vs emoji
+      return avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
     }
 
     function updateCharCount() {

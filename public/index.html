@@ -6,6 +6,7 @@
   <title>Coup - Multiplayer Card Game</title>
   <script src="https://cdn.socket.io/4.5.4/socket.io.min.js"></script>
   <script src="/profanity-filter.js"></script>
+  <script src="/avatar-helper.js"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body {
@@ -179,10 +180,69 @@
       cursor: pointer;
       user-select: none;
     }
+    
+    /* Card zoom modal */
+    .card-zoom-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      cursor: pointer;
+      animation: fadeIn 0.2s ease-out;
+    }
+    
+    .card-zoom-container {
+      max-width: 90vw;
+      max-height: 90vh;
+      cursor: default;
+      animation: zoomIn 0.2s ease-out;
+    }
+    
+    .card-zoom-image {
+      max-width: 100%;
+      max-height: 90vh;
+      width: auto;
+      height: auto;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+    
+    @keyframes zoomIn {
+      from {
+        transform: scale(0.8);
+        opacity: 0;
+      }
+      to {
+        transform: scale(1);
+        opacity: 1;
+      }
+    }
+    
+    .card-clickable {
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    
+    .card-clickable:hover {
+      transform: scale(1.05);
+    }
   </style>
 </head>
 <body>
   <div id="app"></div>
+  
+  <!-- Card Zoom Modal -->
+  <div id="cardZoomModal" class="card-zoom-overlay" style="display: none;" onclick="closeCardZoom()">
+    <div class="card-zoom-container" onclick="event.stopPropagation()">
+      <img id="cardZoomImage" class="card-zoom-image" src="" alt="Card" />
+    </div>
+  </div>
 
   <script>
     // Game state
@@ -694,12 +754,13 @@
       };
       
       if (settingsJSON) {
+        // Always clear settings first to prevent stuck state
+        localStorage.removeItem('coupGameSettings');
         try {
           settings = JSON.parse(settingsJSON);
-          // Clear settings after reading
-          localStorage.removeItem('coupGameSettings');
         } catch (e) {
           console.error('Error parsing game settings:', e);
+          // Use default settings on parse error
         }
       }
       
@@ -1159,6 +1220,30 @@
       
       // Refocus the input so user can continue typing
       input.focus();
+    }
+
+    // Card zoom functions
+    function openCardZoom(cardName) {
+      const modal = document.getElementById('cardZoomModal');
+      const image = document.getElementById('cardZoomImage');
+      image.src = getCardImagePath(cardName);
+      image.alt = cardName;
+      modal.style.display = 'flex';
+      
+      // Close on ESC key
+      document.addEventListener('keydown', handleCardZoomEscape);
+    }
+    
+    function closeCardZoom() {
+      const modal = document.getElementById('cardZoomModal');
+      modal.style.display = 'none';
+      document.removeEventListener('keydown', handleCardZoomEscape);
+    }
+    
+    function handleCardZoomEscape(event) {
+      if (event.key === 'Escape') {
+        closeCardZoom();
+      }
     }
 
     // Authentication functions
@@ -1834,30 +1919,29 @@
               
               <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
                 <div>
-                  <h3 class="text-xl mb-4 flex items-center justify-between">
-                    <div class="flex items-center gap-2">
-                      <span>Players</span>
-                      <span class="text-sm text-gray-400">${players.length}${allowLargeGames ? '' : '/6'}</span>
-                    </div>
+                  <h3 class="text-xl mb-2 flex items-center justify-between">
+                    <span>Players</span>
                     ${!previewMode && isSpectator && !roomIsPlaying ? `
                       <button 
                         onclick="switchToPlayer()" 
-                        class="text-sm bg-red-600 hover:bg-red-700 px-3 py-1 rounded ${players.length >= 6 ? 'opacity-50 cursor-not-allowed' : ''}"
-                        ${players.length >= 6 ? 'disabled' : ''}
+                        class="text-sm bg-red-600 hover:bg-red-700 px-3 py-1 rounded ${players.length >= (allowLargeGames ? 10 : 6) ? 'opacity-50 cursor-not-allowed' : ''}"
+                        ${players.length >= (allowLargeGames ? 10 : 6) ? 'disabled' : ''}
                       >
                         Join as Player
                       </button>
                     ` : ''}
                   </h3>
+                  <div class="text-sm text-gray-400 mb-4">${players.length}/${allowLargeGames ? '10' : '6'}</div>
                   <div class="space-y-1">
                     ${players.map(player => {
                       const avatar = player.avatar || '👤';
+                      const isImageAvatar = avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
                       const eloRating = player.stats ? player.stats.elo_rating : null;
                       return `
                         <div class="p-2 flex items-center justify-between">
                           <div class="flex items-center gap-2 flex-1 min-w-0">
-                            <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
-                              ${avatar}
+                            <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
+                              ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
                             </div>
                             <span class="font-semibold text-sm">${player.name}</span>
                           </div>
@@ -1874,11 +1958,8 @@
 
                 ${allowSpectators ? `
                   <div>
-                    <h3 class="text-xl mb-4 flex items-center justify-between">
-                      <div class="flex items-center gap-2">
-                        <span>Spectators</span>
-                        <span class="text-sm text-gray-400">${spectators.length}</span>
-                      </div>
+                    <h3 class="text-xl mb-2 flex items-center justify-between">
+                      <span>Spectators</span>
                       ${!previewMode && !isSpectator && !roomIsPlaying ? `
                         <button 
                           onclick="switchToSpectator()" 
@@ -1888,6 +1969,7 @@
                         </button>
                       ` : ''}
                     </h3>
+                    <div class="text-sm text-gray-400 mb-4">${spectators.length}</div>
                     <div class="space-y-1">
                       ${spectators.map(spectator => `
                         <div class="p-2 flex items-center justify-between">
@@ -1992,6 +2074,7 @@
                 <div class="grid grid-cols-2 gap-4 mb-6">
                   ${players.map(player => {
                     const avatar = anonymousMode ? '🎭' : (player.avatar || '👤');
+                    const isImageAvatar = !anonymousMode && avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
                     
                     return `
                     <div class="bg-gray-800 rounded-lg p-4 ${player.id === currentPlayerId ? 'ring-2 ring-red-500 pulse-ring' : ''} ${!player.alive ? 'eliminate' : ''} ${player.disconnected ? 'opacity-75' : ''}">
@@ -1999,8 +2082,8 @@
                         <div class="flex-1">
                           <div class="flex items-center gap-2 mb-1">
                             ${!anonymousMode ? `
-                              <div class="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center text-base flex-shrink-0">
-                                ${avatar}
+                              <div class="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-base'} flex-shrink-0">
+                                ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
                               </div>
                             ` : ''}
                             <h3 class="font-bold text-lg">
@@ -2032,16 +2115,23 @@
                             }
                           }
                           
+                          // Determine if card is clickable for zoom
+                          const isZoomable = shouldShowCard; // Can zoom if card is visible to you
+                          const zoomClickHandler = isZoomable && cardName !== 'back' ? `onclick="openCardZoom('${cardName}')"` : '';
+                          const zoomClass = isZoomable && cardName !== 'back' ? 'card-clickable' : '';
+                          
                           return `
                             <div class="relative flex-1 ${influence.revealed ? `bg-red-900 border-2 border-red-600 ${revealAnimClass}` : 'bg-gray-700'} rounded p-2 text-center ${isSpectator && !influence.revealed ? 'cursor-pointer hover:bg-gray-600' : ''}" ${isSpectator && !influence.revealed ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : ''}>
                               ${influence.revealed ? `
-                                <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded opacity-50" />
-                                <div class="absolute inset-0 flex items-center justify-center">
+                                <div class="${zoomClass}" ${zoomClickHandler}>
+                                  <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded opacity-50" />
+                                </div>
+                                <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
                                   <div class="text-xs font-bold text-red-300 bg-red-900 bg-opacity-90 px-2 py-1 rounded">LOST</div>
                                 </div>
                               ` : shouldShowCard ? `
-                                <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded" />
-                                ${isSpectator && spectatorRevealed ? '<div class="absolute top-1 right-1 text-blue-400 text-xs">👁️</div>' : ''}
+                                <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded ${zoomClass}" ${zoomClickHandler} />
+                                ${isSpectator && spectatorRevealed ? '<div class="absolute top-1 right-1 text-blue-400 text-xs pointer-events-none">👁️</div>' : ''}
                               ` : `
                                 <img src="${getCardImagePath('back')}" alt="Hidden card" class="w-full h-auto rounded" />
                                 ${isSpectator ? '<div class="absolute bottom-1 left-0 right-0 text-xs text-gray-400 text-center">Click to peek</div>' : ''}
@@ -2163,10 +2253,12 @@
                         ${!influence.revealed ? `
                           <button 
                             onclick="revealInfluence(${idx})" 
+                            ondblclick="event.stopPropagation(); openCardZoom('${influence.card}')"
                             class="bg-red-600 hover:bg-red-700 p-4 rounded text-center flex-1 max-w-xs"
                           >
                             <img src="${getCardImagePath(influence.card)}" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
                             <div class="text-sm font-bold">Reveal this card</div>
+                            <div class="text-xs text-gray-400 mt-1">Double-click to zoom</div>
                           </button>
                         ` : ''}
                       `).join('')}
@@ -2187,6 +2279,7 @@
                         return `
                         <button 
                           onclick="toggleExchangeCard(${idx})" 
+                          ondblclick="event.stopPropagation(); openCardZoom('${cardName}')"
                           class="p-3 rounded text-center transition-all ${
                             selectedExchangeCards.includes(idx) 
                               ? 'bg-teal-600 ring-4 ring-teal-400' 
@@ -2197,6 +2290,7 @@
                           <div class="text-sm font-bold">
                             ${selectedExchangeCards.includes(idx) ? '✓ Keep' : 'Click to keep'}
                           </div>
+                          <div class="text-xs text-gray-400 mt-1">Double-click to zoom</div>
                         </button>
                       `;
                       }).join('')}
@@ -2225,10 +2319,12 @@
                         ${!influence.revealed ? `
                           <button 
                             onclick="showCardToExaminer(${idx})" 
+                            ondblclick="event.stopPropagation(); openCardZoom('${influence.card}')"
                             class="bg-yellow-600 hover:bg-yellow-700 p-4 rounded text-center flex-1 max-w-xs"
                           >
                             <img src="${getCardImagePath(influence.card)}" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
                             <div class="text-sm font-bold">Show this card</div>
+                            <div class="text-xs text-gray-400 mt-1">Double-click to zoom</div>
                           </button>
                         ` : ''}
                       `).join('')}
@@ -2241,8 +2337,9 @@
                     <h3 class="text-xl font-bold mb-4 text-purple-300">Examine ${examineTarget.name}'s Card</h3>
                     ${myPlayer.examinedCard ? `
                       <p class="mb-4 text-purple-100">You see one of ${examineTarget.name}'s cards:</p>
-                      <div class="bg-purple-800 rounded p-4 mb-4 text-center card-reveal max-w-xs mx-auto">
+                      <div class="bg-purple-800 rounded p-4 mb-4 text-center card-reveal max-w-xs mx-auto cursor-pointer card-clickable" onclick="openCardZoom('${myPlayer.examinedCard}')">
                         <img src="${getCardImagePath(myPlayer.examinedCard)}" alt="${myPlayer.examinedCard}" class="w-full h-auto rounded" />
+                        <div class="text-xs text-gray-400 mt-2">Click to zoom</div>
                       </div>
                       <p class="mb-4 text-purple-100">Do you want to force ${examineTarget.name} to exchange this card for a new one from the deck?</p>
                       <div class="flex gap-3">
@@ -2438,6 +2535,7 @@
                         // Chat message styling
                         const isSpectatorChat = log.isSpectator;
                         const avatar = anonymousMode ? '🎭' : (log.avatar || '👤');
+                        const isImageAvatar = !anonymousMode && avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
                         // Non-clickable names - white for players, light blue for spectators
                         const nameColor = isSpectatorChat ? 'text-blue-300' : 'text-white';
                         const nameHtml = `<span class="font-bold ${nameColor}">${log.playerName}</span>`;
@@ -2449,8 +2547,8 @@
                           <div class="text-sm fade-in">
                             <div class="p-2 flex gap-2">
                               ${!anonymousMode ? `
-                                <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center text-xl flex-shrink-0">
-                                  ${avatar}
+                                <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
+                                  ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
                                 </div>
                               ` : ''}
                               <div class="flex-1 min-w-0">

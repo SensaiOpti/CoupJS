@@ -166,6 +166,30 @@ app.post('/api/user/deck-preference', (req, res) => {
   }
 });
 
+// GET /api/avatars/images - Get list of available avatar images
+app.get('/api/avatars/images', (req, res) => {
+  const fs = require('fs');
+  const path = require('path');
+  const avatarDir = path.join(__dirname, 'public', 'images', 'avatars');
+  
+  try {
+    if (!fs.existsSync(avatarDir)) {
+      return res.json({ images: [] });
+    }
+    
+    const files = fs.readdirSync(avatarDir);
+    const imageFiles = files.filter(file => {
+      const ext = path.extname(file).toLowerCase();
+      return ['.png', '.jpg', '.jpeg', '.gif', '.webp'].includes(ext);
+    });
+    
+    res.json({ images: imageFiles });
+  } catch (error) {
+    console.error('Error reading avatar directory:', error);
+    res.status(500).json({ error: 'Failed to load avatar images' });
+  }
+});
+
 // GET /api/user/settings - Get current user settings
 app.get('/api/user/settings', (req, res) => {
   const token = req.headers.authorization?.split(' ')[1] || req.query.token;
@@ -220,8 +244,9 @@ app.post('/api/user/settings', (req, res) => {
     // Profanity filter (boolean to integer)
     const newProfanityFilter = profanityFilter === true ? 1 : 0;
     
-    // Avatar (must be a valid emoji/string, default to existing)
-    const newAvatar = typeof avatar === 'string' && avatar.length > 0 && avatar.length <= 10 ? avatar : user.avatar || '👤';
+    // Avatar validation - allow emoji (short) or image filenames (longer)
+    const isValidAvatar = typeof avatar === 'string' && avatar.length > 0 && avatar.length <= 100;
+    const newAvatar = isValidAvatar ? avatar : user.avatar || '👤';
     
     db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ?, email = ?, profanity_filter = ?, avatar = ? WHERE id = ?')
       .run(JSON.stringify(newPrivacy), newDeck, newBio, newEmail, newProfanityFilter, newAvatar, verification.user.id);
@@ -2393,6 +2418,7 @@ function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedU
     userId: authenticatedUser ? authenticatedUser.id : null,
     username: authenticatedUser ? authenticatedUser.username : null,
     isGuest: !authenticatedUser,
+    avatar: authenticatedUser ? (authenticatedUser.avatar || '👤') : '👤',
     stats: stats,
     coins: 2,
     influences: [],
@@ -4161,6 +4187,7 @@ io.on('connection', (socket) => {
           username: p.username || null,
           isGuest: p.isGuest === true,
           userId: p.userId || null,
+          avatar: p.avatar || '👤',
           stats: p.stats || null,
           isMe: false
         })),

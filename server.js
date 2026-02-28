@@ -1090,7 +1090,14 @@ function startGame(room) {
       // Exchange/Examine stats
       influenceExchanged: 0,
       influenceExamined: 0,
-      influenceForced: 0
+      influenceForced: 0,
+      
+      // Achievement-specific tracking
+      playersAssassinated: new Set(), // Track which players were successfully assassinated
+      cardsClaimed: new Set(), // Track which cards were claimed during game
+      playersExamined: new Set(), // Track which players were successfully examined
+      playersStolenFrom: new Set(), // Track which players were successfully stolen from
+      startingCards: [...player.influences.map(inf => inf.card)] // Store starting cards for False Face achievement
     };
   });
 
@@ -1198,20 +1205,25 @@ function performAction(room, socketId, action, targetId) {
     respondedCount: 0
   };
 
-  // Generate appropriate log message
+  // Generate appropriate log message and track card claims
   if (action === 'foreignAid') {
     addLogToRoom(room, `${getDisplayName(room, player)} takes Foreign Aid`, 'action', 'ForeignAid');
   } else if (action === 'tax') {
     addLogToRoom(room, `${getDisplayName(room, player)} claims to be the Duke and uses Tax (+3 coins)`, 'action', 'Duke');
+    if (player.gameStats) player.gameStats.cardsClaimed.add('Duke');
   } else if (action === 'assassinate') {
     addLogToRoom(room, `${getDisplayName(room, player)} claims to be the Assassin and attempts to assassinate ${getDisplayName(room, targetPlayer)}`, 'action', 'Assassin');
+    if (player.gameStats) player.gameStats.cardsClaimed.add('Assassin');
   } else if (action === 'steal') {
     addLogToRoom(room, `${getDisplayName(room, player)} claims to be the Captain and attempts to steal from ${getDisplayName(room, targetPlayer)}`, 'action', 'Captain');
+    if (player.gameStats) player.gameStats.cardsClaimed.add('Captain');
   } else if (action === 'exchange') {
     const card = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
     addLogToRoom(room, `${getDisplayName(room, player)} claims to be the ${card} and uses Exchange`, 'action', card);
+    if (player.gameStats) player.gameStats.cardsClaimed.add(card);
   } else if (action === 'examine') {
     addLogToRoom(room, `${getDisplayName(room, player)} claims to be the Inquisitor and examines ${getDisplayName(room, targetPlayer)}`, 'action', 'Inquisitor');
+    if (player.gameStats) player.gameStats.cardsClaimed.add('Inquisitor');
   }
 
   // If action can be challenged or blocked, wait for responses
@@ -1502,6 +1514,11 @@ function handleBlock(room, blockerId, blockCard) {
   const action = room.actionInProgress;
   const blocker = getPlayerById(room, blockerId);
   
+  // Track card claims for achievements
+  if (blocker && blocker.gameStats) {
+    blocker.gameStats.cardsClaimed.add(blockCard);
+  }
+  
   if (action.action === 'foreignAid') {
     addLogToRoom(room, `${getDisplayName(room, blocker)} claims to be the ${blockCard} and blocks Foreign Aid`, 'block', blockCard);
   } else {
@@ -1790,17 +1807,23 @@ function resolveAction(room) {
         const stolen = Math.min(2, target.coins);
         target.coins -= stolen;
         actor.coins += stolen;
-        if (actor.gameStats) actor.gameStats.coinsEarned += stolen;
-        if (actor.gameStats) actor.gameStats.coinsStolen += stolen;
+        if (actor.gameStats) {
+          actor.gameStats.coinsEarned += stolen;
+          actor.gameStats.coinsStolen += stolen;
+          actor.gameStats.playersStolenFrom.add(target.userId || target.id);
+          actor.gameStats.actionsPerformed += 1;
+        }
         if (target.gameStats) target.gameStats.coinsLost += stolen;
-        if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
         addLogToRoom(room, `${getDisplayName(room, actor)} steals ${stolen} coin${stolen !== 1 ? 's' : ''} from ${getDisplayName(room, target)}`, 'success', 'Captain');
       }
       break;
     case 'assassinate':
       if (target) {
-        if (actor.gameStats) actor.gameStats.assassinationsSucceeded += 1;
-        if (actor.gameStats) actor.gameStats.actionsPerformed += 1;
+        if (actor.gameStats) {
+          actor.gameStats.assassinationsSucceeded += 1;
+          actor.gameStats.playersAssassinated.add(target.userId || target.id);
+          actor.gameStats.actionsPerformed += 1;
+        }
         addLogToRoom(room, `${getDisplayName(room, target)} must lose an influence`, 'info');
         loseInfluence(room, target.id, 1, action.playerId);
       }
@@ -1979,6 +2002,7 @@ function completeExamine(room, playerId, forceExchange) {
   // Track examine stat
   if (player.gameStats) {
     player.gameStats.influenceExamined += 1;
+    player.gameStats.playersExamined.add(target.userId || target.id);
   }
 
   if (forceExchange && room.deck.length > 0 && player.examinedCardIndex !== undefined) {
@@ -2308,6 +2332,11 @@ function saveGameResults(room) {
       );
       
       db.saveDatabase();
+      
+      // Check game-specific achievements for winners
+      if (isWinner) {
+        checkGameSpecificAchievements(room, player);
+      }
     });
     
     // Prepare player data for game history
@@ -2351,6 +2380,103 @@ function saveGameResults(room) {
     
   } catch (error) {
     console.error('Error saving game results:', error);
+  }
+}
+
+/**
+ * Check and award game-specific challenge achievements
+ */
+function checkGameSpecificAchievements(room, winner) {
+  if (!winner.userId || !winner.gameStats) return;
+  
+  const playerCount = room.players.length;
+  const stats = winner.gameStats;
+  
+  // Convert Sets to arrays for counting
+  const playersAssassinated = Array.from(stats.playersAssassinated || []);
+  const playersStolenFrom = Array.from(stats.playersStolenFrom || []);
+  const playersExamined = Array.from(stats.playersExamined || []);
+  const cardsClaimed = Array.from(stats.cardsClaimed || []);
+  
+  const newAchievements = [];
+  
+  // 1. Bougie - Spend 25+ coins in a single game
+  if (stats.coinsSpent >= 25) {
+    newAchievements.push('bougie');
+  }
+  
+  // 2. License to Kill - Assassinate every opponent in 4+ player game
+  if (playerCount >= 4 && playersAssassinated.length >= playerCount - 1) {
+    newAchievements.push('license_to_kill');
+  }
+  
+  // 3. False Face - Win without ever claiming either starting card
+  if (stats.startingCards && stats.startingCards.length === 2) {
+    const claimedStartingCard = cardsClaimed.some(card => stats.startingCards.includes(card));
+    if (!claimedStartingCard) {
+      newAchievements.push('false_face');
+    }
+  }
+  
+  // 4. Shrouded in Mystery - Win without claiming ANY card
+  // This means only using Income, Foreign Aid, and Coup (no character actions/blocks)
+  if (cardsClaimed.length === 0) {
+    newAchievements.push('shrouded_in_mystery');
+  }
+  
+  // 5. Polyglot - Win while claiming each card at least once
+  // Need at least 5 different cards (Duke, Assassin, Captain, Contessa, and Ambassador OR Inquisitor)
+  const requiredCards = ['Duke', 'Assassin', 'Captain', 'Contessa'];
+  const hasAllRequired = requiredCards.every(card => cardsClaimed.includes(card));
+  const hasAmbassadorOrInquisitor = cardsClaimed.includes('Ambassador') || cardsClaimed.includes('Inquisitor');
+  if (hasAllRequired && hasAmbassadorOrInquisitor) {
+    newAchievements.push('polyglot');
+  }
+  
+  // 6. Xenophobic - Block 4+ Foreign Aid and win
+  if (stats.foreignaidblockSucceeded >= 4) {
+    newAchievements.push('xenophobic');
+  }
+  
+  // 7. Beholder - Examine every opponent in 4+ player game
+  if (playerCount >= 4 && playersExamined.length >= playerCount - 1) {
+    newAchievements.push('beholder');
+  }
+  
+  // 8. Jesse James - Steal from every player in 4+ player game
+  if (playerCount >= 4 && playersStolenFrom.length >= playerCount - 1) {
+    newAchievements.push('jesse_james');
+  }
+  
+  // 9. Many-Faced God - Exchange 4+ times in 4+ player game
+  if (playerCount >= 4 && stats.influenceExchanged >= 4) {
+    newAchievements.push('many_faced_god');
+  }
+  
+  // 10. Undying - Block 3+ assassinations in 4+ player game
+  if (playerCount >= 4 && stats.contessaSucceeded >= 3) {
+    newAchievements.push('undying');
+  }
+  
+  // Save new achievements to achievement_unlocks table
+  if (newAchievements.length > 0) {
+    newAchievements.forEach(achievementId => {
+      try {
+        // Check if achievement already exists
+        const existing = db.prepare('SELECT * FROM achievement_unlocks WHERE user_id = ? AND achievement_id = ?')
+          .get(winner.userId, achievementId);
+        
+        if (!existing) {
+          db.prepare('INSERT INTO achievement_unlocks (user_id, achievement_id) VALUES (?, ?)')
+            .run(winner.userId, achievementId);
+          console.log(`Achievement unlocked for user ${winner.userId}: ${achievementId}`);
+        }
+      } catch (error) {
+        console.error(`Error saving achievement ${achievementId}:`, error);
+      }
+    });
+    
+    db.saveDatabase();
   }
 }
 
@@ -2759,7 +2885,7 @@ function calculatePlaystyle(stats) {
 }
 
 // Helper: Calculate achievements
-function calculateAchievements(stats) {
+function calculateAchievements(stats, userId) {
   const achievements = [];
   
   // === DUKE ACHIEVEMENTS (Tax) ===
@@ -3439,6 +3565,126 @@ function calculateAchievements(stats) {
     avgInfluences: avgInfluencesLost.toFixed(2)
   });
   
+  // NEW CHALLENGE ACHIEVEMENTS
+  // Query unlocked challenge achievements from achievement_unlocks table
+  const unlockedAchievements = new Set();
+  try {
+    const achievementRecords = db.prepare('SELECT achievement_id FROM achievement_unlocks WHERE user_id = ?').all(userId);
+    achievementRecords.forEach(record => unlockedAchievements.add(record.achievement_id));
+  } catch (error) {
+    console.error('Error querying user achievements:', error);
+  }
+  
+  // Bougie - Spend 25+ coins in a single game
+  achievements.push({
+    id: 'bougie',
+    name: 'Bougie',
+    icon: '💎',
+    description: 'Spend 25+ coins in a single game',
+    unlocked: unlockedAchievements.has('bougie'),
+    progress: unlockedAchievements.has('bougie') ? 25 : 0,
+    target: 25
+  });
+  
+  // License to Kill - Assassinate every opponent in 4+ player game and win
+  achievements.push({
+    id: 'license_to_kill',
+    name: 'License to Kill',
+    icon: '🔪',
+    description: 'In a 4+ player game, successfully assassinate every opponent and win',
+    unlocked: unlockedAchievements.has('license_to_kill'),
+    progress: unlockedAchievements.has('license_to_kill') ? 1 : 0,
+    target: 1
+  });
+  
+  // False Face - Win without ever claiming either of your starting cards
+  achievements.push({
+    id: 'false_face',
+    name: 'False Face',
+    icon: '🎭',
+    description: 'Win without ever claiming either of your real cards',
+    unlocked: unlockedAchievements.has('false_face'),
+    progress: unlockedAchievements.has('false_face') ? 1 : 0,
+    target: 1
+  });
+  
+  // Shrouded in Mystery - Win without ever claiming ANY card
+  achievements.push({
+    id: 'shrouded_in_mystery',
+    name: 'Shrouded in Mystery',
+    icon: '🌫️',
+    description: 'Win without ever claiming any card (Income/Foreign Aid/Coup only)',
+    unlocked: unlockedAchievements.has('shrouded_in_mystery'),
+    progress: unlockedAchievements.has('shrouded_in_mystery') ? 1 : 0,
+    target: 1
+  });
+  
+  // Polyglot - Win while claiming each card at least once
+  achievements.push({
+    id: 'polyglot',
+    name: 'Polyglot',
+    icon: '🗣️',
+    description: 'Win while claiming each card at least once',
+    unlocked: unlockedAchievements.has('polyglot'),
+    progress: unlockedAchievements.has('polyglot') ? 1 : 0,
+    target: 1
+  });
+  
+  // Xenophobic - Block 4+ Foreign Aid and win
+  achievements.push({
+    id: 'xenophobic',
+    name: 'Xenophobic',
+    icon: '🚫',
+    description: 'Block 4+ Foreign Aid requests in a single game and win',
+    unlocked: unlockedAchievements.has('xenophobic'),
+    progress: unlockedAchievements.has('xenophobic') ? 4 : 0,
+    target: 4
+  });
+  
+  // Beholder - Examine every opponent in 4+ player game and win
+  achievements.push({
+    id: 'beholder',
+    name: 'Beholder',
+    icon: '👁️',
+    description: 'In a 4+ player game, successfully investigate every opponent and win',
+    unlocked: unlockedAchievements.has('beholder'),
+    progress: unlockedAchievements.has('beholder') ? 1 : 0,
+    target: 1
+  });
+  
+  // Jesse James - Steal from every opponent in 4+ player game and win
+  achievements.push({
+    id: 'jesse_james',
+    name: 'Jesse James',
+    icon: '🤠',
+    description: 'In a 4+ player game, steal successfully from every player and win',
+    unlocked: unlockedAchievements.has('jesse_james'),
+    progress: unlockedAchievements.has('jesse_james') ? 1 : 0,
+    target: 1
+  });
+  
+  // Many-Faced God - Exchange 4+ times and win in 4+ player game
+  achievements.push({
+    id: 'many_faced_god',
+    name: 'Many-Faced God',
+    icon: '🎪',
+    description: 'In a 4+ player game, exchange successfully 4+ times and win',
+    unlocked: unlockedAchievements.has('many_faced_god'),
+    progress: unlockedAchievements.has('many_faced_god') ? 4 : 0,
+    target: 4
+  });
+  
+  // Undying - Block 3+ assassination attempts and win in 4+ player game
+  achievements.push({
+    id: 'undying',
+    name: 'Undying',
+    icon: '🛡️',
+    description: 'In a 4+ player game, block assassination 3+ times and win',
+    unlocked: unlockedAchievements.has('undying'),
+    progress: unlockedAchievements.has('undying') ? 3 : 0,
+    target: 3
+  });
+  
   return achievements;
 }
 
@@ -3492,7 +3738,7 @@ app.get('/api/profile/:identifier', (req, res) => {
     const playstyle = calculatePlaystyle(stats);
     
     // Calculate achievements
-    const achievements = calculateAchievements(stats);
+    const achievements = calculateAchievements(stats, user.id);
     
     // Get existing unlock dates and record new ones
     try {

@@ -292,6 +292,22 @@
       opacity: 1;
       transform: translate(-50%, -50%) scale(1.05);
     }
+    
+    /* Mandatory coup glow animation */
+    @keyframes mandatoryCoupGlow {
+      0%, 100% {
+        box-shadow: 0 0 20px rgba(156, 163, 175, 0.6),
+                    0 0 40px rgba(156, 163, 175, 0.4);
+      }
+      50% {
+        box-shadow: 0 0 30px rgba(156, 163, 175, 0.8),
+                    0 0 60px rgba(156, 163, 175, 0.6);
+      }
+    }
+    
+    .mandatory-coup-glow {
+      animation: mandatoryCoupGlow 1.5s ease-in-out infinite;
+    }
   </style>
 </head>
 <body>
@@ -2484,44 +2500,63 @@
                       </div>
                     ` : ''}
                     
-                    <div class="grid grid-cols-2 gap-3">
-                      <button onclick="performAction('income')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
-                        Income (+1 💰)
-                      </button>
-                      <button onclick="performAction('foreignAid')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
-                        Foreign Aid (+2 💰)
-                      </button>
-                      <button onclick="performAction('tax')" class="bg-duke p-3 rounded text-white">
-                        Tax - Duke (+3 💰)
-                      </button>
-                      <button onclick="selectedTarget = 'steal'; render()" class="bg-captain p-3 rounded text-white">
-                        Steal - Captain
-                      </button>
-                      <button onclick="performAction('exchange')" class="${useInquisitor ? 'bg-inquisitor' : 'bg-ambassador'} p-3 rounded text-white">
-                        Exchange - ${useInquisitor ? 'Inquisitor' : 'Ambassador'}
-                      </button>
-                      ${useInquisitor ? `
-                        <button onclick="selectedTarget = 'examine'; render()" class="bg-inquisitor p-3 rounded text-white">
-                          Examine - Inquisitor
+                    <!-- Action Buttons -->
+                    <div class="space-y-3">
+                      <!-- Row 1: Income, Foreign Aid -->
+                      <div class="grid grid-cols-2 gap-3">
+                        <button onclick="performAction('income')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
+                          Income (+1 💰)
                         </button>
-                      ` : '<div></div>'}
-                      <button onclick="selectedTarget = 'assassinate'; render()" 
-                        class="bg-assassin p-3 rounded text-white ${myPlayer.coins < 3 ? 'opacity-50 cursor-not-allowed' : ''}"
-                        ${myPlayer.coins < 3 ? 'disabled' : ''}>
-                        Assassinate (3 💰)
-                      </button>
+                        <button onclick="performAction('foreignAid')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
+                          Foreign Aid (+2 💰)
+                        </button>
+                      </div>
+                      
+                      <!-- Row 2: Assassinate, Steal -->
+                      <div class="grid grid-cols-2 gap-3">
+                        <button onclick="selectedTarget = 'assassinate'; render()" 
+                          class="bg-assassin p-3 rounded text-white ${myPlayer.coins < 3 ? 'opacity-50 cursor-not-allowed' : ''}"
+                          ${myPlayer.coins < 3 ? 'disabled' : ''}>
+                          Assassinate (3 💰)
+                        </button>
+                        <button onclick="selectedTarget = 'steal'; render()" class="bg-captain p-3 rounded text-white">
+                          Steal
+                        </button>
+                      </div>
+                      
+                      <!-- Row 3: Character-specific actions -->
+                      ${useInquisitor ? `
+                        <!-- Inquisitor mode: 3 buttons -->
+                        <div class="grid grid-cols-3 gap-3">
+                          <button onclick="performAction('tax')" class="bg-duke p-3 rounded text-white">
+                            Tax (+3 💰)
+                          </button>
+                          <button onclick="selectedTarget = 'examine'; render()" class="bg-inquisitor p-3 rounded text-white">
+                            Examine
+                          </button>
+                          <button onclick="performAction('exchange')" class="bg-inquisitor p-3 rounded text-white">
+                            Exchange
+                          </button>
+                        </div>
+                      ` : `
+                        <!-- Ambassador mode: 2 buttons -->
+                        <div class="grid grid-cols-2 gap-3">
+                          <button onclick="performAction('tax')" class="bg-duke p-3 rounded text-white">
+                            Tax (+3 💰)
+                          </button>
+                          <button onclick="performAction('exchange')" class="bg-ambassador p-3 rounded text-white">
+                            Exchange
+                          </button>
+                        </div>
+                      `}
+                      
+                      <!-- Row 4: Coup (spans 2 columns) -->
                       <button onclick="selectedTarget = 'coup'; render()" 
-                        class="bg-red-900 hover:bg-red-950 p-3 rounded text-white ${!useInquisitor ? 'col-span-2' : ''} ${myPlayer.coins < 7 ? 'opacity-50 cursor-not-allowed' : ''}"
+                        class="w-full bg-gray-600 hover:bg-gray-700 p-3 rounded text-white ${myPlayer.coins < 7 ? 'opacity-50 cursor-not-allowed' : ''} ${myPlayer.coins >= 10 ? 'mandatory-coup-glow' : ''}"
                         ${myPlayer.coins < 7 ? 'disabled' : ''}>
-                        Coup (7 💰)
+                        ${myPlayer.coins >= 10 ? 'You must Coup with 10 coins!' : 'Coup (7 💰)'}
                       </button>
                     </div>
-                    
-                    ${myPlayer.coins >= 10 ? `
-                      <div class="mt-4 p-3 bg-red-900 border border-red-700 rounded text-center">
-                        You must Coup with 10+ coins!
-                      </div>
-                    ` : ''}
                   </div>
                 ` : ''}
 

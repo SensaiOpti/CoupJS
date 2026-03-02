@@ -493,6 +493,14 @@
         const percentage = Math.min(100, Math.round((achievement.progress / achievement.target) * 100));
         const isUnlocked = achievement.unlocked;
         
+        // Single-game achievements don't show progress (achieved in one game or not at all)
+        const singleGameAchievements = [
+          'bougie', 'license_to_kill', 'false_face', 'shrouded_in_mystery', 
+          'polyglot', 'xenophobic', 'beholder', 'jesse_james', 
+          'many_faced_god', 'undying'
+        ];
+        const isSingleGameAchievement = singleGameAchievements.includes(achievement.id);
+        
         // Build additional info text (only shown for locked achievements)
         let additionalInfo = '';
         if (achievement.id === 'sharpshooter') {
@@ -509,14 +517,14 @@
           <div class="${isUnlocked ? 'badge' : 'bg-gray-700 hover:scale-105'} rounded-lg p-4 text-center transition-transform cursor-pointer relative overflow-hidden" 
                style="${isUnlocked ? 'background: linear-gradient(to bottom right, #3b82f6, #a855f7);' : ''}"
                title="${achievement.description}">
-            ${!isUnlocked ? `
+            ${!isUnlocked && !isSingleGameAchievement ? `
               <div class="absolute inset-0 bg-gradient-to-r from-blue-600 to-purple-600 opacity-30" style="width: ${percentage}%"></div>
             ` : ''}
             <div class="relative z-10">
               <div class="text-4xl mb-2 ${!isUnlocked ? 'opacity-50' : ''}">${achievement.icon}</div>
               <div class="text-sm font-bold ${!isUnlocked ? 'text-gray-300' : ''}">${achievement.name}</div>
               <div class="text-xs text-gray-300 italic mt-1">${achievement.description}</div>
-              ${!isUnlocked ? `
+              ${!isUnlocked && !isSingleGameAchievement ? `
                 <div class="mt-2">
                   <div class="text-xs text-gray-400 mb-1">${achievement.progress} / ${achievement.target}</div>
                   <div class="w-full bg-gray-600 rounded-full h-2">
@@ -524,6 +532,8 @@
                   </div>
                   <div class="text-xs text-gray-400 mt-1">${percentage}%</div>
                 </div>
+                ${additionalInfo}
+              ` : !isUnlocked ? `
                 ${additionalInfo}
               ` : `
                 <div class="text-xs text-green-300 mt-2">✓ Unlocked${unlockedDate ? ` on ${unlockedDate}` : ''}</div>

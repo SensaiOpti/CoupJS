@@ -1491,6 +1491,13 @@ function handleChallenge(room, challengerId) {
     addLogToRoom(room, `${getDisplayName(room, actor)} doesn't have the ${actionData.card}! The challenge succeeds.`, 'success', actionData.card);
     addLogToRoom(room, `${getDisplayName(room, actor)} loses an influence and the action fails`, 'info');
     
+    // Refund assassination cost if the assassin claim was challenged
+    if (action.action === 'assassinate' && actionData.cost) {
+      actor.coins += actionData.cost;
+      if (actor.gameStats) actor.gameStats.coinsSpent -= actionData.cost;
+      addLogToRoom(room, `${getDisplayName(room, actor)}'s 3 coins are refunded`, 'info');
+    }
+    
     // Track stats
     if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
     if (actor.gameStats) {
@@ -1886,7 +1893,15 @@ function resolveAction(room) {
   }
 
   clearActionAndTimeout(room);
-  nextTurn(room);
+  
+  // Check if anyone needs to reveal an influence before advancing turn
+  const someoneRevealing = room.players.some(p => p.mustRevealInfluence);
+  if (!someoneRevealing) {
+    nextTurn(room);
+  } else {
+    // Emit state to ensure clients know someone is revealing
+    emitToRoom(room.code, 'gameState');
+  }
 }
 
 function loseInfluence(room, playerId, count = 1, causedByPlayerId = null) {
@@ -2087,6 +2102,19 @@ function revealInfluence(room, playerId, cardIndex) {
     
     addLogToRoom(room, `${getDisplayName(room, player)} is eliminated from the game!`, 'info');
     checkWinCondition(room);
+    
+    // After elimination, check if anyone else needs to reveal
+    // If not, advance the turn (unless game ended)
+    if (room.state !== 'ended') {
+      const othersWaiting = room.players.some(p => p.mustRevealInfluence);
+      if (!othersWaiting) {
+        if (room.actionInProgress) {
+          room.actionInProgress = null;
+        }
+        nextTurn(room);
+      }
+    }
+    
     return { success: true };
   }
 

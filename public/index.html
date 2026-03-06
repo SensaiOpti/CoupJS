@@ -371,6 +371,7 @@
     // Spectator card reveal tracking
     let spectatorRevealedCards = {}; // Format: "playerId-cardIndex": true/false
     let revealAnimatedCards = new Set(); // Cards that have already played their reveal animation
+    let animatedChatMessages = new Set(); // Chat messages that have already played their fade-in animation
 
     let shouldAutoScroll = true; // Track if we should auto-scroll
     let lastActionSignature = null; // Track which action panel is showing to prevent re-animation
@@ -689,18 +690,37 @@
             state.actionInProgress.playerId !== actionInProgress.playerId ||
             state.actionInProgress.phase !== actionInProgress.phase;
         
-        if (actionChanged) {
+        // Check if blocking phase just started after reveals
+        const blockingPhaseStarted = state.actionInProgress?.phase === 'waiting' &&
+            state.actionInProgress.postChallengeBlocking &&
+            (!actionInProgress || !actionInProgress.postChallengeBlocking);
+        
+        if (actionChanged || blockingPhaseStarted) {
           myResponse = null;
           
           if (state.actionInProgress && 
               (state.actionInProgress.phase === 'waiting' || state.actionInProgress.phase === 'block')) {
-            startCountdown(12);
+            // Don't start countdown if someone is revealing - wait until reveals complete
+            const someoneRevealing = state.players.some(p => p.mustRevealInfluence);
+            if (!someoneRevealing) {
+              startCountdown(15);
+            }
           } else {
-            stopCountdown();
+            // Don't stop countdown if we need to reveal, exchange, show card, or examine - those have their own timers
+            const newMyPlayer = state.players.find(p => p.id === state.myPlayerId);
+            if (!newMyPlayer?.mustRevealInfluence && 
+                !newMyPlayer?.mustChooseExchange && 
+                !newMyPlayer?.mustShowCardToExaminer && 
+                !newMyPlayer?.mustChooseExamine) {
+              stopCountdown();
+            }
           }
         }
         
         // Update state first
+        const oldMyPlayer = players.find(p => p.id === myPlayerId);
+        const oldPlayers = players; // Save for detecting reveal changes
+        
         players = state.players;
         spectators = state.spectators || [];
         myPlayerId = state.myPlayerId;
@@ -708,6 +728,89 @@
         actionInProgress = state.actionInProgress;
         gameLog = state.gameLog;
         deckSize = state.deckSize || 0;
+        
+        // Check if reveal requirement changed (after state update)
+        const newMyPlayer = state.players.find(p => p.id === state.myPlayerId);
+        const revealStarted = newMyPlayer?.mustRevealInfluence && (!oldMyPlayer || !oldMyPlayer.mustRevealInfluence);
+        const revealEnded = oldMyPlayer?.mustRevealInfluence && newMyPlayer && !newMyPlayer.mustRevealInfluence;
+        
+        // Check if OTHER players finished revealing (not us)
+        const someoneWasRevealing = oldPlayers && oldPlayers.length > 0 && oldPlayers.some(p => p.mustRevealInfluence);
+        const someoneStillRevealing = state.players.some(p => p.mustRevealInfluence);
+        const othersFinishedRevealing = someoneWasRevealing && !someoneStillRevealing && !newMyPlayer?.mustRevealInfluence;
+        
+        if (revealStarted) {
+          // Player now needs to reveal - start countdown
+          startCountdown(15);
+        } else if (revealEnded) {
+          // Player no longer needs to reveal - check if we should start countdown for waiting phase
+          const inWaitingPhase = state.actionInProgress && 
+            (state.actionInProgress.phase === 'waiting' || state.actionInProgress.phase === 'block');
+          
+          if (!someoneStillRevealing && inWaitingPhase) {
+            // All reveals done, action waiting for response - start countdown
+            startCountdown(15);
+          } else if (!newMyPlayer?.mustChooseExchange && 
+                     !newMyPlayer?.mustShowCardToExaminer && 
+                     !newMyPlayer?.mustChooseExamine) {
+            // Only stop countdown if not transitioning to another timed state
+            stopCountdown();
+          }
+        } else if (othersFinishedRevealing) {
+          // Other players finished revealing, check if action is waiting for response
+          const inWaitingPhase = state.actionInProgress && 
+            (state.actionInProgress.phase === 'waiting' || state.actionInProgress.phase === 'block');
+          
+          if (inWaitingPhase) {
+            // Action waiting for response - start countdown
+            startCountdown(15);
+          }
+        }
+        
+        // Check if exchange requirement changed
+        const exchangeStarted = newMyPlayer?.mustChooseExchange && (!oldMyPlayer || !oldMyPlayer.mustChooseExchange);
+        const exchangeEnded = oldMyPlayer?.mustChooseExchange && newMyPlayer && !newMyPlayer.mustChooseExchange;
+        
+        if (exchangeStarted) {
+          // Player now needs to exchange - start countdown
+          startCountdown(15);
+        } else if (exchangeEnded) {
+          stopCountdown();
+        }
+        
+        // Check if show card requirement changed
+        const showCardStarted = newMyPlayer?.mustShowCardToExaminer && (!oldMyPlayer || !oldMyPlayer.mustShowCardToExaminer);
+        const showCardEnded = oldMyPlayer?.mustShowCardToExaminer && newMyPlayer && !newMyPlayer.mustShowCardToExaminer;
+        
+        if (showCardStarted) {
+          // Player now needs to show card - start countdown
+          startCountdown(15);
+        } else if (showCardEnded) {
+          // Check if player now needs to examine with a card already revealed
+          if (!newMyPlayer?.mustChooseExamine || !newMyPlayer?.examinedCard) {
+            stopCountdown();
+          }
+        }
+        
+        // Check if examine requirement changed
+        const examineStarted = newMyPlayer?.mustChooseExamine && (!oldMyPlayer || !oldMyPlayer.mustChooseExamine);
+        const examineEnded = oldMyPlayer?.mustChooseExamine && newMyPlayer && !newMyPlayer.mustChooseExamine;
+        
+        // Check if examined card was just revealed
+        const cardRevealed = newMyPlayer?.mustChooseExamine && newMyPlayer?.examinedCard && 
+                            (!oldMyPlayer || !oldMyPlayer.examinedCard);
+        
+        if (examineStarted) {
+          // Player now needs to examine - but wait for card to be shown before starting countdown
+          if (newMyPlayer?.examinedCard) {
+            startCountdown(15);
+          }
+        } else if (cardRevealed) {
+          // Card was just revealed - start countdown for decision
+          startCountdown(15);
+        } else if (examineEnded) {
+          stopCountdown();
+        }
         
         if (state.state === 'lobby') {
           gameState = 'lobby';
@@ -717,6 +820,7 @@
           if (!wasPlaying) {
             shouldAutoScroll = true;
             revealAnimatedCards.clear(); // Fresh game — allow animations to fire again
+            animatedChatMessages.clear(); // Fresh game — allow chat animations to fire again
             gameStats = null; // Clear previous game stats
           }
         } else if (state.state === 'ended') {
@@ -726,6 +830,15 @@
         // NOW trigger sound effects
         console.log('Checking sound triggers - log diff:', gameLog.length - oldGameLog.length);
         if (gameLog.length > oldGameLog.length) {
+          // Check if user is near bottom before new messages arrive
+          const logContainer = document.getElementById('gameLogContainer');
+          if (logContainer) {
+            const isNearBottom = logContainer.scrollHeight - logContainer.scrollTop - logContainer.clientHeight < 100;
+            if (isNearBottom) {
+              shouldAutoScroll = true;
+            }
+          }
+          
           const newLogs = gameLog.slice(oldGameLog.length);
           console.log('New logs detected:', newLogs);
           newLogs.forEach(log => {
@@ -1626,8 +1739,27 @@
       } else if (gameState === 'lobby') {
         app.innerHTML = renderLobby();
       } else if (gameState === 'playing') {
+        // Save scroll position before re-rendering
+        const logContainer = document.getElementById('gameLogContainer');
+        const savedScrollTop = logContainer ? logContainer.scrollTop : 0;
+        
         app.innerHTML = renderGame();
-        scrollGameLogToBottom();
+        
+        // Restore scroll position or auto-scroll to bottom
+        const newLogContainer = document.getElementById('gameLogContainer');
+        if (newLogContainer) {
+          if (shouldAutoScroll) {
+            // Auto-scroll to bottom
+            setTimeout(() => {
+              if (newLogContainer) {
+                newLogContainer.scrollTop = newLogContainer.scrollHeight;
+              }
+            }, 0);
+          } else {
+            // Restore previous scroll position
+            newLogContainer.scrollTop = savedScrollTop;
+          }
+        }
       } else if (gameState === 'ended') {
         app.innerHTML = renderEndGame();
       }
@@ -2110,19 +2242,28 @@
     function renderGame() {
       const myPlayer = players.find(p => p.id === myPlayerId);
       const isMyTurn = currentPlayerId === myPlayerId && !isSpectator;
-      const canIRespond = actionInProgress && actionInProgress.playerId !== myPlayerId && myPlayer?.alive && !isSpectator;
-      const canIChallengeBlock = actionInProgress && actionInProgress.phase === 'block' && actionInProgress.blockerId !== myPlayerId && myPlayer?.alive && !isSpectator;
-      const mustReveal = myPlayer?.mustRevealInfluence && !isSpectator;
-      const mustExchange = myPlayer?.mustChooseExchange && !isSpectator;
-      const mustExamine = myPlayer?.mustChooseExamine && !isSpectator;
-      const mustShowCard = myPlayer?.mustShowCardToExaminer && !isSpectator;
-      const examineTarget = mustExamine ? players.find(p => p.id === myPlayer.examineTargetId) : null;
       
       // Check if anyone is waiting to reveal an influence
       const someoneRevealing = players.find(p => p.mustRevealInfluence);
       const someoneExchanging = players.find(p => p.mustChooseExchange);
       const someoneExamining = players.find(p => p.mustChooseExamine);
       const someoneShowingCard = players.find(p => p.mustShowCardToExaminer);
+      
+      const canIRespond = actionInProgress && 
+        actionInProgress.playerId !== myPlayerId && 
+        myPlayer?.alive && 
+        !isSpectator && 
+        !actionInProgress.pendingChallengeResolution &&
+        !actionInProgress.pendingBlockChallengeResolution &&
+        !someoneRevealing && // Wait until all reveals complete
+        // For post-challenge blocking phase, only target can respond
+        (!actionInProgress.postChallengeBlocking || actionInProgress.targetId === myPlayerId);
+      const canIChallengeBlock = actionInProgress && actionInProgress.phase === 'block' && actionInProgress.blockerId !== myPlayerId && myPlayer?.alive && !isSpectator && !actionInProgress.pendingBlockChallengeResolution;
+      const mustReveal = myPlayer?.mustRevealInfluence && !isSpectator;
+      const mustExchange = myPlayer?.mustChooseExchange && !isSpectator;
+      const mustExamine = myPlayer?.mustChooseExamine && !isSpectator;
+      const mustShowCard = myPlayer?.mustShowCardToExaminer && !isSpectator;
+      const examineTarget = mustExamine ? players.find(p => p.id === myPlayer.examineTargetId) : null;
       
       // Track if action panel is new (for animations)
       const currentActionSignature = actionInProgress ? 
@@ -2277,7 +2418,28 @@
                         </div>
                       ` : ''}
                     </div>
-                    <p class="mb-4 text-yellow-100">${gameLog[gameLog.length - 1]?.message}</p>
+                    <p class="mb-4 text-yellow-100">${(() => {
+                      // Generate action description
+                      const actorName = actionInProgress.playerName;
+                      const targetName = actionInProgress.targetName;
+                      const action = actionInProgress.action;
+                      
+                      if (action === 'foreignAid') {
+                        return `${actorName} takes Foreign Aid`;
+                      } else if (action === 'tax') {
+                        return `${actorName} claims to be the Duke and uses Tax (+3 coins)`;
+                      } else if (action === 'assassinate') {
+                        return `${actorName} claims to be the Assassin and attempts to assassinate ${targetName}`;
+                      } else if (action === 'steal') {
+                        return `${actorName} claims to be the Captain and attempts to steal from ${targetName}`;
+                      } else if (action === 'exchange') {
+                        const card = useInquisitor ? 'Inquisitor' : 'Ambassador';
+                        return `${actorName} claims to be the ${card} and uses Exchange`;
+                      } else if (action === 'examine') {
+                        return `${actorName} claims to be the Inquisitor and examines ${targetName}`;
+                      }
+                      return gameLog[gameLog.length - 1]?.message || '';
+                    })()}</p>
                     
                     ${myResponse ? `
                       <div class="bg-green-900 border border-green-600 rounded p-4 text-center">
@@ -2357,8 +2519,30 @@
 
                 ${mustReveal ? `
                   <div class="mb-6 bg-red-900 border-2 border-red-600 rounded-lg p-6 shake">
-                    <h3 class="text-xl font-bold mb-4 text-red-300">Choose a Card to Reveal</h3>
-                    <p class="mb-4 text-red-100">You must reveal ${myPlayer.influencesToLose || 1} influence${(myPlayer.influencesToLose || 1) > 1 ? 's' : ''}.</p>
+                    <div class="flex justify-between items-center mb-4">
+                      <h3 class="text-xl font-bold text-red-300">
+                        ${myPlayer.revealIsLostChallenge 
+                          ? 'You lost the challenge and must reveal an influence!'
+                          : actionInProgress?.pendingBlockChallengeResolution?.blockerId === myPlayerId 
+                            ? `Your block has been challenged. Choose a card to reveal!`
+                            : actionInProgress?.pendingChallengeResolution?.actorId === myPlayerId 
+                              ? `Your ${actionInProgress.action} has been challenged. Choose a card to reveal!`
+                              : 'Choose a Card to Reveal'
+                        }
+                      </h3>
+                      ${countdown !== null ? `
+                        <div class="countdown-timer bg-red-800 px-4 py-2 rounded-lg animate-pulse">
+                          <span class="countdown-number text-2xl font-bold text-red-200">${countdown}</span>
+                          <span class="countdown-label text-sm text-red-300 ml-1">sec</span>
+                        </div>
+                      ` : ''}
+                    </div>
+                    <p class="mb-4 text-red-100">
+                      ${myPlayer.revealIsLostChallenge 
+                        ? 'Choose an influence to reveal.'
+                        : `You must reveal ${myPlayer.influencesToLose || 1} influence${(myPlayer.influencesToLose || 1) > 1 ? 's' : ''}.`
+                      }
+                    </p>
                     <div class="flex gap-3 justify-center">
                       ${myPlayer.influences.map((influence, idx) => `
                         ${!influence.revealed ? `
@@ -2379,7 +2563,15 @@
 
                 ${mustExchange ? `
                   <div class="mb-6 bg-teal-900 border-2 border-teal-600 rounded-lg p-6">
-                    <h3 class="text-xl font-bold mb-4 text-teal-300">Exchange Cards</h3>
+                    <div class="flex justify-between items-center mb-4">
+                      <h3 class="text-xl font-bold text-teal-300">Exchange Cards</h3>
+                      ${countdown !== null ? `
+                        <div class="countdown-timer bg-teal-800 px-4 py-2 rounded-lg animate-pulse">
+                          <span class="countdown-number text-2xl font-bold text-teal-200">${countdown}</span>
+                          <span class="countdown-label text-sm text-teal-300 ml-1">sec</span>
+                        </div>
+                      ` : ''}
+                    </div>
                     ${myPlayer.influences.filter(inf => inf.revealed).length > 0 ? `
                       <p class="mb-2 text-teal-100 text-sm">Your revealed influence(s) will be kept automatically.</p>
                     ` : ''}
@@ -2423,7 +2615,15 @@
 
                 ${mustShowCard ? `
                   <div class="mb-6 bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6">
-                    <h3 class="text-xl font-bold mb-4 text-yellow-300">Choose a Card to Show</h3>
+                    <div class="flex justify-between items-center mb-4">
+                      <h3 class="text-xl font-bold text-yellow-300">Choose a Card to Show</h3>
+                      ${countdown !== null ? `
+                        <div class="countdown-timer bg-yellow-800 px-4 py-2 rounded-lg animate-pulse">
+                          <span class="countdown-number text-2xl font-bold text-yellow-200">${countdown}</span>
+                          <span class="countdown-label text-sm text-yellow-300 ml-1">sec</span>
+                        </div>
+                      ` : ''}
+                    </div>
                     <p class="mb-4 text-yellow-100">You are being examined. Choose which card to show to the examiner.</p>
                     <div class="flex gap-3 justify-center">
                       ${myPlayer.influences.map((influence, idx) => `
@@ -2445,7 +2645,15 @@
 
                 ${mustExamine && examineTarget ? `
                   <div class="mb-6 bg-purple-900 border-2 border-purple-600 rounded-lg p-6">
-                    <h3 class="text-xl font-bold mb-4 text-purple-300">Examine ${examineTarget.name}'s Card</h3>
+                    <div class="flex justify-between items-center mb-4">
+                      <h3 class="text-xl font-bold text-purple-300">Examine ${examineTarget.name}'s Card</h3>
+                      ${countdown !== null ? `
+                        <div class="countdown-timer bg-purple-800 px-4 py-2 rounded-lg animate-pulse">
+                          <span class="countdown-number text-2xl font-bold text-purple-200">${countdown}</span>
+                          <span class="countdown-label text-sm text-purple-300 ml-1">sec</span>
+                        </div>
+                      ` : ''}
+                    </div>
                     ${myPlayer.examinedCard ? `
                       <p class="mb-4 text-purple-100">You see one of ${examineTarget.name}'s cards:</p>
                       <div class="bg-purple-800 rounded p-4 mb-4 text-center card-reveal max-w-xs mx-auto cursor-pointer card-clickable" onclick="openCardZoom('${myPlayer.examinedCard}')">
@@ -2563,7 +2771,11 @@
                 ${!mustReveal && !mustExchange && !mustExamine && !mustShowCard && myPlayer?.alive && !isSpectator && (someoneRevealing || someoneExchanging || someoneExamining || someoneShowingCard) ? `
                   <div class="bg-gray-800 rounded-lg p-6 text-center">
                     <h3 class="text-xl font-bold mb-4 text-gray-400">Waiting...</h3>
-                    ${someoneRevealing ? `
+                    ${someoneRevealing && actionInProgress?.pendingBlockChallengeResolution ? `
+                      <p class="text-gray-300">${players.find(p => p.id === actionInProgress.pendingBlockChallengeResolution.challengerId)?.name} challenged ${someoneRevealing.name}'s block!</p>
+                    ` : someoneRevealing && actionInProgress?.pendingChallengeResolution ? `
+                      <p class="text-gray-300">${players.find(p => p.id === actionInProgress.pendingChallengeResolution.challengerId)?.name} challenged ${someoneRevealing.name}!</p>
+                    ` : someoneRevealing ? `
                       <p class="text-gray-300">${someoneRevealing.name} is choosing which influence to lose</p>
                     ` : someoneExchanging ? `
                       <p class="text-gray-300">${someoneExchanging.name} is exchanging cards</p>
@@ -2572,6 +2784,11 @@
                     ` : someoneShowingCard ? `
                       <p class="text-gray-300">${someoneShowingCard.name} is choosing a card to show</p>
                     ` : ''}
+                  </div>
+                ` : !isMyTurn && !canIRespond && !canIChallengeBlock && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && actionInProgress && actionInProgress.postChallengeBlocking && myPlayer?.alive && !isSpectator ? `
+                  <div class="bg-gray-800 rounded-lg p-6 text-center">
+                    <h3 class="text-xl font-bold mb-4 text-gray-400">Waiting...</h3>
+                    <p class="text-gray-300">${players.find(p => p.id === actionInProgress.targetId)?.name} is deciding whether to block</p>
                   </div>
                 ` : !isMyTurn && !canIRespond && !canIChallengeBlock && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && actionInProgress && actionInProgress.pausedForDisconnection && myPlayer?.alive && !isSpectator ? `
                   <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
@@ -2679,8 +2896,16 @@
                         const timestamp = log.time ? new Date(log.time).toLocaleTimeString() : '';
                         const filteredMessage = escapeHtml(filterProfanity(log.message));
                         
+                        // Create unique key for this message
+                        const messageKey = `${log.time}-${log.playerName}-${log.message}`;
+                        const isNewMessage = !animatedChatMessages.has(messageKey);
+                        if (isNewMessage) {
+                          animatedChatMessages.add(messageKey);
+                        }
+                        const animationClass = isNewMessage ? 'fade-in' : '';
+                        
                         return `
-                          <div class="text-sm fade-in">
+                          <div class="text-sm ${animationClass}">
                             <div class="p-2 flex gap-2">
                               ${!anonymousMode ? `
                                 <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">

@@ -976,6 +976,7 @@ function getPublicGameState(room, socketId, isSpectator = false) {
         alive: p.alive,
         mustRevealInfluence: p.mustRevealInfluence || false,
         influencesToLose: p.influencesToLose || 0,
+        revealIsLostChallenge: p.revealIsLostChallenge || false,
         mustChooseExchange: p.mustChooseExchange || false,
         mustChooseExamine: p.mustChooseExamine || false,
         mustShowCardToExaminer: p.mustShowCardToExaminer || false,
@@ -1261,7 +1262,7 @@ function performAction(room, socketId, action, targetId) {
       room.actionInProgress.pausedForDisconnection = true;
       addLogToRoom(room, `âš ï¸ Waiting for ${getDisplayName(room, targetPlayer)} to reconnect to respond to this action...`, 'info');
     } else {
-      // Set timeout for responses (12 seconds)
+      // Set timeout for responses (15 seconds)
       const timeoutId = setTimeout(() => {
         if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
           // Log that no one responded
@@ -1271,7 +1272,7 @@ function performAction(room, socketId, action, targetId) {
           resolveAction(room);
           emitToRoom(room.code, 'gameState');
         }
-      }, 12000); // 12 seconds
+      }, 15000); // 15 seconds
       
       // Store at both levels so we always have a reference
       room.actionInProgress.responseTimeout = timeoutId;
@@ -1447,74 +1448,49 @@ function handleChallenge(room, challengerId) {
   }
 
   addLogToRoom(room, `${getDisplayName(room, challenger)} challenges ${getDisplayName(room, actor)}!`, 'challenge');
+  addLogToRoom(room, `${getDisplayName(room, actor)} must reveal a card`, 'info');
 
-  // Check if actor has the claimed card
-  const hasCard = actor.influences.some(inf => !inf.revealed && inf.card === actionData.card);
+  // Disable further challenges - only one challenge allowed
+  room.actionInProgress.canChallenge = false;
 
-  if (hasCard) {
-    // Challenge failed - challenger loses influence
-    addLogToRoom(room, `${getDisplayName(room, actor)} reveals the ${actionData.card}! The challenge fails.`, 'fail', actionData.card);
-    addLogToRoom(room, `${getDisplayName(room, challenger)} loses an influence`, 'info');
-    
-    // Track stats
-    if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
-    if (actor.gameStats) actor.gameStats.claimsDefended += 1; // Successfully defended claim
-    
-    loseInfluence(room, challengerId, 1, action.playerId);
-    
-    // Actor returns card and draws new one
-    const cardIndex = actor.influences.findIndex(inf => !inf.revealed && inf.card === actionData.card);
-    if (cardIndex !== -1 && room.deck.length > 0) {
-      actor.influences[cardIndex].card = room.deck.pop();
-      room.deck.unshift(actionData.card);
-      fisherYatesShuffle(room.deck);
-      addLogToRoom(room, `${getDisplayName(room, actor)} returns the card and draws a new one`, 'info');
-    }
-    
-    // Log the successful action
-    if (action.action === 'tax') {
-      addLogToRoom(room, `${getDisplayName(room, actor)} successfully uses Tax and takes 3 coins`, 'success', 'Duke');
-    } else if (action.action === 'steal') {
-      addLogToRoom(room, `${getDisplayName(room, actor)} successfully steals from ${getDisplayName(room, getPlayerById(room, action.targetId))}`, 'success', 'Captain');
-    } else if (action.action === 'assassinate') {
-      addLogToRoom(room, `${getDisplayName(room, actor)} successfully assassinates ${getDisplayName(room, getPlayerById(room, action.targetId))}`, 'success', 'Assassin');
-    } else if (action.action === 'exchange') {
-      const card = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
-      addLogToRoom(room, `${getDisplayName(room, actor)} successfully exchanges cards`, 'success', card);
-    } else if (action.action === 'examine') {
-      addLogToRoom(room, `${getDisplayName(room, actor)} successfully examines ${getDisplayName(room, getPlayerById(room, action.targetId))}`, 'success', 'Inquisitor');
-    }
-    
-    resolveAction(room);
-  } else {
-    // Challenge succeeded - actor loses influence (was bluffing)
-    addLogToRoom(room, `${getDisplayName(room, actor)} doesn't have the ${actionData.card}! The challenge succeeds.`, 'success', actionData.card);
-    addLogToRoom(room, `${getDisplayName(room, actor)} loses an influence and the action fails`, 'info');
-    
-    // Refund assassination cost if the assassin claim was challenged
-    if (action.action === 'assassinate' && actionData.cost) {
-      actor.coins += actionData.cost;
-      if (actor.gameStats) actor.gameStats.coinsSpent -= actionData.cost;
-      addLogToRoom(room, `${getDisplayName(room, actor)}'s 3 coins are refunded`, 'info');
-    }
-    
-    // Track stats
-    if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
-    if (actor.gameStats) {
-      actor.gameStats.bluffsCaught += 1; // Caught bluffing
-      
-      // Track action-specific failures
-      if (action.action === 'tax') {
-        actor.gameStats.taxFailed += 1;
-      } else if (action.action === 'assassinate') {
-        actor.gameStats.assassinationsFailed += 1;
+  // Store challenge context - will be resolved when actor reveals a card
+  room.actionInProgress.pendingChallengeResolution = {
+    challengerId: challengerId,
+    claimedCard: actionData.card,
+    actorId: action.playerId
+  };
+
+  // Make actor reveal an influence card
+  actor.mustRevealInfluence = true;
+  actor.influencesToLose = 1;
+  
+  console.log(`Setting mustRevealInfluence=true for ${getDisplayName(room, actor)} (challenged player defending claim)`);
+  
+  // Clear any existing timeout
+  if (actor.revealTimeout) {
+    clearTimeout(actor.revealTimeout);
+    actor.revealTimeout = null;
+  }
+  
+  // Set timeout for revealing (15 seconds)
+  actor.revealTimeout = setTimeout(() => {
+    console.log(`Reveal timeout fired for ${getDisplayName(room, actor)} (challenged player), mustRevealInfluence=${actor.mustRevealInfluence}`);
+    if (actor.mustRevealInfluence) {
+      // Auto-reveal leftmost unrevealed card
+      const leftmostIndex = actor.influences.findIndex(inf => !inf.revealed);
+      console.log(`Auto-revealing leftmost card at index ${leftmostIndex}`);
+      if (leftmostIndex !== -1) {
+        addLogToRoom(room, `${getDisplayName(room, actor)} took too long - automatically revealing leftmost card`, 'info');
+        const result = revealInfluence(room, actor.id, leftmostIndex);
+        console.log(`Auto-reveal result:`, result);
+        if (result.success) {
+          emitToRoom(room.code, 'gameState');
+        }
       }
     }
-    
-    loseInfluence(room, action.playerId, 1, challengerId);
-    clearActionAndTimeout(room);
-    nextTurn(room);
-  }
+  }, 15000); // 15 seconds
+  
+  emitToRoom(room.code, 'gameState');
 }
 
 function handleBlock(room, blockerId, blockCard) {
@@ -1643,7 +1619,7 @@ function handleBlock(room, blockerId, blockCard) {
         nextTurn(room);
         emitToRoom(room.code, 'gameState');
       }
-    }, 12000); // 12 seconds
+    }, 15000); // 15 seconds
     
     // Store at both levels so we always have a reference
     room.actionInProgress.responseTimeout = timeoutId;
@@ -1671,90 +1647,46 @@ function challengeBlock(room, socketId) {
   }
   
   addLogToRoom(room, `${getDisplayName(room, challenger)} challenges the block!`, 'challenge');
+  addLogToRoom(room, `${getDisplayName(room, blocker)} must reveal a card`, 'info');
   
-  const hasCard = blocker.influences.some(inf => !inf.revealed && inf.card === action.blockCard);
+  // Store challenge context - will be resolved when blocker reveals a card
+  room.actionInProgress.pendingBlockChallengeResolution = {
+    challengerId: challenger.id,
+    claimedCard: action.blockCard,
+    blockerId: blocker.id
+  };
   
-  if (hasCard) {
-    // Challenge failed - blocker had the card
-    addLogToRoom(room, `${getDisplayName(room, blocker)} reveals the ${action.blockCard}! The block challenge fails.`, 'fail', action.blockCard);
-    addLogToRoom(room, `${getDisplayName(room, challenger)} loses an influence`, 'info');
-    
-    // Track stats
-    if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
-    if (blocker.gameStats) {
-      blocker.gameStats.claimsDefended += 1; // Successfully defended block claim
-      
-      // Track block-specific stats
-      if (action.action === 'steal') {
-        blocker.gameStats.stealsBlocked += 1;
-      } else if (action.action === 'assassinate') {
-        blocker.gameStats.contessaSucceeded += 1;
-      } else if (action.action === 'foreignAid') {
-        blocker.gameStats.foreignaidblockSucceeded += 1;
-      }
-    }
-    
-    // Track stats for original actor whose action was blocked
-    const originalActor = getPlayerById(room, action.playerId);
-    if (originalActor && originalActor.gameStats) {
-      if (action.action === 'foreignAid') {
-        originalActor.gameStats.foreignaidDenied += 1;
-      } else if (action.action === 'assassinate') {
-        originalActor.gameStats.assassinationsFailed += 1;
-      }
-    }
-    
-    loseInfluence(room, challenger.id, 1, action.blockerId);
-    
-    // Return and redraw card
-    const cardIndex = blocker.influences.findIndex(inf => !inf.revealed && inf.card === action.blockCard);
-    if (cardIndex !== -1 && room.deck.length > 0) {
-      blocker.influences[cardIndex].card = room.deck.pop();
-      room.deck.unshift(action.blockCard);
-      fisherYatesShuffle(room.deck);
-      addLogToRoom(room, `${getDisplayName(room, blocker)} returns the card and draws a new one`, 'info');
-    }
-    
-    if (action.action === 'foreignAid') {
-      addLogToRoom(room, `The block stands. Foreign Aid is blocked!`, 'success', action.blockCard);
-    } else {
-      addLogToRoom(room, `The block stands. The action is blocked!`, 'success', action.blockCard);
-    }
-    clearActionAndTimeout(room);
-    nextTurn(room);
-  } else {
-    // Challenge succeeded - blocker was bluffing
-    addLogToRoom(room, `${getDisplayName(room, blocker)} doesn't have the ${action.blockCard}! The block challenge succeeds.`, 'success', action.blockCard);
-    addLogToRoom(room, `${getDisplayName(room, blocker)} loses an influence and the action proceeds`, 'info');
-    
-    // Track stats
-    if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
-    if (blocker.gameStats) {
-      blocker.gameStats.bluffsCaught += 1; // Caught bluffing on block
-      
-      // Track specific block failures
-      if (action.action === 'assassinate' && action.blockCard === 'Contessa') {
-        blocker.gameStats.contessaFailed += 1;
-      } else if (action.action === 'foreignAid' && action.blockCard === 'Duke') {
-        blocker.gameStats.foreignaidblockFailed += 1;
-      }
-    }
-    
-    loseInfluence(room, action.blockerId, 1, challenger.id);
-    
-    // Log the successful action before resolving
-    const originalAction = action.action;
-    if (originalAction === 'foreignAid') {
-      addLogToRoom(room, `Foreign Aid proceeds`, 'success', 'ForeignAid');
-    } else if (originalAction === 'assassinate') {
-      addLogToRoom(room, `The assassination proceeds`, 'success', 'Assassin');
-    } else if (originalAction === 'steal') {
-      addLogToRoom(room, `The steal proceeds`, 'success', 'Captain');
-    }
-    
-    resolveAction(room);
+  // Make blocker reveal an influence card
+  blocker.mustRevealInfluence = true;
+  blocker.influencesToLose = 1;
+  
+  console.log(`Setting mustRevealInfluence=true for ${getDisplayName(room, blocker)} (block challenged)`);
+  
+  // Clear any existing timeout
+  if (blocker.revealTimeout) {
+    clearTimeout(blocker.revealTimeout);
+    blocker.revealTimeout = null;
   }
   
+  // Set timeout for revealing (15 seconds)
+  blocker.revealTimeout = setTimeout(() => {
+    console.log(`Reveal timeout fired for ${getDisplayName(room, blocker)} (block challenged), mustRevealInfluence=${blocker.mustRevealInfluence}`);
+    if (blocker.mustRevealInfluence) {
+      // Auto-reveal leftmost unrevealed card
+      const leftmostIndex = blocker.influences.findIndex(inf => !inf.revealed);
+      console.log(`Auto-revealing leftmost card at index ${leftmostIndex}`);
+      if (leftmostIndex !== -1) {
+        addLogToRoom(room, `${getDisplayName(room, blocker)} took too long - automatically revealing leftmost card`, 'info');
+        const result = revealInfluence(room, blocker.id, leftmostIndex);
+        console.log(`Auto-reveal result:`, result);
+        if (result.success) {
+          emitToRoom(room.code, 'gameState');
+        }
+      }
+    }
+  }, 15000); // 15 seconds
+  
+  emitToRoom(room.code, 'gameState');
   return { success: true };
 }
 
@@ -1844,6 +1776,26 @@ function resolveAction(room) {
           const drawnCards = [room.deck.pop()];
           actor.exchangeCards = drawnCards;
           actor.mustChooseExchange = true;
+          
+          // Set timeout for exchange (15 seconds)
+          if (actor.exchangeTimeout) {
+            clearTimeout(actor.exchangeTimeout);
+          }
+          
+          actor.exchangeTimeout = setTimeout(() => {
+            if (actor.mustChooseExchange) {
+              // Auto-cancel exchange - keep original cards
+              addLogToRoom(room, `${getDisplayName(room, actor)} took too long - exchange cancelled`, 'info');
+              // Return drawn cards to deck
+              room.deck.push(...actor.exchangeCards);
+              fisherYatesShuffle(room.deck);
+              actor.exchangeCards = null;
+              actor.mustChooseExchange = false;
+              nextTurn(room);
+              emitToRoom(room.code, 'gameState');
+            }
+          }, 15000); // 15 seconds
+          
           addLogToRoom(room, `${getDisplayName(room, actor)} draws 1 card to exchange`, 'info', 'Inquisitor');
           room.actionInProgress = null;
           emitToRoom(room.code, 'gameState');
@@ -1855,6 +1807,26 @@ function resolveAction(room) {
           const drawnCards = [room.deck.pop(), room.deck.pop()];
           actor.exchangeCards = drawnCards;
           actor.mustChooseExchange = true;
+          
+          // Set timeout for exchange (15 seconds)
+          if (actor.exchangeTimeout) {
+            clearTimeout(actor.exchangeTimeout);
+          }
+          
+          actor.exchangeTimeout = setTimeout(() => {
+            if (actor.mustChooseExchange) {
+              // Auto-cancel exchange - keep original cards
+              addLogToRoom(room, `${getDisplayName(room, actor)} took too long - exchange cancelled`, 'info');
+              // Return drawn cards to deck
+              room.deck.push(...actor.exchangeCards);
+              fisherYatesShuffle(room.deck);
+              actor.exchangeCards = null;
+              actor.mustChooseExchange = false;
+              nextTurn(room);
+              emitToRoom(room.code, 'gameState');
+            }
+          }, 15000); // 15 seconds
+          
           addLogToRoom(room, `${getDisplayName(room, actor)} draws 2 cards to exchange`, 'info', 'Ambassador');
           room.actionInProgress = null;
           emitToRoom(room.code, 'gameState');
@@ -1873,6 +1845,24 @@ function resolveAction(room) {
           actor.mustChooseExamine = true;
           target.mustShowCardToExaminer = true;
           target.examinedBy = actor.id;
+          
+          // Set timeout for target to show card (15 seconds)
+          if (target.showCardTimeout) {
+            clearTimeout(target.showCardTimeout);
+          }
+          
+          target.showCardTimeout = setTimeout(() => {
+            if (target.mustShowCardToExaminer) {
+              // Auto-show leftmost unrevealed card
+              const leftmostIndex = target.influences.findIndex(inf => !inf.revealed);
+              if (leftmostIndex !== -1) {
+                addLogToRoom(room, `${getDisplayName(room, target)} took too long - automatically showing leftmost card`, 'info');
+                showCardToExaminer(room, target.id, leftmostIndex);
+                emitToRoom(room.code, 'gameState');
+              }
+            }
+          }, 15000); // 15 seconds
+          
           addLogToRoom(room, `${getDisplayName(room, target)} must show a card to ${getDisplayName(room, actor)}`, 'info', 'Inquisitor');
           room.actionInProgress = null;
           emitToRoom(room.code, 'gameState');
@@ -1904,9 +1894,12 @@ function resolveAction(room) {
   }
 }
 
-function loseInfluence(room, playerId, count = 1, causedByPlayerId = null) {
+function loseInfluence(room, playerId, count = 1, causedByPlayerId = null, isLostChallenge = false) {
   const player = getPlayerById(room, playerId);
-  if (!player) return;
+  if (!player) {
+    console.log(`loseInfluence: Player ${playerId} not found`);
+    return;
+  }
 
   const unrevealed = player.influences.filter(inf => !inf.revealed);
   if (unrevealed.length > 0) {
@@ -1914,6 +1907,34 @@ function loseInfluence(room, playerId, count = 1, causedByPlayerId = null) {
     player.influencesToLose = (player.influencesToLose || 0) + count;
     player.mustRevealInfluence = true;
     player.influenceLossCausedBy = causedByPlayerId; // Track who caused this
+    player.revealIsLostChallenge = isLostChallenge; // Track if this is from losing a challenge
+    
+    console.log(`Setting mustRevealInfluence=true for ${getDisplayName(room, player)}, isLostChallenge=${isLostChallenge}`);
+    
+    // Clear any existing timeout
+    if (player.revealTimeout) {
+      clearTimeout(player.revealTimeout);
+      player.revealTimeout = null;
+    }
+    
+    // Set timeout for revealing (15 seconds)
+    player.revealTimeout = setTimeout(() => {
+      console.log(`Reveal timeout fired for ${getDisplayName(room, player)}, mustRevealInfluence=${player.mustRevealInfluence}`);
+      if (player.mustRevealInfluence) {
+        // Auto-reveal leftmost unrevealed card
+        const leftmostIndex = player.influences.findIndex(inf => !inf.revealed);
+        console.log(`Auto-revealing leftmost card at index ${leftmostIndex}`);
+        if (leftmostIndex !== -1) {
+          addLogToRoom(room, `${getDisplayName(room, player)} took too long - automatically revealing leftmost card`, 'info');
+          const result = revealInfluence(room, playerId, leftmostIndex);
+          console.log(`Auto-reveal result:`, result);
+          if (result.success) {
+            emitToRoom(room.code, 'gameState');
+          }
+        }
+      }
+    }, 15000); // 15 seconds
+    
     emitToRoom(room.code, 'gameState');
   }
 }
@@ -1960,6 +1981,12 @@ function completeExchange(room, playerId, keepIndices) {
   player.influences = [...revealedInfluences, ...keptCards];
   player.exchangeCards = null;
   player.mustChooseExchange = false;
+  
+  // Clear exchange timeout
+  if (player.exchangeTimeout) {
+    clearTimeout(player.exchangeTimeout);
+    player.exchangeTimeout = null;
+  }
 
   // Track stat
   if (player.gameStats) {
@@ -1993,10 +2020,30 @@ function showCardToExaminer(room, playerId, cardIndex) {
   if (examiner) {
     examiner.examinedCard = influence.card;
     examiner.examinedCardIndex = cardIndex;
+    
+    // Set timeout for examiner to decide (15 seconds)
+    if (examiner.examineTimeout) {
+      clearTimeout(examiner.examineTimeout);
+    }
+    
+    examiner.examineTimeout = setTimeout(() => {
+      if (examiner.mustChooseExamine) {
+        // Auto-decline force exchange - return card
+        addLogToRoom(room, `${getDisplayName(room, examiner)} took too long - card returned without exchange`, 'info');
+        completeExamine(room, examiner.id, false);
+        emitToRoom(room.code, 'gameState');
+      }
+    }, 15000); // 15 seconds
   }
 
   player.mustShowCardToExaminer = false;
   player.examinedBy = null;
+  
+  // Clear target's show card timeout
+  if (player.showCardTimeout) {
+    clearTimeout(player.showCardTimeout);
+    player.showCardTimeout = null;
+  }
 
   addLogToRoom(room, `${getDisplayName(room, player)} shows a card to ${getDisplayName(room, examiner)}`, 'info', 'Inquisitor');
 
@@ -2044,6 +2091,13 @@ function completeExamine(room, playerId, forceExchange) {
   player.mustChooseExamine = false;
   player.examinedCard = null;
   player.examinedCardIndex = null;
+  
+  // Clear examine timeout
+  if (player.examineTimeout) {
+    clearTimeout(player.examineTimeout);
+    player.examineTimeout = null;
+  }
+  
   nextTurn(room);
 
   return { success: true };
@@ -2051,8 +2105,17 @@ function completeExamine(room, playerId, forceExchange) {
 
 function revealInfluence(room, playerId, cardIndex) {
   const player = getPlayerById(room, playerId);
+  console.log(`revealInfluence called for player ${player?.name}, mustRevealInfluence=${player?.mustRevealInfluence}, cardIndex=${cardIndex}`);
+  
   if (!player || !player.mustRevealInfluence) {
+    console.log(`Rejecting reveal - player=${!!player}, mustRevealInfluence=${player?.mustRevealInfluence}`);
     return { success: false, error: 'Not required to reveal influence' };
+  }
+
+  // Clear reveal timeout since player is revealing manually
+  if (player.revealTimeout) {
+    clearTimeout(player.revealTimeout);
+    player.revealTimeout = null;
   }
 
   if (cardIndex < 0 || cardIndex >= player.influences.length) {
@@ -2072,11 +2135,250 @@ function revealInfluence(room, playerId, cardIndex) {
   
   addLogToRoom(room, `${getDisplayName(room, player)} reveals and loses their ${influence.card}`, 'info', influence.card);
 
+  // Check if this reveal is resolving a challenge
+  if (room.actionInProgress && room.actionInProgress.pendingChallengeResolution) {
+    const challenge = room.actionInProgress.pendingChallengeResolution;
+    
+    if (challenge.actorId === playerId) {
+      const challenger = getPlayerById(room, challenge.challengerId);
+      const revealedCard = influence.card;
+      const claimedCard = challenge.claimedCard;
+      const action = room.actionInProgress;
+      const actionData = ACTIONS[action.action];
+      
+      // For exchange, accept both Ambassador and Inquisitor as valid
+      const isValidCard = action.action === 'exchange' 
+        ? (revealedCard === 'Ambassador' || revealedCard === 'Inquisitor')
+        : (revealedCard === claimedCard);
+      
+      if (isValidCard) {
+        // Challenge failed - revealed card matches claim
+        const cardToShow = action.action === 'exchange' ? revealedCard : claimedCard;
+        addLogToRoom(room, `${getDisplayName(room, player)} shows the ${cardToShow}! The challenge fails.`, 'fail', cardToShow);
+        addLogToRoom(room, `${getDisplayName(room, challenger)} loses an influence`, 'info');
+        
+        // Track stats
+        if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
+        if (player.gameStats) player.gameStats.claimsDefended += 1;
+        
+        // Un-reveal the card and return it to deck, draw new one
+        influence.revealed = false;
+        player.influencesToLose = 0; // Clear influence loss
+        player.mustRevealInfluence = false; // Clear reveal requirement
+        player.revealIsLostChallenge = false; // Clear lost challenge flag
+        if (player.gameStats) player.gameStats.influencesLost -= 1; // Undo stat
+        
+        // Clear reveal timeout
+        if (player.revealTimeout) {
+          clearTimeout(player.revealTimeout);
+          player.revealTimeout = null;
+        }
+        
+        if (room.deck.length > 0) {
+          influence.card = room.deck.pop();
+          room.deck.unshift(revealedCard); // Return the actual revealed card
+          fisherYatesShuffle(room.deck);
+          addLogToRoom(room, `${getDisplayName(room, player)} returns the card and draws a new one`, 'info');
+        }
+        
+        // Challenger loses influence
+        loseInfluence(room, challenge.challengerId, 1, player.id, true); // true = isLostChallenge
+        
+        // Clear challenge context
+        delete room.actionInProgress.pendingChallengeResolution;
+        
+        // Check if action is blockable - if so, give target opportunity to block
+        if (actionData.blockable && action.targetId) {
+          const target = getPlayerById(room, action.targetId);
+          if (target && target.alive && !target.disconnected) {
+            // Reset action to waiting phase for blocking
+            room.actionInProgress.phase = 'waiting';
+            room.actionInProgress.blockableByTarget = true;
+            room.actionInProgress.targetCanBlock = action.targetId;
+            room.actionInProgress.canChallenge = false; // Claim already proven
+            room.actionInProgress.postChallengeBlocking = true; // Flag for post-challenge blocking phase
+            room.actionInProgress.responses = {};
+            room.pendingResponses = new Set([action.targetId]);
+            room.actionInProgress.totalResponders = 1;
+            room.actionInProgress.respondedCount = 0;
+            room.actionInProgress.needsTimeoutAfterReveal = true; // Flag to set timeout after challenger reveals
+            // Timeout will be set after challenger reveals their card
+          } else {
+            resolveAction(room);
+          }
+        } else {
+          // Not blockable, resolve immediately
+          if (action.action === 'tax') {
+            addLogToRoom(room, `${getDisplayName(room, player)} successfully uses Tax and takes 3 coins`, 'success', 'Duke');
+          } else if (action.action === 'exchange') {
+            const card = room.useInquisitor ? 'Inquisitor' : 'Ambassador';
+            addLogToRoom(room, `${getDisplayName(room, player)} successfully exchanges cards`, 'success', card);
+          } else if (action.action === 'examine') {
+            addLogToRoom(room, `${getDisplayName(room, player)} successfully examines ${getDisplayName(room, getPlayerById(room, action.targetId))}`, 'success', 'Inquisitor');
+          }
+          resolveAction(room);
+        }
+        
+        return { success: true };
+      } else {
+        // Challenge succeeded - revealed card doesn't match claim
+        addLogToRoom(room, `${getDisplayName(room, player)} doesn't have the ${claimedCard}! The challenge succeeds.`, 'success', claimedCard);
+        addLogToRoom(room, `The action fails`, 'info');
+        
+        // Track stats
+        if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
+        if (player.gameStats) {
+          player.gameStats.bluffsCaught += 1;
+          if (action.action === 'tax') {
+            player.gameStats.taxFailed += 1;
+          } else if (action.action === 'assassinate') {
+            player.gameStats.assassinationsFailed += 1;
+          }
+        }
+        
+        // Refund assassination cost if the assassin claim was challenged
+        if (action.action === 'assassinate' && actionData.cost) {
+          player.coins += actionData.cost;
+          if (player.gameStats) player.gameStats.coinsSpent -= actionData.cost;
+          addLogToRoom(room, `${getDisplayName(room, player)}'s 3 coins are refunded`, 'info');
+        }
+        
+        // Clear challenge and action
+        delete room.actionInProgress.pendingChallengeResolution;
+        clearActionAndTimeout(room);
+        
+        // Card already revealed, continue to check if eliminated
+        // Don't return - let normal elimination flow continue
+      }
+    }
+  }
+
+  // Check if this reveal is resolving a block challenge
+  if (room.actionInProgress && room.actionInProgress.pendingBlockChallengeResolution) {
+    const challenge = room.actionInProgress.pendingBlockChallengeResolution;
+    
+    if (challenge.blockerId === playerId) {
+      const challenger = getPlayerById(room, challenge.challengerId);
+      const revealedCard = influence.card;
+      const claimedCard = challenge.claimedCard;
+      const action = room.actionInProgress;
+      
+      if (revealedCard === claimedCard) {
+        // Challenge failed - revealed card matches block claim
+        addLogToRoom(room, `${getDisplayName(room, player)} shows the ${claimedCard}! The block challenge fails.`, 'fail', claimedCard);
+        addLogToRoom(room, `${getDisplayName(room, challenger)} loses an influence`, 'info');
+        
+        // Track stats
+        if (challenger.gameStats) challenger.gameStats.failedChallenges += 1;
+        if (player.gameStats) {
+          player.gameStats.claimsDefended += 1;
+          
+          // Track block-specific stats
+          if (action.action === 'steal') {
+            player.gameStats.stealsBlocked += 1;
+          } else if (action.action === 'assassinate') {
+            player.gameStats.contessaSucceeded += 1;
+          } else if (action.action === 'foreignAid') {
+            player.gameStats.foreignaidblockSucceeded += 1;
+          }
+        }
+        
+        // Track stats for original actor whose action was blocked
+        const originalActor = getPlayerById(room, action.playerId);
+        if (originalActor && originalActor.gameStats) {
+          if (action.action === 'foreignAid') {
+            originalActor.gameStats.foreignaidDenied += 1;
+          } else if (action.action === 'assassinate') {
+            originalActor.gameStats.assassinationsFailed += 1;
+          }
+        }
+        
+        // Un-reveal the card and return it to deck, draw new one
+        influence.revealed = false;
+        player.influencesToLose = 0;
+        player.mustRevealInfluence = false;
+        player.revealIsLostChallenge = false;
+        if (player.gameStats) player.gameStats.influencesLost -= 1;
+        
+        // Clear reveal timeout
+        if (player.revealTimeout) {
+          clearTimeout(player.revealTimeout);
+          player.revealTimeout = null;
+        }
+        
+        if (room.deck.length > 0) {
+          influence.card = room.deck.pop();
+          room.deck.unshift(revealedCard);
+          fisherYatesShuffle(room.deck);
+          addLogToRoom(room, `${getDisplayName(room, player)} returns the card and draws a new one`, 'info');
+        }
+        
+        // Challenger loses influence
+        loseInfluence(room, challenge.challengerId, 1, player.id, true);
+        
+        // Clear block challenge context
+        delete room.actionInProgress.pendingBlockChallengeResolution;
+        
+        // Block stands
+        if (action.action === 'foreignAid') {
+          addLogToRoom(room, `The block stands. Foreign Aid is blocked!`, 'success', claimedCard);
+        } else {
+          addLogToRoom(room, `The block stands. The action is blocked!`, 'success', claimedCard);
+        }
+        clearActionAndTimeout(room);
+        nextTurn(room);
+        
+        return { success: true };
+      } else {
+        // Challenge succeeded - blocker was bluffing
+        addLogToRoom(room, `${getDisplayName(room, player)} doesn't have the ${claimedCard}! The block challenge succeeds.`, 'success', claimedCard);
+        addLogToRoom(room, `The action proceeds`, 'info');
+        
+        // Track stats
+        if (challenger.gameStats) challenger.gameStats.successfulChallenges += 1;
+        if (player.gameStats) {
+          player.gameStats.bluffsCaught += 1;
+          
+          // Track specific block failures
+          if (action.action === 'assassinate' && claimedCard === 'Contessa') {
+            player.gameStats.contessaFailed += 1;
+          } else if (action.action === 'foreignAid' && claimedCard === 'Duke') {
+            player.gameStats.foreignaidblockFailed += 1;
+          }
+        }
+        
+        // Clear block challenge context
+        delete room.actionInProgress.pendingBlockChallengeResolution;
+        
+        // Log the successful action before resolving
+        if (action.action === 'foreignAid') {
+          addLogToRoom(room, `Foreign Aid proceeds`, 'success', 'ForeignAid');
+        } else if (action.action === 'assassinate') {
+          addLogToRoom(room, `The assassination proceeds`, 'success', 'Assassin');
+        } else if (action.action === 'steal') {
+          addLogToRoom(room, `The steal proceeds`, 'success', 'Captain');
+        }
+        
+        resolveAction(room);
+        
+        // Card already revealed, continue to check if eliminated
+        // Don't return - let normal elimination flow continue
+      }
+    }
+  }
+
   const stillAlive = player.influences.some(inf => !inf.revealed);
   if (!stillAlive) {
     player.alive = false;
     player.mustRevealInfluence = false;
     player.influencesToLose = 0;
+    player.revealIsLostChallenge = false; // Clear lost challenge flag
+    
+    // Clear reveal timeout
+    if (player.revealTimeout) {
+      clearTimeout(player.revealTimeout);
+      player.revealTimeout = null;
+    }
     
     // Track elimination order (lower placement = eliminated earlier)
     const alivePlayers = room.players.filter(p => p.alive && p.id !== player.id).length;
@@ -2126,11 +2428,41 @@ function revealInfluence(room, playerId, cardIndex) {
 
   // All influences revealed
   player.mustRevealInfluence = false;
+  player.revealIsLostChallenge = false; // Clear lost challenge flag
+  
+  // Clear reveal timeout
+  if (player.revealTimeout) {
+    clearTimeout(player.revealTimeout);
+    player.revealTimeout = null;
+  }
 
   // Check if there are other players waiting to reveal
   const othersWaiting = room.players.some(p => p.mustRevealInfluence);
   if (!othersWaiting) {
-    // All reveals complete, continue game
+    // All reveals complete, check if action is still waiting for responses (blocking phase)
+    if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
+      // If we need to set up a timeout (after challenge resolution), do it now
+      if (room.actionInProgress.needsTimeoutAfterReveal) {
+        delete room.actionInProgress.needsTimeoutAfterReveal;
+        
+        // Set timeout for target to respond to the blocking phase
+        const timeoutId = setTimeout(() => {
+          if (room.actionInProgress && room.actionInProgress.phase === 'waiting') {
+            resolveAction(room);
+            emitToRoom(room.code, 'gameState');
+          }
+        }, 15000); // 15 seconds
+        
+        room.actionInProgress.responseTimeout = timeoutId;
+        room.responseTimeout = timeoutId;
+      }
+      
+      // Action is waiting for block response, emit state and don't advance turn yet
+      emitToRoom(room.code, 'gameState');
+      return { success: true };
+    }
+    
+    // No action waiting, continue game
     if (room.actionInProgress) {
       room.actionInProgress = null;
     }
@@ -4251,6 +4583,11 @@ function broadcastRoomList() {
         .filter(p => p.userId)
         .map(p => p.userId);
       
+      // Get persistent IDs of disconnected players (for guest reconnection detection)
+      const disconnectedPersistentIds = activePlayers
+        .filter(p => p.disconnected && p.persistentId)
+        .map(p => p.persistentId);
+      
       return {
         code: code,
         name: room.name,
@@ -4265,7 +4602,8 @@ function broadcastRoomList() {
         anonymousMode: room.anonymousMode,
         allowLargeGames: room.allowLargeGames,
         maxPlayers: room.allowLargeGames ? 10 : 6,
-        playerUserIds: playerUserIds, // For detecting rejoins
+        playerUserIds: playerUserIds, // For detecting rejoins (authenticated users)
+        disconnectedPersistentIds: disconnectedPersistentIds, // For detecting rejoins (guests)
         _hasActivePlayers: activePlayers.length > 0 || activeSpectators.length > 0
       };
     })
@@ -4587,6 +4925,16 @@ io.on('connection', (socket) => {
         return;
       }
     }
+    
+    // Also check for guest players by persistentPlayerId
+    if (persistentPlayerId) {
+      const existingPlayerByPersistentId = room.players.find(p => p.persistentId === persistentPlayerId && !p.hasLeft && p.disconnected);
+      if (existingPlayerByPersistentId) {
+        // This is a guest player reconnecting - trigger attemptReconnect
+        callback({ success: false, shouldReconnect: true, roomCode: roomCode });
+        return;
+      }
+    }
 
     if (room.state !== 'lobby') {
       // During active game, force spectator mode
@@ -4746,7 +5094,7 @@ io.on('connection', (socket) => {
                 resolveAction(room);
                 emitToRoom(room.code, 'gameState');
               }
-            }, 12000); // 12 seconds
+            }, 15000); // 15 seconds
           }
         }
       } else if (room.actionInProgress.phase === 'block') {
@@ -4777,7 +5125,7 @@ io.on('connection', (socket) => {
               nextTurn(room);
               emitToRoom(room.code, 'gameState');
             }
-          }, 12000); // 12 seconds
+          }, 15000); // 15 seconds
         }
       }
     }

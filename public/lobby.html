@@ -245,6 +245,16 @@
     let onlineUsers = [];
     let rooms = [];
     let currentFilter = 'all';
+    
+    // Persistent player ID for reconnection
+    function getOrCreatePlayerId() {
+      let persistentPlayerId = localStorage.getItem('coupPlayerId');
+      if (!persistentPlayerId) {
+        persistentPlayerId = 'player_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+        localStorage.setItem('coupPlayerId', persistentPlayerId);
+      }
+      return persistentPlayerId;
+    }
 
     // Themed guest name generator
     async function generateThemedGuestName() {
@@ -435,7 +445,10 @@
         const statusText = isWaiting ? 'Waiting for players' : 'Game in progress';
         
         // Check if current user is a player in this room (for rejoin)
-        const isMyGame = currentUser && room.playerUserIds && room.playerUserIds.includes(currentUser.id);
+        // For authenticated users, check userId
+        // For guest players, check if their persistentId is in the disconnected list
+        const isMyGame = (currentUser && room.playerUserIds && room.playerUserIds.includes(currentUser.id)) ||
+                        (room.disconnectedPersistentIds && room.disconnectedPersistentIds.includes(getOrCreatePlayerId()));
 
         return `
           <div class="room-item bg-gray-700 rounded-lg p-4 border-l-4 ${isWaiting ? 'border-green-500' : 'border-blue-500'}">
@@ -692,6 +705,13 @@
         localStorage.setItem('coupRoomPassword', password);
       } else {
         localStorage.removeItem('coupRoomPassword');
+      }
+      
+      // If game is in progress, auto-join as spectator
+      if (room && room.state === 'playing') {
+        localStorage.setItem('coupAutoSpectate', 'true');
+      } else {
+        localStorage.removeItem('coupAutoSpectate');
       }
       
       localStorage.setItem('coupJoinCode', code);

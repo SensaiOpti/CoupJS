@@ -27,6 +27,42 @@
       }
     }
     
+    /* 3D Flip Card Styles */
+    .flip-card {
+      background-color: transparent;
+      perspective: 1000px;
+    }
+    
+    .flip-card-inner {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      text-align: center;
+      transition: transform 0.6s;
+      transform-style: preserve-3d;
+    }
+    
+    .flip-card-inner.flipped {
+      transform: rotateY(180deg);
+    }
+    
+    .flip-card-front, .flip-card-back {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      -webkit-backface-visibility: hidden;
+      backface-visibility: hidden;
+    }
+    
+    .flip-card-front {
+      background-color: transparent;
+    }
+    
+    .flip-card-back {
+      background-color: transparent;
+      transform: rotateY(180deg);
+    }
+    
     @keyframes cardReveal {
       0% {
         transform: rotateY(180deg) scale(1);
@@ -324,6 +360,9 @@
     // Game state
     let socket = null;
     let gameState = 'menu';
+    let hasPlayedEndGameSound = false; // Track if we've played victory/gameover sound
+    let gameStartCountdown = null; // Track countdown before game starts
+    let hasSeenInitialCards = false; // Track if player has seen their initial cards
     let roomCode = '';
     let players = [];
     let spectators = [];
@@ -406,6 +445,25 @@
     function playSound(type) {
       if (!soundEnabled) return;
       
+      // List of sounds that should use audio files
+      const audioFileSounds = ['deal', 'reveal', 'eliminate', 'victory', 'gameover', 'lose-influence', 'countdown'];
+      
+      // Try to play audio file first for specific sounds
+      if (audioFileSounds.includes(type)) {
+        try {
+          const audio = new Audio(`/sounds/${type}.mp3`);
+          audio.volume = 0.5; // Adjust volume as needed
+          audio.play().catch(err => {
+            console.error(`Failed to play ${type}.mp3:`, err);
+          });
+          return;
+        } catch (error) {
+          console.error(`Error loading ${type}.mp3:`, error);
+          return;
+        }
+      }
+      
+      // Fall back to synthesized sounds for other types
       try {
         initAudioContext();
         
@@ -814,21 +872,73 @@
         
         if (state.state === 'lobby') {
           gameState = 'lobby';
+          hasPlayedEndGameSound = false; // Reset when back in lobby
+          gameStartCountdown = null; // Clear countdown
+        } else if (state.state === 'countdown') {
+          const wasCountdown = gameState === 'countdown';
+          gameState = 'countdown';
+          
+          if (!wasCountdown) {
+            // Countdown just started - play sound and start visual countdown
+            playSound('countdown');
+            gameStartCountdown = 3;
+            
+            // Update countdown every second
+            const countdownTimer = setInterval(() => {
+              if (gameStartCountdown > 0) {
+                gameStartCountdown--;
+                render();
+              } else {
+                clearInterval(countdownTimer);
+              }
+            }, 1000);
+          }
         } else if (state.state === 'playing') {
           const wasPlaying = gameState === 'playing';
           gameState = 'playing';
+          gameStartCountdown = null; // Clear countdown
           if (!wasPlaying) {
             shouldAutoScroll = true;
             revealAnimatedCards.clear(); // Fresh game — allow animations to fire again
             animatedChatMessages.clear(); // Fresh game — allow chat animations to fire again
             gameStats = null; // Clear previous game stats
+            hasPlayedEndGameSound = false; // Reset for new game
+            hasSeenInitialCards = false; // Reset card reveal
+            
+            // Trigger card flip animation after 1 second
+            setTimeout(() => {
+              hasSeenInitialCards = true;
+              render();
+              
+              // Wait for render to complete, then flip the cards
+              requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                  const flipInners = document.querySelectorAll('.flip-card-inner');
+                  flipInners.forEach(inner => {
+                    inner.classList.add('flipped');
+                  });
+                });
+              });
+            }, 1000);
           }
         } else if (state.state === 'ended') {
           gameState = 'ended';
+          
+          // Play victory or gameover sound (only once per game)
+          if (!hasPlayedEndGameSound) {
+            hasPlayedEndGameSound = true;
+            const winner = state.players.find(p => p.alive);
+            if (winner && winner.id === myPlayerId) {
+              // I won!
+              playSound('victory');
+            } else if (!isSpectator) {
+              // I lost
+              playSound('gameover');
+            }
+          }
         }
         
         // NOW trigger sound effects
-        console.log('Checking sound triggers - log diff:', gameLog.length - oldGameLog.length);
         if (gameLog.length > oldGameLog.length) {
           // Check if user is near bottom before new messages arrive
           const logContainer = document.getElementById('gameLogContainer');
@@ -840,23 +950,30 @@
           }
           
           const newLogs = gameLog.slice(oldGameLog.length);
-          console.log('New logs detected:', newLogs);
           newLogs.forEach(log => {
-            console.log('Processing log - type:', log.type, 'message:', log.message);
-            if (log.type === 'action') {
-              console.log('Playing action sound');
+            // Game start - dealing cards
+            if (log.message.includes('Game started')) {
+              playSound('deal');
+            }
+            // Card reveal - play both reveal sound AND lose-influence sound
+            else if (log.message.includes('reveals and loses')) {
+              playSound('reveal');
+              playSound('lose-influence');
+            }
+            // Player elimination
+            else if (log.message.includes('eliminated')) {
+              playSound('eliminate');
+            }
+            else if (log.type === 'action') {
               playSound('action');
             }
             else if (log.type === 'challenge') {
-              console.log('Playing challenge sound');
               playSound('challenge');
             }
             else if (log.type === 'block') {
-              console.log('Playing block sound');
               playSound('block');
             }
             else if (log.type === 'success') {
-              console.log('Playing success/coins sound');
               if (log.character === 'Income' || log.character === 'ForeignAid' || log.character === 'Duke') {
                 playSound('coins');
               } else {
@@ -864,21 +981,14 @@
               }
             }
             else if (log.type === 'fail') {
-              console.log('Playing fail sound');
               playSound('fail');
-            }
-            else if (log.message.includes('loses') || log.message.includes('eliminated')) {
-              console.log('Playing lose-influence sound');
-              playSound('lose-influence');
             }
           });
         }
         
         // Check if it's now your turn
         const isNowMyTurn = currentPlayerId === myPlayerId;
-        console.log('Turn check - was my turn:', wasMyTurn, 'is now my turn:', isNowMyTurn, 'is spectator:', isSpectator);
         if (!wasMyTurn && isNowMyTurn && !isSpectator) {
-          console.log('Playing your-turn sound');
           playSound('your-turn');
         }
         
@@ -1738,6 +1848,8 @@
         app.innerHTML = renderMenu();
       } else if (gameState === 'lobby') {
         app.innerHTML = renderLobby();
+      } else if (gameState === 'countdown') {
+        app.innerHTML = renderCountdown();
       } else if (gameState === 'playing') {
         // Save scroll position before re-rendering
         const logContainer = document.getElementById('gameLogContainer');
@@ -2239,6 +2351,22 @@
       `;
     }
 
+    function renderCountdown() {
+      const countdownNumber = gameStartCountdown || 3;
+      
+      return `
+        <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white flex items-center justify-center">
+          <div class="text-center">
+            <h1 class="text-6xl font-bold mb-8 text-red-500">The game is starting in...</h1>
+            <div class="text-9xl font-bold animate-pulse mb-4" style="animation: pulse 1s ease-in-out infinite;">
+              ${countdownNumber}
+            </div>
+            <p class="text-2xl text-gray-400">Hurry to your seat!</p>
+          </div>
+        </div>
+      `;
+    }
+
     function renderGame() {
       const myPlayer = players.find(p => p.id === myPlayerId);
       const isMyTurn = currentPlayerId === myPlayerId && !isSpectator;
@@ -2350,7 +2478,6 @@
                         ${player.influences?.map((influence, idx) => {
                           const key = `${player.id}-${idx}`;
                           const spectatorRevealed = spectatorRevealedCards[key];
-                          const shouldShowCard = influence.revealed || player.isMe || (isSpectator && spectatorRevealed);
                           const cardName = influence.card ? influence.card.toLowerCase() : 'back';
 
                           // Only animate the reveal once per card
@@ -2362,16 +2489,38 @@
                             }
                           }
                           
-                          // Determine if card is clickable for zoom
-                          const isZoomable = shouldShowCard; // Can zoom if card is visible to you
-                          const zoomClickHandler = isZoomable && cardName !== 'back' ? `onclick="openCardZoom('${cardName}')"` : '';
-                          const zoomClass = isZoomable && cardName !== 'back' ? 'card-clickable' : '';
+                          // Determine if this is MY unrevealed card that needs flip animation
+                          const needsFlipCard = player.isMe && !influence.revealed;
                           
                           // Spectators can peek at cards only in unranked games
                           const canPeek = isSpectator && !influence.revealed && !ranked;
                           const peekClickHandler = canPeek ? `onclick="toggleSpectatorCardReveal('${player.id}', ${idx})"` : '';
                           const peekCursorClass = canPeek ? 'cursor-pointer hover:bg-gray-600' : '';
                           
+                          // Determine if card is clickable for zoom
+                          const shouldShowCard = influence.revealed || (player.isMe && hasSeenInitialCards) || (isSpectator && spectatorRevealed);
+                          const isZoomable = shouldShowCard;
+                          const zoomClickHandler = isZoomable && cardName !== 'back' ? `onclick="openCardZoom('${cardName}')"` : '';
+                          const zoomClass = isZoomable && cardName !== 'back' ? 'card-clickable' : '';
+                          
+                          // For MY unrevealed cards: use flip card structure
+                          // Always render without flipped class initially - it will be added via DOM manipulation
+                          if (needsFlipCard) {
+                            return `
+                              <div class="relative flex-1 bg-gray-700 rounded p-2 text-center flip-card">
+                                <div class="flip-card-inner" data-card-key="${key}">
+                                  <div class="flip-card-front">
+                                    <img src="${getCardImagePath('back')}" alt="Hidden card" class="w-full h-auto rounded" />
+                                  </div>
+                                  <div class="flip-card-back">
+                                    <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded ${zoomClass}" ${zoomClickHandler} />
+                                  </div>
+                                </div>
+                              </div>
+                            `;
+                          }
+                          
+                          // For all other cards: show normally
                           return `
                             <div class="relative flex-1 ${influence.revealed ? `bg-red-900 border-2 border-red-600 ${revealAnimClass}` : 'bg-gray-700'} rounded p-2 text-center ${peekCursorClass}" ${peekClickHandler}>
                               ${influence.revealed ? `
@@ -3108,6 +3257,8 @@
         // Clear the stored values
         localStorage.removeItem('coupJoinCode');
         localStorage.removeItem('coupPlayAgainAutoJoin');
+        const autoSpectate = localStorage.getItem('coupAutoSpectate');
+        localStorage.removeItem('coupAutoSpectate');
 
         const storedRoomCode = localStorage.getItem('coupCurrentRoom');
         if (lobbyJoinCode === storedRoomCode) {
@@ -3120,6 +3271,34 @@
           const checkSocket = setInterval(() => {
             if (socket && socket.connected) {
               clearInterval(checkSocket);
+              
+              // Check if this is auto-spectate for in-progress game
+              if (autoSpectate === 'true') {
+                // Auto-join as spectator without showing preview
+                console.log('Auto-joining as spectator for in-progress game');
+                const password = localStorage.getItem('coupRoomPassword') || null;
+                localStorage.removeItem('coupRoomPassword');
+                
+                socket.emit('joinRoom', {
+                  roomCode: lobbyJoinCode,
+                  playerName: currentUser ? currentUser.username : (localStorage.getItem('coupGuestUsername') || 'Guest'),
+                  asSpectator: true,
+                  persistentPlayerId: getOrCreatePlayerId(),
+                  password: password
+                }, (joinResponse) => {
+                  if (joinResponse.success) {
+                    roomCode = lobbyJoinCode;
+                    isSpectator = true;
+                    localStorage.setItem('coupCurrentRoom', roomCode);
+                    localStorage.setItem('coupIsSpectator', 'true');
+                    // Server will emit gameState
+                  } else {
+                    alert('Failed to join game: ' + (joinResponse.error || 'Unknown error'));
+                    window.location.href = '/lobby.html';
+                  }
+                });
+                return;
+              }
               
               // Check if this is a "Play Again" auto-join
               if (playAgainAutoJoin === 'true') {
@@ -3146,24 +3325,23 @@
                 return;
               }
               
-              // If authenticated user, try reconnecting first
-              if (currentUser) {
-                socket.emit('attemptReconnect', {
-                  roomCode: lobbyJoinCode,
-                  persistentPlayerId: getOrCreatePlayerId()
-                }, (reconnectResponse) => {
-                  if (reconnectResponse.success) {
-                    // Successfully reconnected!
-                    console.log('Successfully reconnected to game from lobby!');
-                    roomCode = lobbyJoinCode;
-                    isSpectator = false;
-                    localStorage.setItem('coupCurrentRoom', roomCode);
-                    localStorage.setItem('coupIsSpectator', 'false');
-                    // Server will emit gameState which will update everything via socket handler
-                  } else {
-                    // Not a rejoin, show preview as normal
-                    console.log('Not a rejoin, showing preview');
-                    socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
+              // Try reconnecting first (for both authenticated users and guests who might be disconnected)
+              socket.emit('attemptReconnect', {
+                roomCode: lobbyJoinCode,
+                persistentPlayerId: getOrCreatePlayerId()
+              }, (reconnectResponse) => {
+                if (reconnectResponse.success) {
+                  // Successfully reconnected!
+                  console.log('Successfully reconnected to game from lobby!');
+                  roomCode = lobbyJoinCode;
+                  isSpectator = false;
+                  localStorage.setItem('coupCurrentRoom', roomCode);
+                  localStorage.setItem('coupIsSpectator', 'false');
+                  // Server will emit gameState which will update everything via socket handler
+                } else {
+                  // Not a rejoin, show preview as normal
+                  console.log('Not a rejoin, showing preview');
+                  socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
                       if (response.success) {
                         previewMode = true;
                         previewRoomCode = lobbyJoinCode;
@@ -3182,26 +3360,6 @@
                     });
                   }
                 });
-              } else {
-                // Guest user, show preview
-                socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
-                  if (response.success) {
-                    previewMode = true;
-                    previewRoomCode = lobbyJoinCode;
-                    previewData = response.roomData;
-                    players = previewData.players;
-                    spectators = previewData.spectators;
-                    useInquisitor = previewData.useInquisitor;
-                    allowSpectators = previewData.allowSpectators;
-                    allowLargeGames = previewData.allowLargeGames || false;
-                    chatMode = previewData.chatMode || 'separate';
-                    gameState = 'lobby';
-                    render();
-                  } else {
-                    alert('Room not found: ' + lobbyJoinCode);
-                  }
-                });
-              }
             }
           }, 100);
         }

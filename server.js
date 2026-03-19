@@ -1464,8 +1464,6 @@ function handleChallenge(room, challengerId) {
   actor.mustRevealInfluence = true;
   actor.influencesToLose = 1;
   
-  console.log(`Setting mustRevealInfluence=true for ${getDisplayName(room, actor)} (challenged player defending claim)`);
-  
   // Clear any existing timeout
   if (actor.revealTimeout) {
     clearTimeout(actor.revealTimeout);
@@ -1474,15 +1472,12 @@ function handleChallenge(room, challengerId) {
   
   // Set timeout for revealing (15 seconds)
   actor.revealTimeout = setTimeout(() => {
-    console.log(`Reveal timeout fired for ${getDisplayName(room, actor)} (challenged player), mustRevealInfluence=${actor.mustRevealInfluence}`);
     if (actor.mustRevealInfluence) {
       // Auto-reveal leftmost unrevealed card
       const leftmostIndex = actor.influences.findIndex(inf => !inf.revealed);
-      console.log(`Auto-revealing leftmost card at index ${leftmostIndex}`);
       if (leftmostIndex !== -1) {
         addLogToRoom(room, `${getDisplayName(room, actor)} took too long - automatically revealing leftmost card`, 'info');
         const result = revealInfluence(room, actor.id, leftmostIndex);
-        console.log(`Auto-reveal result:`, result);
         if (result.success) {
           emitToRoom(room.code, 'gameState');
         }
@@ -1660,8 +1655,6 @@ function challengeBlock(room, socketId) {
   blocker.mustRevealInfluence = true;
   blocker.influencesToLose = 1;
   
-  console.log(`Setting mustRevealInfluence=true for ${getDisplayName(room, blocker)} (block challenged)`);
-  
   // Clear any existing timeout
   if (blocker.revealTimeout) {
     clearTimeout(blocker.revealTimeout);
@@ -1670,15 +1663,12 @@ function challengeBlock(room, socketId) {
   
   // Set timeout for revealing (15 seconds)
   blocker.revealTimeout = setTimeout(() => {
-    console.log(`Reveal timeout fired for ${getDisplayName(room, blocker)} (block challenged), mustRevealInfluence=${blocker.mustRevealInfluence}`);
     if (blocker.mustRevealInfluence) {
       // Auto-reveal leftmost unrevealed card
       const leftmostIndex = blocker.influences.findIndex(inf => !inf.revealed);
-      console.log(`Auto-revealing leftmost card at index ${leftmostIndex}`);
       if (leftmostIndex !== -1) {
         addLogToRoom(room, `${getDisplayName(room, blocker)} took too long - automatically revealing leftmost card`, 'info');
         const result = revealInfluence(room, blocker.id, leftmostIndex);
-        console.log(`Auto-reveal result:`, result);
         if (result.success) {
           emitToRoom(room.code, 'gameState');
         }
@@ -1909,8 +1899,6 @@ function loseInfluence(room, playerId, count = 1, causedByPlayerId = null, isLos
     player.influenceLossCausedBy = causedByPlayerId; // Track who caused this
     player.revealIsLostChallenge = isLostChallenge; // Track if this is from losing a challenge
     
-    console.log(`Setting mustRevealInfluence=true for ${getDisplayName(room, player)}, isLostChallenge=${isLostChallenge}`);
-    
     // Clear any existing timeout
     if (player.revealTimeout) {
       clearTimeout(player.revealTimeout);
@@ -1919,15 +1907,12 @@ function loseInfluence(room, playerId, count = 1, causedByPlayerId = null, isLos
     
     // Set timeout for revealing (15 seconds)
     player.revealTimeout = setTimeout(() => {
-      console.log(`Reveal timeout fired for ${getDisplayName(room, player)}, mustRevealInfluence=${player.mustRevealInfluence}`);
       if (player.mustRevealInfluence) {
         // Auto-reveal leftmost unrevealed card
         const leftmostIndex = player.influences.findIndex(inf => !inf.revealed);
-        console.log(`Auto-revealing leftmost card at index ${leftmostIndex}`);
         if (leftmostIndex !== -1) {
           addLogToRoom(room, `${getDisplayName(room, player)} took too long - automatically revealing leftmost card`, 'info');
           const result = revealInfluence(room, playerId, leftmostIndex);
-          console.log(`Auto-reveal result:`, result);
           if (result.success) {
             emitToRoom(room.code, 'gameState');
           }
@@ -2105,10 +2090,8 @@ function completeExamine(room, playerId, forceExchange) {
 
 function revealInfluence(room, playerId, cardIndex) {
   const player = getPlayerById(room, playerId);
-  console.log(`revealInfluence called for player ${player?.name}, mustRevealInfluence=${player?.mustRevealInfluence}, cardIndex=${cardIndex}`);
   
   if (!player || !player.mustRevealInfluence) {
-    console.log(`Rejecting reveal - player=${!!player}, mustRevealInfluence=${player?.mustRevealInfluence}`);
     return { success: false, error: 'Not required to reveal influence' };
   }
 
@@ -5177,14 +5160,31 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const result = startGame(room);
-    callback(result);
-    
-    if (result.success) {
-      emitToRoom(roomCode, 'gameState');
-      // Broadcast room list update (state changed from lobby to playing)
-      broadcastRoomList();
+    // Validate player count before starting countdown
+    const maxPlayers = room.allowLargeGames ? 10 : 6;
+    if (room.players.length < 2 || room.players.length > maxPlayers) {
+      callback({ success: false, error: `Need 2-${maxPlayers} players` });
+      return;
     }
+
+    // Set countdown state
+    room.state = 'countdown';
+    room.countdownStartTime = Date.now();
+    
+    callback({ success: true });
+    emitToRoom(roomCode, 'gameState');
+    
+    // After 3 seconds, actually start the game
+    setTimeout(() => {
+      if (room.state === 'countdown') {
+        const result = startGame(room);
+        if (result.success) {
+          emitToRoom(roomCode, 'gameState');
+          // Broadcast room list update (state changed from lobby to playing)
+          broadcastRoomList();
+        }
+      }
+    }, 3000);
   });
 
   socket.on('performAction', (data, callback) => {

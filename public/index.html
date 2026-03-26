@@ -363,6 +363,7 @@
     let hasPlayedEndGameSound = false; // Track if we've played victory/gameover sound
     let gameStartCountdown = null; // Track countdown before game starts
     let hasSeenInitialCards = false; // Track if player has seen their initial cards
+    let initialFlipCompleted = false; // Track if the flip animation has finished
     let roomCode = '';
     let players = [];
     let spectators = [];
@@ -904,6 +905,7 @@
             gameStats = null; // Clear previous game stats
             hasPlayedEndGameSound = false; // Reset for new game
             hasSeenInitialCards = false; // Reset card reveal
+            initialFlipCompleted = false; // Reset flip completion
             
             // Trigger card flip animation after 1 second
             setTimeout(() => {
@@ -917,6 +919,12 @@
                   flipInners.forEach(inner => {
                     inner.classList.add('flipped');
                   });
+                  
+                  // Mark flip as completed after animation finishes (0.6s transition)
+                  setTimeout(() => {
+                    initialFlipCompleted = true;
+                    render(); // Re-render to switch to normal card display
+                  }, 600);
                 });
               });
             }, 1000);
@@ -2490,7 +2498,8 @@
                           }
                           
                           // Determine if this is MY unrevealed card that needs flip animation
-                          const needsFlipCard = player.isMe && !influence.revealed;
+                          // Only use flip card structure if we haven't completed the initial flip yet
+                          const needsFlipCard = player.isMe && !influence.revealed && !initialFlipCompleted;
                           
                           // Spectators can peek at cards only in unranked games
                           const canPeek = isSpectator && !influence.revealed && !ranked;

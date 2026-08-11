@@ -372,7 +372,6 @@
     let actionInProgress = null;
     let gameLog = [];
     let selectedTarget = null;
-    let pendingConfirmAction = null; // Holds an action name (income/foreignAid/tax/exchange) awaiting confirmation before firing
     let playerName = localStorage.getItem('coupGuestName') || '';
     let joinCode = '';
     let myResponse = null;
@@ -1276,7 +1275,6 @@
           alert(response.error);
         } else {
           selectedTarget = null;
-          pendingConfirmAction = null;
           render();
         }
       });
@@ -1410,7 +1408,10 @@
       let bgColor = '';
       let textColor = 'text-white';
       
-      if (log.type === 'action') {
+      // Use character background if character is specified
+      if (log.character) {
+        bgColor = getCharacterBgColor(log.character);
+      } else if (log.type === 'action') {
         bgColor = 'bg-blue-900 bg-opacity-20';
       } else if (log.type === 'challenge') {
         bgColor = 'bg-red-900 bg-opacity-20';
@@ -1422,24 +1423,15 @@
         bgColor = 'bg-red-900 bg-opacity-20';
       }
       
+      // For info messages without character, keep white text
+      // All messages now use white text for legibility
+      
       return { bgColor, textColor };
-    }
-
-    // Maps a character-specific action word to that character's badge color.
-    // (Exchange is shared by Ambassador/Inquisitor depending on which is active this game.)
-    function getActionCharacterBg(actionWord) {
-      const lower = actionWord.toLowerCase();
-      if (lower === 'tax') return 'bg-duke';
-      if (lower === 'steal' || lower === 'steals') return 'bg-captain';
-      if (lower === 'exchange' || lower === 'exchanges') return useInquisitor ? 'bg-inquisitor' : 'bg-ambassador';
-      if (lower === 'examine' || lower === 'examines') return 'bg-inquisitor';
-      if (lower === 'assassinate' || lower === 'assassinates' || lower === 'assassination') return 'bg-assassin';
-      return '';
     }
 
     function highlightCharactersInLog(message) {
       const characters = ['Duke', 'Assassin', 'Captain', 'Ambassador', 'Inquisitor', 'Contessa'];
-      const actions = ['Tax', 'Steal', 'Exchange', 'exchanges', 'Examine', 'examines', 'Income', 'Foreign Aid', 'Coup', 'assassinate', 'assassinates', 'assassination', 'steals', 'blocks'];
+      const actions = ['Tax', 'Steal', 'Exchange', 'Examine', 'Income', 'Foreign Aid', 'Coup', 'assassinate', 'assassinates', 'assassination', 'steals', 'steal', 'blocks'];
       
       let result = message;
       
@@ -1455,23 +1447,16 @@
         result = result.replace(regex, `<span class="font-bold">$1</span>`);
       });
       
-      // Character names get a solid badge in their signature color (e.g. Duke -> purple)
+      // Make characters bold (no color since background provides the color)
       characters.forEach(char => {
         const regex = new RegExp(`\\b${char}\\b`, 'gi');
-        const bgClass = getCharacterBgColor(char);
-        result = result.replace(regex, `<span class="font-bold ${bgClass} text-white px-1.5 py-0.5 rounded whitespace-nowrap">${char}</span>`);
+        result = result.replace(regex, `<span class="font-bold">${char}</span>`);
       });
       
-      // Actions tied to a specific character (Tax, Steal, Exchange, Examine, assassinate...)
-      // get that same character's badge color; other actions just stay bold.
+      // Make actions bold (no color since background provides the color)
       actions.forEach(action => {
         const regex = new RegExp(`\\b${action}\\b`, 'gi');
-        result = result.replace(regex, (match) => {
-          const bgClass = getActionCharacterBg(match);
-          return bgClass
-            ? `<span class="font-bold ${bgClass} text-white px-1.5 py-0.5 rounded whitespace-nowrap">${match}</span>`
-            : `<span class="font-bold">${match}</span>`;
-        });
+        result = result.replace(regex, (match) => `<span class="font-bold">${match}</span>`);
       });
       
       return result;
@@ -2648,7 +2633,7 @@
                         </div>
                       ` : ''}
                     </div>
-                    <p class="mb-4 text-yellow-100">${highlightCharactersInLog((() => {
+                    <p class="mb-4 text-yellow-100">${(() => {
                       // Generate action description
                       const actorName = actionInProgress.playerName;
                       const targetName = actionInProgress.targetName;
@@ -2669,7 +2654,7 @@
                         return `${actorName} claims to be the Inquisitor and examines ${targetName}`;
                       }
                       return gameLog[gameLog.length - 1]?.message || '';
-                    })())}</p>
+                    })()}</p>
                     
                     ${myResponse ? `
                       <div class="bg-green-900 border border-green-600 rounded p-4 text-center">
@@ -2726,7 +2711,7 @@
                       ` : ''}
                     </div>
                     <p class="mb-4 text-blue-100">
-                      ${highlightCharactersInLog(`${players.find(p => p.id === actionInProgress.blockerId)?.name} blocked with ${actionInProgress.blockCard}`)}
+                      ${players.find(p => p.id === actionInProgress.blockerId)?.name} blocked with ${actionInProgress.blockCard}
                     </p>
                     
                     ${myResponse ? `
@@ -2936,52 +2921,28 @@
                           Valid targets are glowing - hover to see effect
                         </div>
                       </div>
-                    ` : pendingConfirmAction ? `
-                      <div class="mb-4 p-4 bg-gradient-to-r from-blue-900 to-purple-900 border-2 border-blue-500 rounded-lg animate-fadeIn">
-                        <div class="flex justify-between items-center gap-4">
-                          <div>
-                            <div class="text-lg font-bold text-blue-200">
-                              ⚠️ Confirm ${pendingConfirmAction === 'income' ? 'Income' : pendingConfirmAction === 'foreignAid' ? 'Foreign Aid' : pendingConfirmAction === 'tax' ? 'Tax' : 'Exchange'}?
-                            </div>
-                            <div class="text-sm text-blue-300 mt-1">
-                              ${pendingConfirmAction === 'income' ? 'Take Income (+1 💰). Cannot be blocked or challenged.' : ''}
-                              ${pendingConfirmAction === 'foreignAid' ? 'Take Foreign Aid (+2 💰). Any player may block with the Duke.' : ''}
-                              ${pendingConfirmAction === 'tax' ? 'Claim the Duke and collect Tax (+3 💰).' : ''}
-                              ${pendingConfirmAction === 'exchange' ? `Claim the ${useInquisitor ? 'Inquisitor' : 'Ambassador'} and Exchange cards.` : ''}
-                            </div>
-                          </div>
-                          <div class="flex gap-2 flex-shrink-0">
-                            <button onclick="pendingConfirmAction = null; render()" class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded font-bold transition-colors">
-                              Cancel
-                            </button>
-                            <button onclick="performAction(pendingConfirmAction)" class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded font-bold transition-colors">
-                              Confirm
-                            </button>
-                          </div>
-                        </div>
-                      </div>
                     ` : ''}
                     
                     <!-- Action Buttons -->
                     <div class="space-y-3">
                       <!-- Row 1: Income, Foreign Aid -->
                       <div class="grid grid-cols-2 gap-3">
-                        <button onclick="selectedTarget = null; pendingConfirmAction = 'income'; render()" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
+                        <button onclick="performAction('income')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
                           Income (+1 💰)
                         </button>
-                        <button onclick="selectedTarget = null; pendingConfirmAction = 'foreignAid'; render()" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
+                        <button onclick="performAction('foreignAid')" class="bg-gray-600 hover:bg-gray-700 p-3 rounded text-white">
                           Foreign Aid (+2 💰)
                         </button>
                       </div>
                       
                       <!-- Row 2: Assassinate, Steal -->
                       <div class="grid grid-cols-2 gap-3">
-                        <button onclick="pendingConfirmAction = null; selectedTarget = 'assassinate'; render()" 
+                        <button onclick="selectedTarget = 'assassinate'; render()" 
                           class="bg-assassin p-3 rounded text-white ${myPlayer.coins < 3 ? 'opacity-50 cursor-not-allowed' : ''}"
                           ${myPlayer.coins < 3 ? 'disabled' : ''}>
                           Assassinate (3 💰)
                         </button>
-                        <button onclick="pendingConfirmAction = null; selectedTarget = 'steal'; render()" class="bg-captain p-3 rounded text-white">
+                        <button onclick="selectedTarget = 'steal'; render()" class="bg-captain p-3 rounded text-white">
                           Steal
                         </button>
                       </div>
@@ -2990,30 +2951,30 @@
                       ${useInquisitor ? `
                         <!-- Inquisitor mode: 3 buttons -->
                         <div class="grid grid-cols-3 gap-3">
-                          <button onclick="selectedTarget = null; pendingConfirmAction = 'tax'; render()" class="bg-duke p-3 rounded text-white">
+                          <button onclick="performAction('tax')" class="bg-duke p-3 rounded text-white">
                             Tax (+3 💰)
                           </button>
-                          <button onclick="pendingConfirmAction = null; selectedTarget = 'examine'; render()" class="bg-inquisitor p-3 rounded text-white">
+                          <button onclick="selectedTarget = 'examine'; render()" class="bg-inquisitor p-3 rounded text-white">
                             Examine
                           </button>
-                          <button onclick="selectedTarget = null; pendingConfirmAction = 'exchange'; render()" class="bg-inquisitor p-3 rounded text-white">
+                          <button onclick="performAction('exchange')" class="bg-inquisitor p-3 rounded text-white">
                             Exchange
                           </button>
                         </div>
                       ` : `
                         <!-- Ambassador mode: 2 buttons -->
                         <div class="grid grid-cols-2 gap-3">
-                          <button onclick="selectedTarget = null; pendingConfirmAction = 'tax'; render()" class="bg-duke p-3 rounded text-white">
+                          <button onclick="performAction('tax')" class="bg-duke p-3 rounded text-white">
                             Tax (+3 💰)
                           </button>
-                          <button onclick="selectedTarget = null; pendingConfirmAction = 'exchange'; render()" class="bg-ambassador p-3 rounded text-white">
+                          <button onclick="performAction('exchange')" class="bg-ambassador p-3 rounded text-white">
                             Exchange
                           </button>
                         </div>
                       `}
                       
                       <!-- Row 4: Coup (spans 2 columns) -->
-                      <button onclick="pendingConfirmAction = null; selectedTarget = 'coup'; render()" 
+                      <button onclick="selectedTarget = 'coup'; render()" 
                         class="w-full bg-gray-600 hover:bg-gray-700 p-3 rounded text-white ${myPlayer.coins < 7 ? 'opacity-50 cursor-not-allowed' : ''} ${myPlayer.coins >= 10 ? 'mandatory-coup-glow' : ''}"
                         ${myPlayer.coins < 7 ? 'disabled' : ''}>
                         ${myPlayer.coins >= 10 ? 'You must Coup with 10 coins!' : 'Coup (7 💰)'}

@@ -12,62 +12,84 @@
       background: linear-gradient(to bottom right, #7f1d1d, #1f2937, #000000);
       min-height: 100vh;
     }
-    
+
     .leaderboard-card {
       background: rgba(31, 41, 55, 0.8);
       backdrop-filter: blur(10px);
       border: 1px solid rgba(75, 85, 99, 0.3);
       transition: all 0.3s ease;
     }
-    
+
     .leaderboard-row {
       transition: all 0.2s ease;
     }
-    
+
     .leaderboard-row:hover {
       background: rgba(55, 65, 81, 0.6);
       transform: translateX(5px);
     }
-    
-    .rank-1 { 
+
+    .rank-1 {
       background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
       color: #000;
     }
-    
-    .rank-2 { 
+
+    .rank-2 {
       background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%);
       color: #000;
     }
-    
-    .rank-3 { 
+
+    .rank-3 {
       background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
       color: #000;
     }
-    
+
     .tab-button {
       transition: all 0.3s ease;
     }
-    
+
     .tab-button.active {
       background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
       transform: translateY(-2px);
       box-shadow: 0 4px 6px rgba(220, 38, 38, 0.3);
     }
-    
+
     .skeleton {
       background: linear-gradient(90deg, #374151 25%, #4b5563 50%, #374151 75%);
       background-size: 200% 100%;
       animation: loading 1.5s infinite;
     }
-    
+
     @keyframes loading {
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
     }
-    
+
     .highlight-me {
       background: rgba(59, 130, 246, 0.2);
       border-left: 4px solid #3b82f6;
+    }
+
+    .sortable-header {
+      cursor: pointer;
+      user-select: none;
+      transition: color 0.15s ease;
+    }
+
+    .sortable-header:hover {
+      color: #fff;
+    }
+
+    .sort-icon {
+      display: inline-block;
+      font-size: 0.7rem;
+      opacity: 0.4;
+      transition: opacity 0.15s ease, color 0.15s ease;
+    }
+
+    .sort-icon.active {
+      opacity: 1;
+      color: #f87171;
     }
   </style>
 </head>
@@ -199,13 +221,13 @@
           <div class="text-6xl mb-3">🥈</div>
           <div id="podium2" class="podium-player"></div>
         </div>
-        
+
         <!-- 1st Place -->
         <div class="leaderboard-card rounded-lg p-6 text-center ring-4 ring-yellow-500">
           <div class="text-8xl mb-3">🥇</div>
           <div id="podium1" class="podium-player"></div>
         </div>
-        
+
         <!-- 3rd Place -->
         <div class="leaderboard-card rounded-lg p-6 text-center mt-12">
           <div class="text-5xl mb-3">🥉</div>
@@ -213,18 +235,37 @@
         </div>
       </div>
 
+      <!-- Sort Hint -->
+      <div class="text-xs text-gray-500 mb-2 flex items-center gap-1">
+        <span>💡</span> Click any column header to sort the table
+      </div>
+
       <!-- Leaderboard Table -->
       <div class="leaderboard-card rounded-lg overflow-hidden">
         <table class="w-full">
           <thead class="bg-gray-900">
             <tr>
-              <th class="px-6 py-4 text-left text-sm font-bold text-gray-400">Rank</th>
-              <th class="px-6 py-4 text-left text-sm font-bold text-gray-400">Player</th>
-              <th class="px-6 py-4 text-right text-sm font-bold text-gray-400" id="statHeader">Stat</th>
-              <th class="px-6 py-4 text-right text-sm font-bold text-gray-400">Games</th>
-              <th class="px-6 py-4 text-right text-sm font-bold text-gray-400">Wins</th>
-              <th class="px-6 py-4 text-right text-sm font-bold text-gray-400">Win Rate</th>
-              <th class="px-6 py-4 text-right text-sm font-bold text-gray-400">Elo</th>
+              <th id="th-rank" onclick="sortTable('rank')" class="sortable-header px-6 py-4 text-left text-sm font-bold text-gray-400">
+                Rank <span id="sortIcon-rank" class="sort-icon">↕</span>
+              </th>
+              <th id="th-username" onclick="sortTable('username')" class="sortable-header px-6 py-4 text-left text-sm font-bold text-gray-400">
+                Player <span id="sortIcon-username" class="sort-icon">↕</span>
+              </th>
+              <th id="th-primaryStat" onclick="sortTable('primaryStat')" class="sortable-header px-6 py-4 text-right text-sm font-bold text-gray-400">
+                <span id="statHeader">Stat</span> <span id="sortIcon-primaryStat" class="sort-icon">↕</span>
+              </th>
+              <th id="th-gamesPlayed" onclick="sortTable('gamesPlayed')" class="sortable-header px-6 py-4 text-right text-sm font-bold text-gray-400">
+                Games <span id="sortIcon-gamesPlayed" class="sort-icon">↕</span>
+              </th>
+              <th id="th-gamesWon" onclick="sortTable('gamesWon')" class="sortable-header px-6 py-4 text-right text-sm font-bold text-gray-400">
+                Wins <span id="sortIcon-gamesWon" class="sort-icon">↕</span>
+              </th>
+              <th id="th-winRate" onclick="sortTable('winRate')" class="sortable-header px-6 py-4 text-right text-sm font-bold text-gray-400">
+                Win Rate <span id="sortIcon-winRate" class="sort-icon">↕</span>
+              </th>
+              <th id="th-elo" onclick="sortTable('elo')" class="sortable-header px-6 py-4 text-right text-sm font-bold text-gray-400">
+                Elo <span id="sortIcon-elo" class="sort-icon">↕</span>
+              </th>
             </tr>
           </thead>
           <tbody id="leaderboardRows">
@@ -247,6 +288,9 @@
     let currentLeaderboard = 'elo';
     let currentUser = null;
     let authToken = localStorage.getItem('coupAuthToken');
+    let currentLeaderboardData = []; // Unsorted data as returned by the API
+    let sortColumn = 'primaryStat';
+    let sortDirection = 'desc';
 
     const leaderboardConfig = {
       elo: {
@@ -331,20 +375,20 @@
 
       const userInfo = document.getElementById('userInfo');
       userInfo.classList.remove('hidden');
-      
+
       // Show and update Profile button
       const profileBtn = document.getElementById('profileBtn');
       if (profileBtn) {
         profileBtn.href = `/profile.html?user=${currentUser.username}`;
         profileBtn.classList.remove('hidden');
       }
-      
+
       // Show Settings button
       const settingsBtn = document.getElementById('settingsBtn');
       if (settingsBtn) {
         settingsBtn.classList.remove('hidden');
       }
-      
+
       // Show moderator button if user is admin or moderator
       if (currentUser.role === 'admin' || currentUser.role === 'moderator') {
         const moderatorBtn = document.getElementById('moderatorBtn');
@@ -352,7 +396,7 @@
           moderatorBtn.classList.remove('hidden');
         }
       }
-      
+
       // Show logout button, hide login button
       const logoutBtn = document.getElementById('logoutBtn');
       const loginBtn = document.getElementById('loginBtn');
@@ -363,8 +407,8 @@
 
       if (currentUser.stats) {
         document.getElementById('userElo').textContent = currentUser.stats.elo_rating || 1200;
-        
-        const winRate = currentUser.stats.games_played > 0 
+
+        const winRate = currentUser.stats.games_played > 0
           ? ((currentUser.stats.games_won / currentUser.stats.games_played) * 100).toFixed(1)
           : 0;
         document.getElementById('userWinRate').textContent = winRate + '%';
@@ -396,7 +440,7 @@
 
     async function loadLeaderboard(type) {
       currentLeaderboard = type;
-      
+
       // Update tab styling
       document.querySelectorAll('.tab-button').forEach(btn => {
         if (btn.dataset.tab === type) {
@@ -413,7 +457,7 @@
 
       try {
         const response = await fetch(`${API_BASE}/api/leaderboards/${type}?limit=100&minGames=5`);
-        
+
         if (!response.ok) {
           throw new Error('Failed to load leaderboard');
         }
@@ -440,8 +484,14 @@
           podium.classList.add('hidden');
         }
 
-        // Render leaderboard
-        renderLeaderboard(data.leaderboard, type);
+        // Store the raw data and reset sorting to this leaderboard's default order
+        // (matches the API's own ordering, e.g. Wins tab defaults to sorted-by-wins)
+        currentLeaderboardData = data.leaderboard;
+        sortColumn = 'primaryStat';
+        sortDirection = 'desc';
+
+        // Render leaderboard (sorted)
+        applySortAndRender();
 
         // Update user's rank for this leaderboard
         if (currentUser) {
@@ -529,6 +579,76 @@
       });
     }
 
+    // Pull the comparable value for a given player + column
+    function getSortValue(player, column) {
+      switch (column) {
+        case 'rank': return player.rank;
+        case 'username': return player.username.toLowerCase();
+        case 'primaryStat': {
+          const val = player.primaryStat;
+          return typeof val === 'number' ? val : parseFloat(val) || 0;
+        }
+        case 'gamesPlayed': return player.secondaryStats.gamesPlayed;
+        case 'gamesWon': return player.secondaryStats.gamesWon;
+        case 'winRate': return player.secondaryStats.winRate;
+        case 'elo': return player.secondaryStats.elo;
+        default: return 0;
+      }
+    }
+
+    // Called when a column header is clicked
+    function sortTable(column) {
+      if (sortColumn === column) {
+        // Clicking the active column again flips direction
+        sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      } else {
+        sortColumn = column;
+        // Sensible defaults: names A→Z first, numbers highest-first
+        sortDirection = column === 'username' ? 'asc' : 'desc';
+      }
+      applySortAndRender();
+    }
+
+    // Sorts the current data set and re-renders the table + header indicators
+    function applySortAndRender() {
+      const sorted = [...currentLeaderboardData].sort((a, b) => {
+        const valA = getSortValue(a, sortColumn);
+        const valB = getSortValue(b, sortColumn);
+        let cmp;
+        if (typeof valA === 'string' || typeof valB === 'string') {
+          cmp = String(valA).localeCompare(String(valB));
+        } else {
+          cmp = valA - valB;
+        }
+        return sortDirection === 'asc' ? cmp : -cmp;
+      });
+
+      renderLeaderboard(sorted, currentLeaderboard);
+      updateSortIndicators();
+    }
+
+    // Highlights the active column header and updates its arrow
+    function updateSortIndicators() {
+      const columns = ['rank', 'username', 'primaryStat', 'gamesPlayed', 'gamesWon', 'winRate', 'elo'];
+      columns.forEach(col => {
+        const th = document.getElementById(`th-${col}`);
+        const icon = document.getElementById(`sortIcon-${col}`);
+        if (!th || !icon) return;
+
+        if (col === sortColumn) {
+          th.classList.add('text-white');
+          th.classList.remove('text-gray-400');
+          icon.classList.add('active');
+          icon.textContent = sortDirection === 'asc' ? '▲' : '▼';
+        } else {
+          th.classList.remove('text-white');
+          th.classList.add('text-gray-400');
+          icon.classList.remove('active');
+          icon.textContent = '↕';
+        }
+      });
+    }
+
     function formatStat(value) {
       if (typeof value === 'number') {
         // Check if it has decimals
@@ -548,13 +668,13 @@
     async function init() {
       await verifyAuth();
       await loadLeaderboard('elo');
-      
+
       // Show login button if not logged in
       if (!currentUser) {
         const loginBtn = document.getElementById('loginBtn');
         if (loginBtn) loginBtn.classList.remove('hidden');
       }
-      
+
       // Add logout handler
       const logoutBtn = document.getElementById('logoutBtn');
       if (logoutBtn) {
@@ -566,7 +686,7 @@
     }
 
     init();
-    
+
     // Socket.io connection for online user tracking
     const socketScript = document.createElement('script');
     socketScript.src = '/socket.io/socket.io.js';
@@ -575,7 +695,7 @@
       const socket = io({
         auth: { token: authToken }
       });
-      
+
       socket.on('connect', () => {
         // For guests, get username from localStorage
         const guestUsername = localStorage.getItem('coupGuestUsername');

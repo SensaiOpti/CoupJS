@@ -2,11 +2,43 @@ const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
+const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const auth = require('./auth');
 const db = require('./database');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'coup-secret-key-change-in-production';
+
+// Returns subfolder names found under public/images/cards (each is a deck style).
+// Falls back to ['default'] if the folder is missing/empty so the app never has zero options.
+function getAvailableDecks() {
+  try {
+    const cardsDir = path.join(__dirname, 'public', 'images', 'cards');
+    if (!fs.existsSync(cardsDir)) return ['default'];
+    const folders = fs.readdirSync(cardsDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name);
+    return folders.length > 0 ? folders : ['default'];
+  } catch (error) {
+    console.error('Error reading card deck directories:', error);
+    return ['default'];
+  }
+}
+
+// Returns subfolder names found under public/sounds (each is a sound pack).
+function getAvailableSoundPacks() {
+  try {
+    const soundsDir = path.join(__dirname, 'public', 'sounds');
+    if (!fs.existsSync(soundsDir)) return ['default'];
+    const folders = fs.readdirSync(soundsDir, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name);
+    return folders.length > 0 ? folders : ['default'];
+  } catch (error) {
+    console.error('Error reading sound pack directories:', error);
+    return ['default'];
+  }
+}
 
 const app = express();
 const server = http.createServer(app);
@@ -141,7 +173,7 @@ app.post('/api/user/deck-preference', (req, res) => {
   }
   
   // Validate deck preference
-  const validDecks = ['default', 'anime', 'pixel', 'minimalist'];
+  const validDecks = getAvailableDecks();
   if (!validDecks.includes(deckPreference)) {
     return res.status(400).json({ error: 'Invalid deck preference' });
   }
@@ -190,6 +222,16 @@ app.get('/api/avatars/images', (req, res) => {
   }
 });
 
+// GET /api/decks - Get list of available card deck styles (one per subfolder of public/images/cards)
+app.get('/api/decks', (req, res) => {
+  res.json({ decks: getAvailableDecks() });
+});
+
+// GET /api/sound-packs - Get list of available sound packs (one per subfolder of public/sounds)
+app.get('/api/sound-packs', (req, res) => {
+  res.json({ soundPacks: getAvailableSoundPacks() });
+});
+
 // GET /api/user/settings - Get current user settings
 app.get('/api/user/settings', (req, res) => {
   const token = req.headers.authorization?.split(' ')[1] || req.query.token;
@@ -197,10 +239,11 @@ app.get('/api/user/settings', (req, res) => {
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
   
   try {
-    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email, profanity_filter, avatar FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT deck_preference, sound_preference, privacy_settings, bio, email, profanity_filter, avatar FROM users WHERE id = ?').get(verification.user.id);
     const privacy = JSON.parse(user.privacy_settings || '{}');
     res.json({
       deckPreference: user.deck_preference || 'default',
+      soundPreference: user.sound_preference || 'default',
       bio: user.bio || '',
       email: user.email || '',
       profanityFilter: user.profanity_filter === 1,
@@ -225,15 +268,18 @@ app.post('/api/user/settings', (req, res) => {
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
   
   try {
-    const { privacy, deckPreference, bio, email, profanityFilter, avatar } = req.body;
+    const { privacy, deckPreference, soundPreference, bio, email, profanityFilter, avatar } = req.body;
     
     // Build update
-    const user = db.prepare('SELECT deck_preference, privacy_settings, bio, email, profanity_filter, avatar FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT deck_preference, sound_preference, privacy_settings, bio, email, profanity_filter, avatar FROM users WHERE id = ?').get(verification.user.id);
     const currentPrivacy = JSON.parse(user.privacy_settings || '{}');
     const newPrivacy = { ...currentPrivacy, ...privacy };
     
-    const validDecks = ['default', 'anime', 'pixel', 'minimalist'];
+    const validDecks = getAvailableDecks();
     const newDeck = validDecks.includes(deckPreference) ? deckPreference : user.deck_preference;
+    
+    const validSoundPacks = getAvailableSoundPacks();
+    const newSound = validSoundPacks.includes(soundPreference) ? soundPreference : user.sound_preference;
     
     // Limit bio to 250 characters
     const newBio = typeof bio === 'string' ? bio.substring(0, 250) : user.bio || '';
@@ -248,8 +294,8 @@ app.post('/api/user/settings', (req, res) => {
     const isValidAvatar = typeof avatar === 'string' && avatar.length > 0 && avatar.length <= 100;
     const newAvatar = isValidAvatar ? avatar : user.avatar || '👤';
     
-    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, bio = ?, email = ?, profanity_filter = ?, avatar = ? WHERE id = ?')
-      .run(JSON.stringify(newPrivacy), newDeck, newBio, newEmail, newProfanityFilter, newAvatar, verification.user.id);
+    db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, sound_preference = ?, bio = ?, email = ?, profanity_filter = ?, avatar = ? WHERE id = ?')
+      .run(JSON.stringify(newPrivacy), newDeck, newSound, newBio, newEmail, newProfanityFilter, newAvatar, verification.user.id);
     db.saveDatabase();
     
     res.json({ success: true });

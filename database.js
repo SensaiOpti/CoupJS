@@ -28,6 +28,7 @@ async function initDatabase() {
       email TEXT,
       display_name TEXT NOT NULL,
       deck_preference TEXT DEFAULT 'default',
+      sound_preference TEXT DEFAULT 'default',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_login DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -36,6 +37,13 @@ async function initDatabase() {
   // Add deck_preference column if it doesn't exist (for existing databases)
   try {
     db.run(`ALTER TABLE users ADD COLUMN deck_preference TEXT DEFAULT 'default'`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
+  // Add sound_preference column if it doesn't exist (for existing databases)
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN sound_preference TEXT DEFAULT 'default'`);
   } catch (e) {
     // Column already exists, ignore
   }

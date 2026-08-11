@@ -403,6 +403,8 @@
 
     // Deck preference
     let deckPreference = localStorage.getItem('coupDeckPreference') || 'default';
+    // Sound pack preference
+    let soundPreference = localStorage.getItem('coupSoundPreference') || 'default';
 
     // Room preview state
     let previewRoomCode = '';
@@ -447,25 +449,50 @@
     function playSound(type) {
       if (!soundEnabled) return;
       
-      // List of sounds that should use audio files
-      const audioFileSounds = ['deal', 'reveal', 'eliminate', 'victory', 'gameover', 'lose-influence', 'countdown'];
+      // Every sound event now tries an actual audio file first - from whichever pack
+      // is selected, falling back to the default pack, and finally to a built-in
+      // synthesized tone - so a pack can override as much or as little as it wants
+      // and nothing ever goes silent.
+      let fallbackHandled = false;
       
-      // Try to play audio file first for specific sounds
-      if (audioFileSounds.includes(type)) {
-        try {
-          const audio = new Audio(`/sounds/${type}.mp3`);
-          audio.volume = 0.5; // Adjust volume as needed
-          audio.play().catch(err => {
-            console.error(`Failed to play ${type}.mp3:`, err);
-          });
-          return;
-        } catch (error) {
-          console.error(`Error loading ${type}.mp3:`, error);
-          return;
+      const triggerFallback = () => {
+        if (fallbackHandled) return;
+        fallbackHandled = true;
+        
+        if (soundPreference !== 'default') {
+          let defaultFailed = false;
+          const useSynth = () => {
+            if (defaultFailed) return;
+            defaultFailed = true;
+            playSynthesizedSound(type);
+          };
+          try {
+            const fallbackAudio = new Audio(`/sounds/default/${type}.mp3`);
+            fallbackAudio.volume = 0.5;
+            fallbackAudio.addEventListener('error', useSynth);
+            fallbackAudio.play().catch(useSynth);
+          } catch (error) {
+            useSynth();
+          }
+        } else {
+          // Already on the default pack and it's missing this file too
+          playSynthesizedSound(type);
         }
-      }
+      };
       
-      // Fall back to synthesized sounds for other types
+      try {
+        const audio = new Audio(`/sounds/${soundPreference}/${type}.mp3`);
+        audio.volume = 0.5;
+        audio.addEventListener('error', triggerFallback);
+        audio.play().catch(triggerFallback);
+      } catch (error) {
+        triggerFallback();
+      }
+    }
+    
+    // Built-in fallback tones, used only when neither the selected pack nor the
+    // default pack has an audio file for this sound type.
+    function playSynthesizedSound(type) {
       try {
         initAudioContext();
         
@@ -566,9 +593,70 @@
             oscillator.start(now);
             oscillator.stop(now + 0.08);
             break;
+          
+          // The remaining cases only existed as audio files until now. These give a
+          // reasonable fallback tone if a pack is missing them entirely (including
+          // the default pack, in the rare case its files are removed/incomplete).
+          case 'deal':
+            oscillator.frequency.setValueAtTime(300, now);
+            oscillator.frequency.setValueAtTime(400, now + 0.06);
+            oscillator.frequency.setValueAtTime(500, now + 0.12);
+            oscillator.frequency.setValueAtTime(600, now + 0.18);
+            gainNode.gain.setValueAtTime(0.2, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+            oscillator.start(now);
+            oscillator.stop(now + 0.3);
+            break;
+            
+          case 'reveal':
+            oscillator.frequency.setValueAtTime(500, now);
+            oscillator.frequency.exponentialRampToValueAtTime(200, now + 0.25);
+            gainNode.gain.setValueAtTime(0.25, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.25);
+            oscillator.start(now);
+            oscillator.stop(now + 0.25);
+            break;
+            
+          case 'eliminate':
+            oscillator.frequency.setValueAtTime(300, now);
+            oscillator.frequency.exponentialRampToValueAtTime(80, now + 0.7);
+            gainNode.gain.setValueAtTime(0.3, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.7);
+            oscillator.start(now);
+            oscillator.stop(now + 0.7);
+            break;
+            
+          case 'victory':
+            oscillator.frequency.setValueAtTime(523, now);
+            oscillator.frequency.setValueAtTime(659, now + 0.15);
+            oscillator.frequency.setValueAtTime(784, now + 0.3);
+            oscillator.frequency.setValueAtTime(1047, now + 0.45);
+            gainNode.gain.setValueAtTime(0.3, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.8);
+            oscillator.start(now);
+            oscillator.stop(now + 0.8);
+            break;
+            
+          case 'gameover':
+            oscillator.frequency.setValueAtTime(300, now);
+            oscillator.frequency.setValueAtTime(250, now + 0.2);
+            oscillator.frequency.setValueAtTime(200, now + 0.4);
+            gainNode.gain.setValueAtTime(0.25, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.7);
+            oscillator.start(now);
+            oscillator.stop(now + 0.7);
+            break;
+            
+          case 'countdown':
+            oscillator.frequency.setValueAtTime(700, now);
+            gainNode.gain.setValueAtTime(0.25, now);
+            gainNode.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+            oscillator.start(now);
+            oscillator.stop(now + 0.15);
+            break;
         }
       } catch (error) {
-        console.error('Error playing sound:', error);
+        console.error('Error playing synthesized sound:', error);
       }
     }
 
@@ -1676,6 +1764,12 @@
           if (currentUser.deck_preference) {
             deckPreference = currentUser.deck_preference;
             localStorage.setItem('coupDeckPreference', deckPreference);
+          }
+          
+          // Load sound preference from user data
+          if (currentUser.sound_preference) {
+            soundPreference = currentUser.sound_preference;
+            localStorage.setItem('coupSoundPreference', soundPreference);
           }
         } else {
           // Token invalid, clear it

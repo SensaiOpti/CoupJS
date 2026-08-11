@@ -59,26 +59,42 @@ Additionally, the super admin is able to promote users to be administrators.
 
 Please note that administrators cannot be timed out nor banned. Be careful who you promote!
 
+## Customization
 ### Updating Cards
 You can add in more folders for your own custom cards. Simply create a folder in `CoupJS/public/images/cards/` and name it whatever you like. Inside that folder, include a PNG of each character, as well as one for the back:
 
-- ambassador.png
-- assassin.png
-- back.png
-- captain.png
-- contessa.png
-- duke.png
-- inquisitor.png
+| Image name | Actual card |
+|---|---|
+| `ambassador.png` | Ambassador |
+| `assassin.png` | Assassin |
+| `back.png` | Card back / face down card |
+| `captain.png` | Captain |
+| `contessa.png` | Contessa |
+| `duke.png` | Duke |
+| `inquisitor.png` | Inquisitor |
+
+If you don't have one of these cards available, it will fallback to the equivalent image in the default set.
 
 ### Updating Sounds
 Similar to cards above, you can add in more folders for your own custom sounds. Create a folder in `CoupJS/public/sounds` and name it whatever you like. Inside it, include an MP3 file of the following:
 
-- countdown.mp3
-- deal.mp3
-- eliminate.mp3
-- gameover.mp3
-- lose-influence.mp3
-- reveal.mp3
-- victory.mp3
+| Sound name | When it plays |
+|---|---|
+| `deal.mp3` | Cards dealt at game start |
+| `reveal.mp3` | A player reveals/loses a card |
+| `lose-influence.mp3` | Plays alongside `reveal.mp3` |
+| `eliminate.mp3` | A player is fully eliminated |
+| `victory.mp3` | Winner's end-game sound |
+| `gameover.mp3` | Everyone else's end-game sound |
+| `countdown.mp3` | 3-2-1 countdown before the game starts |
+| `your-turn.mp3` | It becomes your turn |
+| `action.mp3` | Any action is taken |
+| `challenge.mp3` | Someone issues a challenge |
+| `block.mp3` | Someone declares a block |
+| `success.mp3` | An action/claim succeeds |
+| `fail.mp3` | A challenge fails / bluff caught |
+| `coins.mp3` | Coins are gained |
+| `notification.mp3` | General notification blip |
+| `tick.mp3` | Countdown-timer ticks (last 3 seconds of a decision) |
 
-If you don't have one of these sounds available, the equivalent sound from the default set will play instead.
+If you don't have one of these sounds available, the equivalent sound from the default set will play instead. If there's no equivalent sound there, then it will use a syntheized tone as its last ditch effort to play a sound.

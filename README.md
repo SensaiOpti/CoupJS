@@ -29,11 +29,12 @@ There are a handful of items that are not AI generated. I've listed them below w
 ### Database
 - **SQLite (via SQL.js)** - Embedded SQL database that runs directly in the browser
 
-### Key Features
+### More Info the AI Wanted Me to Tell You
 - **Real-time multiplayer** - WebSocket-based game communication
 - **Authentication system** - User registration, login, and JWT verification
 - **Game state management** - React hooks for state management (useState, useEffect, useRef)
 - **Card game mechanics** - Full implementation of Coup rules including the Inquisitor variant
+  - Well, duh. I don't...I dunno why it wants you to know this, as if it is isn't the bare minimum as to what you'd expect from this.
 
 ## Installation
 
@@ -80,21 +81,21 @@ Similar to cards above, you can add in more folders for your own custom sounds. 
 
 | Sound name | When it plays |
 |---|---|
-| `deal.mp3` | Cards dealt at game start |
-| `reveal.mp3` | A player reveals/loses a card |
-| `lose-influence.mp3` | Plays alongside `reveal.mp3` |
-| `eliminate.mp3` | A player is fully eliminated |
-| `victory.mp3` | Winner's end-game sound |
-| `gameover.mp3` | Everyone else's end-game sound |
-| `countdown.mp3` | 3-2-1 countdown before the game starts |
-| `your-turn.mp3` | It becomes your turn |
 | `action.mp3` | Any action is taken |
-| `challenge.mp3` | Someone issues a challenge |
 | `block.mp3` | Someone declares a block |
-| `success.mp3` | An action/claim succeeds |
-| `fail.mp3` | A challenge fails / bluff caught |
+| `challenge.mp3` | Someone issues a challenge |
 | `coins.mp3` | Coins are gained |
+| `countdown.mp3` | 3-2-1 countdown before the game starts |
+| `deal.mp3` | Cards dealt at game start |
+| `eliminate.mp3` | A player is fully eliminated |
+| `fail.mp3` | A challenge fails / bluff caught |
+| `gameover.mp3` | Everyone else's end-game sound |
+| `lose-influence.mp3` | Plays alongside `reveal.mp3` |
 | `notification.mp3` | General notification blip |
+| `reveal.mp3` | A player reveals/loses a card |
+| `success.mp3` | An action/claim succeeds |
 | `tick.mp3` | Countdown-timer ticks (last 3 seconds of a decision) |
+| `victory.mp3` | Winner's end-game sound |
+| `your-turn.mp3` | It becomes your turn |
 
 If you don't have one of these sounds available, the equivalent sound from the default set will play instead. If there's no equivalent sound there, then it will use a syntheized tone as its last ditch effort to play a sound.

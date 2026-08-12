@@ -99,3 +99,5 @@ Similar to cards above, you can add in more folders for your own custom sounds. 
 | `your-turn.mp3` | It becomes your turn |
 
 If you don't have one of these sounds available, the equivalent sound from the default set will play instead. If there's no equivalent sound there, then it will use a syntheized tone as its last ditch effort to play a sound.
+
+You can dictate an icon for the sound pack by putting a PNG file at `CoupJS/public/images/sound-icons`; if the name of that file matches exactly with a sound pack, it will be the icon for it.

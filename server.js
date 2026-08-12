@@ -1306,7 +1306,7 @@ function performAction(room, socketId, action, targetId) {
     
     if (targetIsDisconnected) {
       room.actionInProgress.pausedForDisconnection = true;
-      addLogToRoom(room, `âš ï¸ Waiting for ${getDisplayName(room, targetPlayer)} to reconnect to respond to this action...`, 'info');
+      addLogToRoom(room, `Waiting for ${getDisplayName(room, targetPlayer)} to reconnect to respond to this action...`, 'info');
     } else {
       // Set timeout for responses (15 seconds)
       const timeoutId = setTimeout(() => {
@@ -1439,7 +1439,7 @@ function respondToAction(room, socketId, response) {
               .filter(p => p.alive && p.id !== room.actionInProgress.blockerId && p.disconnected)
               .map(p => p.name)
               .join(', ');
-            addLogToRoom(room, `âš ï¸ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
+            addLogToRoom(room, `Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
             
             // Clear any existing timeout
             if (room.actionInProgress.responseTimeout) {
@@ -1466,7 +1466,7 @@ function respondToAction(room, socketId, response) {
         // Target is disconnected - pause and wait
         if (!room.actionInProgress.pausedForDisconnection) {
           room.actionInProgress.pausedForDisconnection = true;
-          addLogToRoom(room, `âš ï¸ Waiting for ${getDisplayName(room, targetPlayer)} to reconnect to respond to this action...`, 'info');
+          addLogToRoom(room, `Waiting for ${getDisplayName(room, targetPlayer)} to reconnect to respond to this action...`, 'info');
           
           // Clear any existing timeout
           if (room.actionInProgress.responseTimeout) {
@@ -1607,7 +1607,7 @@ function handleBlock(room, blockerId, blockCard) {
       .filter(p => p.alive && p.id !== blockerId && p.disconnected)
       .map(p => p.name)
       .join(', ');
-    addLogToRoom(room, `âš ï¸ Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
+    addLogToRoom(room, `Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
   } else {
     // Clear any previous timeout before setting new one
     if (room.responseTimeout) {
@@ -2523,7 +2523,7 @@ function checkWinCondition(room) {
     // Sort by placement (ascending - 1st, 2nd, 3rd, etc.)
     room.eliminationOrder.sort((a, b) => a.placement - b.placement);
     
-    addLogToRoom(room, `ðŸŽ‰ ${getDisplayName(room, winner)} wins the game! ðŸŽ‰`, 'success');
+    addLogToRoom(room, `${getDisplayName(room, winner)} wins the game!`, 'success');
     room.state = 'ended';
     
     // Save game results to database
@@ -5094,7 +5094,7 @@ io.on('connection', (socket) => {
     player.disconnected = false;
     socket.join(roomCode);
 
-    addLogToRoom(room, `âœ… ${getDisplayName(room, player)} reconnected!`, 'info');
+    addLogToRoom(room, `${getDisplayName(room, player)} reconnected!`, 'info');
     
     // Check if there's an action paused waiting for this player
     if (room.actionInProgress && room.actionInProgress.pausedForDisconnection) {
@@ -5629,7 +5629,7 @@ io.on('connection', (socket) => {
         if (room.state === 'playing' && !player.hasLeft) {
           // Start grace period for reconnection
           player.disconnected = true;
-          addLogToRoom(room, `âš ï¸ ${getDisplayName(room, player)} disconnected. Waiting 30 seconds to reconnect...`, 'info');
+          addLogToRoom(room, `${getDisplayName(room, player)} disconnected. Waiting 30 seconds to reconnect...`, 'info');
           
           const timerKey = `${roomCode}-${player.persistentId}`;
           const forfeitTimer = setTimeout(() => {

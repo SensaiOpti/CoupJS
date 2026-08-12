@@ -44,8 +44,9 @@
       </a>
     </div>
 
-    <!-- Game Name + Variant -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+    <!-- Discovery: how people find/enter this game -->
+    <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Discovery</div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
       <div class="setting-card bg-gray-800 rounded-lg p-4">
         <label for="gameName" class="text-sm font-bold text-gray-300 mb-2 block">Game Name</label>
         <input
@@ -59,6 +60,31 @@
         <p class="text-xs text-gray-500 mt-1.5">Optional — leave blank for a default name</p>
       </div>
 
+      <div class="setting-card bg-gray-800 rounded-lg p-4">
+        <label class="toggle-row flex items-center justify-between gap-3 cursor-pointer rounded p-2 -mx-2 -mt-2 mb-2">
+          <span class="font-bold text-sm text-gray-300">🔒 Require Password</span>
+          <input
+            type="checkbox"
+            id="passwordEnabled"
+            onchange="togglePassword()"
+            class="w-5 h-5 cursor-pointer flex-shrink-0"
+          />
+        </label>
+        <input
+          type="text"
+          id="gamePassword"
+          placeholder="4-20 characters"
+          maxlength="20"
+          disabled
+          class="w-full p-2.5 bg-gray-700 rounded border border-gray-600 text-white text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+        />
+        <p id="passwordHint" class="text-xs text-gray-500 mt-1.5">Anyone with the link can join</p>
+      </div>
+    </div>
+
+    <!-- Gameplay: settings that change how the match itself plays out -->
+    <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Gameplay</div>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-4">
       <div class="setting-card bg-gray-800 rounded-lg p-4">
         <div class="text-sm font-bold text-gray-300 mb-2">Game Variant</div>
         <div class="flex gap-2">
@@ -78,19 +104,23 @@
           </button>
         </div>
       </div>
+
+      <div class="setting-card bg-gray-800 rounded-lg p-4">
+        <label class="toggle-row flex items-center justify-between gap-3 cursor-pointer rounded p-2 -mx-2 -my-1">
+          <span>
+            <span class="font-semibold text-sm">👥 Large Games (7-10)</span>
+            <span class="text-xs text-gray-500 block">Deck size adjusts automatically</span>
+          </span>
+          <input type="checkbox" id="allowLargeGames" class="w-5 h-5 cursor-pointer flex-shrink-0" />
+        </label>
+        <!-- Future: Alliance option goes here -->
+      </div>
     </div>
 
-    <!-- Toggles -->
-    <div class="setting-card bg-gray-800 rounded-lg p-4 mb-3">
+    <!-- Meta: doesn't change the match itself, just the experience around it -->
+    <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Other Options</div>
+    <div class="setting-card bg-gray-800 rounded-lg p-4 mb-4">
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-1">
-        <label class="toggle-row flex items-center justify-between gap-3 cursor-pointer rounded p-2 -mx-2">
-          <span>
-            <span class="font-semibold text-sm">👁️ Spectators</span>
-            <span class="text-xs text-gray-500 block">Others can watch the game</span>
-          </span>
-          <input type="checkbox" id="allowSpectators" checked class="w-5 h-5 cursor-pointer flex-shrink-0" />
-        </label>
-
         <label class="toggle-row flex items-center justify-between gap-3 cursor-pointer rounded p-2 -mx-2">
           <span>
             <span class="font-semibold text-sm">🏆 Ranked</span>
@@ -101,54 +131,30 @@
 
         <label class="toggle-row flex items-center justify-between gap-3 cursor-pointer rounded p-2 -mx-2">
           <span>
+            <span class="font-semibold text-sm">👁️ Spectators</span>
+            <span class="text-xs text-gray-500 block">Others can watch the game</span>
+          </span>
+          <input type="checkbox" id="allowSpectators" checked class="w-5 h-5 cursor-pointer flex-shrink-0" />
+        </label>
+
+        <label class="toggle-row flex items-center justify-between gap-3 cursor-pointer rounded p-2 -mx-2">
+          <span>
             <span class="font-semibold text-sm">🎭 Anonymous Mode</span>
             <span class="text-xs text-gray-500 block">Random names during play, revealed after</span>
           </span>
           <input type="checkbox" id="anonymousMode" class="w-5 h-5 cursor-pointer flex-shrink-0" />
         </label>
 
-        <label class="toggle-row flex items-center justify-between gap-3 cursor-pointer rounded p-2 -mx-2">
-          <span>
-            <span class="font-semibold text-sm">👥 Large Games (7-10)</span>
-            <span class="text-xs text-gray-500 block">Deck size adjusts automatically</span>
-          </span>
-          <input type="checkbox" id="allowLargeGames" class="w-5 h-5 cursor-pointer flex-shrink-0" />
-        </label>
-      </div>
-    </div>
-
-    <!-- Chat + Password -->
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-      <div class="setting-card bg-gray-800 rounded-lg p-4">
-        <label for="chatMode" class="text-sm font-bold text-gray-300 mb-2 block">💬 Chat Mode</label>
-        <select
-          id="chatMode"
-          class="w-full p-2.5 bg-gray-700 rounded border border-gray-600 text-white cursor-pointer font-semibold text-sm"
-        >
-          <option value="separate">Separate Chats</option>
-          <option value="unified">Unified Chat</option>
-          <option value="none">No Chat</option>
-        </select>
-      </div>
-
-      <div class="setting-card bg-gray-800 rounded-lg p-4">
-        <label class="flex items-center gap-2 cursor-pointer mb-2">
-          <input
-            type="checkbox"
-            id="passwordEnabled"
-            onchange="togglePassword()"
-            class="w-5 h-5 cursor-pointer"
-          />
-          <span class="text-sm font-bold text-gray-300">🔒 Require Password</span>
-        </label>
-        <div id="passwordInput" class="hidden">
-          <input
-            type="text"
-            id="gamePassword"
-            placeholder="4-20 characters"
-            maxlength="20"
-            class="w-full p-2.5 bg-gray-700 rounded border border-gray-600 text-white text-sm"
-          />
+        <div class="toggle-row flex items-center justify-between gap-3 rounded p-2 -mx-2">
+          <span class="font-semibold text-sm">💬 Chat Mode</span>
+          <select
+            id="chatMode"
+            class="p-1.5 bg-gray-700 rounded border border-gray-600 text-white cursor-pointer font-semibold text-xs"
+          >
+            <option value="separate">Separate Chats</option>
+            <option value="unified">Unified Chat</option>
+            <option value="none">No Chat</option>
+          </select>
         </div>
       </div>
     </div>
@@ -194,13 +200,16 @@
 
     function togglePassword() {
       const enabled = document.getElementById('passwordEnabled').checked;
-      const passwordInput = document.getElementById('passwordInput');
+      const gamePassword = document.getElementById('gamePassword');
+      const passwordHint = document.getElementById('passwordHint');
+
+      gamePassword.disabled = !enabled;
 
       if (enabled) {
-        passwordInput.classList.remove('hidden');
+        passwordHint.textContent = 'Only people with the password can join';
       } else {
-        passwordInput.classList.add('hidden');
-        document.getElementById('gamePassword').value = '';
+        gamePassword.value = '';
+        passwordHint.textContent = 'Anyone with the link can join';
       }
 
       updateSummary();

@@ -141,7 +141,7 @@
     <!-- Main Content -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <!-- Left Column: Room List -->
-      <div class="lg:col-span-2 space-y-4">
+      <div class="lg:col-span-2 flex flex-col gap-4">
         <!-- Create Room Button -->
         <button 
           onclick="createNewRoom()"
@@ -176,12 +176,15 @@
         </div>
 
         <!-- Room List -->
-        <div class="bg-gray-800 rounded-lg p-6">
-          <h3 class="text-xl font-bold mb-4">Available Games</h3>
-          <div id="roomList" class="space-y-3">
+        <!-- max-h matches the right column's total (Online Users ~328px + gap-4 16px + Chat 500px = ~844px)
+             so this card stretches to line up with Lobby Chat's bottom edge when short, and scrolls
+             internally instead of growing the page when there are many rooms. -->
+        <div class="bg-gray-800 rounded-lg p-6 flex-1 flex flex-col min-h-0 max-h-[844px]">
+          <h3 class="text-xl font-bold mb-4 flex-shrink-0">Available Games</h3>
+          <div id="roomList" class="space-y-3 flex-1 overflow-y-auto pr-1">
             <!-- Rooms will be populated here -->
           </div>
-          <div id="noRooms" class="hidden text-center py-12 text-gray-500">
+          <div id="noRooms" class="hidden flex-1 flex flex-col items-center justify-center text-center text-gray-500">
             <div class="text-6xl mb-4">🎴</div>
             <div class="text-xl">No games available</div>
             <div class="text-sm mt-2">Be the first to create one!</div>

@@ -356,6 +356,18 @@
     </div>
   </div>
 
+  <!-- Quick Reference Guide Modal -->
+  <div id="guideModal" class="card-zoom-overlay" style="display: none;" onclick="closeGuide()">
+    <div class="card-zoom-container" onclick="event.stopPropagation()">
+      <img id="guideImage" class="card-zoom-image" src="" alt="Quick Reference Guide" onerror="handleGuideImageError(this)" />
+      <div id="guideImageFallback" style="display: none;" class="bg-gray-800 text-white rounded-xl p-8 max-w-md text-center mx-auto">
+        <div class="text-4xl mb-3">📖</div>
+        <div class="font-bold mb-2">Guide image not found</div>
+        <div class="text-sm text-gray-400" id="guideImageFallbackPath"></div>
+      </div>
+    </div>
+  </div>
+
   <script>
     // Game state
     let socket = null;
@@ -1644,6 +1656,8 @@
     function openCardZoom(cardName) {
       const modal = document.getElementById('cardZoomModal');
       const image = document.getElementById('cardZoomImage');
+      delete image.dataset.fallbackApplied; // this element is reused across opens - reset fallback state each time
+      image.onerror = () => handleCardImageError(image, cardName);
       image.src = getCardImagePath(cardName);
       image.alt = cardName;
       modal.style.display = 'flex';
@@ -1662,6 +1676,43 @@
       if (event.key === 'Escape') {
         closeCardZoom();
       }
+    }
+
+    // Quick reference guide - shows a different image depending on whether
+    // this game is using the Ambassador or the Inquisitor.
+    function openGuide() {
+      const modal = document.getElementById('guideModal');
+      const image = document.getElementById('guideImage');
+      const fallback = document.getElementById('guideImageFallback');
+      const fallbackPath = document.getElementById('guideImageFallbackPath');
+
+      const guideSrc = useInquisitor ? '/images/guide-inquisitor.png' : '/images/guide-ambassador.png';
+
+      image.style.display = '';
+      fallback.style.display = 'none';
+      image.src = guideSrc;
+      image.alt = useInquisitor ? 'Inquisitor Quick Reference Guide' : 'Ambassador Quick Reference Guide';
+      fallbackPath.textContent = `Expected at: public${guideSrc}`;
+
+      modal.style.display = 'flex';
+      document.addEventListener('keydown', handleGuideEscape);
+    }
+
+    function closeGuide() {
+      const modal = document.getElementById('guideModal');
+      modal.style.display = 'none';
+      document.removeEventListener('keydown', handleGuideEscape);
+    }
+
+    function handleGuideEscape(event) {
+      if (event.key === 'Escape') {
+        closeGuide();
+      }
+    }
+
+    function handleGuideImageError(img) {
+      img.style.display = 'none';
+      document.getElementById('guideImageFallback').style.display = 'block';
     }
 
     // Authentication functions
@@ -1732,6 +1783,21 @@
     // Deck image path helper
     function getCardImagePath(cardName) {
       return `/images/cards/${deckPreference}/${cardName.toLowerCase()}.png`;
+    }
+    
+    // Called via an <img>'s onerror. If the selected deck is missing this card's
+    // image, fall back to the default deck's version of the same card so a
+    // partial custom deck never shows a broken image.
+    function handleCardImageError(img, cardName) {
+      const normalizedCardName = (cardName || 'back').toLowerCase();
+      if (img.dataset.fallbackApplied === 'default' || deckPreference === 'default') {
+        // Already tried the default deck (or we were already using it) - stop here
+        // rather than retry the same broken URL forever.
+        img.onerror = null;
+        return;
+      }
+      img.dataset.fallbackApplied = 'default';
+      img.src = `/images/cards/default/${normalizedCardName}.png`;
     }
 
     async function verifyAuthToken() {
@@ -2550,7 +2616,9 @@
                 <button onclick="toggleSound()" class="sound-toggle-btn-text bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm flex items-center gap-2">
                   ${soundEnabled ? '🔊 Sound On' : '🔇 Sound Off'}
                 </button>
-                <div class="text-gray-400">Room: ${roomCode}</div>
+                <button onclick="openGuide()" class="bg-gray-700 hover:bg-gray-600 px-3 py-2 rounded text-sm flex items-center gap-2" title="Quick reference guide">
+                  Guide
+                </button>
                 <button onclick="leaveRoom()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm">
                   Leave
                 </button>
@@ -2685,10 +2753,10 @@
                               <div class="relative flex-1 bg-gray-700 rounded p-2 text-center flip-card">
                                 <div class="flip-card-inner" data-card-key="${key}">
                                   <div class="flip-card-front">
-                                    <img src="${getCardImagePath('back')}" alt="Hidden card" class="w-full h-auto rounded" />
+                                    <img src="${getCardImagePath('back')}" alt="Hidden card" class="w-full h-auto rounded" onerror="handleCardImageError(this, 'back')" />
                                   </div>
                                   <div class="flip-card-back">
-                                    <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded ${zoomClass}" ${zoomClickHandler} />
+                                    <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded ${zoomClass}" ${zoomClickHandler} onerror="handleCardImageError(this, '${cardName}')" />
                                   </div>
                                 </div>
                               </div>
@@ -2700,16 +2768,16 @@
                             <div class="relative flex-1 ${influence.revealed ? `bg-red-900 border-2 border-red-600 ${revealAnimClass}` : 'bg-gray-700'} rounded p-2 text-center ${peekCursorClass}" ${peekClickHandler}>
                               ${influence.revealed ? `
                                 <div class="${zoomClass}" ${zoomClickHandler}>
-                                  <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded opacity-50" />
+                                  <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded opacity-50" onerror="handleCardImageError(this, '${cardName}')" />
                                 </div>
                                 <div class="absolute inset-0 flex items-center justify-center pointer-events-none">
                                   <div class="text-xs font-bold text-red-300 bg-red-900 bg-opacity-90 px-2 py-1 rounded">LOST</div>
                                 </div>
                               ` : shouldShowCard ? `
-                                <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded ${zoomClass}" ${zoomClickHandler} />
+                                <img src="${getCardImagePath(cardName)}" alt="${influence.card}" class="w-full h-auto rounded ${zoomClass}" ${zoomClickHandler} onerror="handleCardImageError(this, '${cardName}')" />
                                 ${isSpectator && spectatorRevealed ? '<div class="absolute top-1 right-1 text-blue-400 text-xs pointer-events-none">👁️</div>' : ''}
                               ` : `
-                                <img src="${getCardImagePath('back')}" alt="Hidden card" class="w-full h-auto rounded" />
+                                <img src="${getCardImagePath('back')}" alt="Hidden card" class="w-full h-auto rounded" onerror="handleCardImageError(this, 'back')" />
                                 ${isSpectator ? (ranked ? '<div class="absolute bottom-1 left-0 right-0 text-xs text-gray-500 text-center">🔒 Ranked</div>' : '<div class="absolute bottom-1 left-0 right-0 text-xs text-gray-400 text-center">Click to peek</div>') : ''}
                               `}
                             </div>
@@ -2875,7 +2943,7 @@
                             ondblclick="event.stopPropagation(); openCardZoom('${influence.card}')"
                             class="bg-red-600 hover:bg-red-700 p-4 rounded text-center flex-1 max-w-xs"
                           >
-                            <img src="${getCardImagePath(influence.card)}" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
+                            <img src="${getCardImagePath(influence.card)}" alt="${influence.card}" class="w-full h-auto rounded mb-2" onerror="handleCardImageError(this, '${influence.card}')" />
                             <div class="text-sm font-bold">Reveal this card</div>
                             <div class="text-xs text-gray-400 mt-1">Double-click to zoom</div>
                           </button>
@@ -2913,7 +2981,7 @@
                               : 'bg-gray-700 hover:bg-gray-600'
                           }"
                         >
-                          <img src="${getCardImagePath(cardName)}" alt="${card.card || card}" class="w-full h-auto rounded mb-2" />
+                          <img src="${getCardImagePath(cardName)}" alt="${card.card || card}" class="w-full h-auto rounded mb-2" onerror="handleCardImageError(this, '${cardName}')" />
                           <div class="text-sm font-bold">
                             ${selectedExchangeCards.includes(idx) ? '✓ Keep' : 'Click to keep'}
                           </div>
@@ -2957,7 +3025,7 @@
                             ondblclick="event.stopPropagation(); openCardZoom('${influence.card}')"
                             class="bg-yellow-600 hover:bg-yellow-700 p-4 rounded text-center flex-1 max-w-xs"
                           >
-                            <img src="${getCardImagePath(influence.card)}" alt="${influence.card}" class="w-full h-auto rounded mb-2" />
+                            <img src="${getCardImagePath(influence.card)}" alt="${influence.card}" class="w-full h-auto rounded mb-2" onerror="handleCardImageError(this, '${influence.card}')" />
                             <div class="text-sm font-bold">Show this card</div>
                             <div class="text-xs text-gray-400 mt-1">Double-click to zoom</div>
                           </button>
@@ -2981,7 +3049,7 @@
                     ${myPlayer.examinedCard ? `
                       <p class="mb-4 text-purple-100">You see one of ${examineTarget.name}'s cards:</p>
                       <div class="bg-purple-800 rounded p-4 mb-4 text-center card-reveal max-w-xs mx-auto cursor-pointer card-clickable" onclick="openCardZoom('${myPlayer.examinedCard}')">
-                        <img src="${getCardImagePath(myPlayer.examinedCard)}" alt="${myPlayer.examinedCard}" class="w-full h-auto rounded" />
+                        <img src="${getCardImagePath(myPlayer.examinedCard)}" alt="${myPlayer.examinedCard}" class="w-full h-auto rounded" onerror="handleCardImageError(this, '${myPlayer.examinedCard}')" />
                         <div class="text-xs text-gray-400 mt-2">Click to zoom</div>
                       </div>
                       <p class="mb-4 text-purple-100">Do you want to force ${examineTarget.name} to exchange this card for a new one from the deck?</p>

@@ -325,7 +325,7 @@
     // hardcoded here, so dropping in a new folder is all that's needed to add one.
     let DECK_OPTIONS = [];
     let SOUND_OPTIONS = [];
-    const SOUND_ICONS = ['🔊', '🎵', '🎶', '🔔', '🎧']; // cycled through by position, not tied to any pack name
+    const SOUND_PACK_ICON = '🔊'; // used for every sound pack card, regardless of name
 
     // Turns a folder name like "old-school" or "wild_west" into a friendly label
     // like "Old School" / "Wild West" for display.
@@ -357,14 +357,14 @@
         const res = await fetch('/api/sound-packs');
         const data = await res.json();
         const packs = (data.soundPacks && data.soundPacks.length > 0) ? data.soundPacks : ['default'];
-        SOUND_OPTIONS = packs.map((id, i) => ({
+        SOUND_OPTIONS = packs.map(id => ({
           id,
           name: formatOptionName(id),
-          icon: SOUND_ICONS[i % SOUND_ICONS.length]
+          icon: SOUND_PACK_ICON
         }));
       } catch (e) {
         console.error('Failed to load sound pack list:', e);
-        SOUND_OPTIONS = [{ id: 'default', name: 'Default', icon: '🔊' }];
+        SOUND_OPTIONS = [{ id: 'default', name: 'Default', icon: SOUND_PACK_ICON }];
       }
     }
 
@@ -470,7 +470,9 @@
       soundContainer.innerHTML = SOUND_OPTIONS.map(sound => `
         <div class="sound-option rounded-lg p-4 text-center ${settings.soundPreference === sound.id ? 'selected' : ''}"
              onclick="selectSound('${sound.id}')" data-sound-id="${sound.id}">
-          <div class="text-3xl mb-2">${sound.icon}</div>
+          <img src="/images/sound-icons/${sound.id}.png" alt="${sound.name}" class="w-12 h-12 object-contain rounded mb-2 mx-auto"
+               onerror="this.style.display='none'; this.nextElementSibling.style.display='block'">
+          <div style="display:none" class="text-3xl mb-2">${sound.icon}</div>
           <div class="font-bold text-sm mb-3">${sound.name}</div>
           <button type="button" onclick="event.stopPropagation(); previewSound('${sound.id}', this)"
                   class="w-full bg-gray-700 hover:bg-gray-600 text-xs py-1.5 rounded transition-colors">
@@ -575,18 +577,47 @@
       event.currentTarget.classList.add('selected');
     }
 
+    // Every sound type the game can play - keep this in sync with the switch
+    // statement in index.html's playSynthesizedSound() if that list ever changes.
+    const PREVIEWABLE_SOUNDS = [
+      'deal', 'reveal', 'lose-influence', 'eliminate', 'victory', 'gameover', 'countdown',
+      'your-turn', 'action', 'challenge', 'block', 'success', 'fail', 'coins', 'notification', 'tick'
+    ];
+
+    function shuffled(arr) {
+      const copy = [...arr];
+      for (let i = copy.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [copy[i], copy[j]] = [copy[j], copy[i]];
+      }
+      return copy;
+    }
+
     function previewSound(soundId, buttonEl) {
-      const audio = new Audio(`/sounds/${soundId}/deal.mp3`);
-      audio.volume = 0.5;
       const originalText = buttonEl.textContent;
-      audio.addEventListener('error', () => {
-        buttonEl.textContent = 'No preview available';
-        setTimeout(() => { buttonEl.textContent = originalText; }, 2000);
-      });
-      audio.play().catch(() => {
-        buttonEl.textContent = 'No preview available';
-        setTimeout(() => { buttonEl.textContent = originalText; }, 2000);
-      });
+      const candidates = shuffled(PREVIEWABLE_SOUNDS);
+      
+      function tryCandidate(index) {
+        if (index >= candidates.length) {
+          // None of this pack's files exist - genuinely nothing to preview
+          buttonEl.textContent = 'No preview available';
+          setTimeout(() => { buttonEl.textContent = originalText; }, 2000);
+          return;
+        }
+        
+        const audio = new Audio(`/sounds/${soundId}/${candidates[index]}.mp3`);
+        audio.volume = 0.5;
+        let movedOn = false;
+        const tryNextCandidate = () => {
+          if (movedOn) return;
+          movedOn = true;
+          tryCandidate(index + 1);
+        };
+        audio.addEventListener('error', tryNextCandidate);
+        audio.play().catch(tryNextCandidate);
+      }
+      
+      tryCandidate(0);
     }
 
     function selectAvatar(avatar, type) {

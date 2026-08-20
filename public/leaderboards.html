@@ -12,59 +12,59 @@
       background: linear-gradient(to bottom right, #7f1d1d, #1f2937, #000000);
       min-height: 100vh;
     }
-
+    
     .leaderboard-card {
       background: rgba(31, 41, 55, 0.8);
       backdrop-filter: blur(10px);
       border: 1px solid rgba(75, 85, 99, 0.3);
       transition: all 0.3s ease;
     }
-
+    
     .leaderboard-row {
       transition: all 0.2s ease;
     }
-
+    
     .leaderboard-row:hover {
       background: rgba(55, 65, 81, 0.6);
       transform: translateX(5px);
     }
-
-    .rank-1 {
+    
+    .rank-1 { 
       background: linear-gradient(135deg, #fbbf24 0%, #f59e0b 100%);
       color: #000;
     }
-
-    .rank-2 {
+    
+    .rank-2 { 
       background: linear-gradient(135deg, #9ca3af 0%, #6b7280 100%);
       color: #000;
     }
-
-    .rank-3 {
+    
+    .rank-3 { 
       background: linear-gradient(135deg, #d97706 0%, #b45309 100%);
       color: #000;
     }
-
+    
     .tab-button {
       transition: all 0.3s ease;
     }
-
+    
     .tab-button.active {
       background: linear-gradient(135deg, #dc2626 0%, #991b1b 100%);
       transform: translateY(-2px);
       box-shadow: 0 4px 6px rgba(220, 38, 38, 0.3);
     }
-
+    
     .skeleton {
       background: linear-gradient(90deg, #374151 25%, #4b5563 50%, #374151 75%);
       background-size: 200% 100%;
       animation: loading 1.5s infinite;
     }
-
+    
     @keyframes loading {
       0% { background-position: 200% 0; }
       100% { background-position: -200% 0; }
     }
-
+    
     .highlight-me {
       background: rgba(59, 130, 246, 0.2);
       border-left: 4px solid #3b82f6;
@@ -152,34 +152,53 @@
     </div>
 
     <!-- Leaderboard Tabs -->
-    <div class="flex flex-wrap gap-2 mb-6">
-      <button onclick="switchLeaderboard('elo')" class="tab-button active bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="elo">
-        ⭐ Elo Rating
-      </button>
-      <button onclick="switchLeaderboard('winrate')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="winrate">
-        📈 Win Rate
-      </button>
-      <button onclick="switchLeaderboard('wins')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="wins">
-        🎯 Total Wins
-      </button>
-      <button onclick="switchLeaderboard('kd')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="kd">
-        ⚔️ K/D Ratio
-      </button>
-      <button onclick="switchLeaderboard('bluffer')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="bluffer">
-        🎭 Master Bluffer
-      </button>
-      <button onclick="switchLeaderboard('tax')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="tax">
-        💎 Tax Collector
-      </button>
-      <button onclick="switchLeaderboard('assassin')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="assassin">
-        🗡️ Assassin
-      </button>
-      <button onclick="switchLeaderboard('finisher')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="finisher">
-        🎯 Finisher
-      </button>
-      <button onclick="switchLeaderboard('economist')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="economist">
-        💰 Economist
-      </button>
+    <div class="mb-6">
+      <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Overall Rankings</div>
+      <div class="flex flex-wrap gap-2 mb-4">
+        <button onclick="switchLeaderboard('elo')" class="tab-button active bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="elo">
+          ⭐ Elo Rating
+        </button>
+        <button onclick="switchLeaderboard('winrate')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="winrate">
+          📈 Win Rate
+        </button>
+        <button onclick="switchLeaderboard('wins')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="wins">
+          🎯 Total Wins
+        </button>
+        <button onclick="switchLeaderboard('kd')" class="tab-button bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold" data-tab="kd">
+          ⚔️ K/D Ratio
+        </button>
+      </div>
+
+      <div class="text-xs font-bold text-gray-500 uppercase tracking-wide mb-2">Playstyle Leaderboards</div>
+      <div class="flex flex-wrap gap-2">
+        <button onclick="switchLeaderboard('bluffer')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="bluffer">
+          🎭 Master Bluffer
+        </button>
+        <button onclick="switchLeaderboard('tax')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="tax">
+          💎 Tax Collector
+        </button>
+        <button onclick="switchLeaderboard('assassin')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="assassin">
+          🗡️ Assassin
+        </button>
+        <button onclick="switchLeaderboard('finisher')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="finisher">
+          🎯 Finisher
+        </button>
+        <button onclick="switchLeaderboard('economist')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="economist">
+          💰 Economist
+        </button>
+        <button onclick="switchLeaderboard('thief')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="thief">
+          🥷 Master Thief
+        </button>
+        <button onclick="switchLeaderboard('defender')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="defender">
+          🛡️ Death Deferred
+        </button>
+        <button onclick="switchLeaderboard('seer')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="seer">
+          👁️ All-Seeing
+        </button>
+        <button onclick="switchLeaderboard('doppelganger')" class="tab-button bg-gray-800 hover:bg-gray-700 px-4 py-1.5 rounded text-sm font-semibold text-gray-300" data-tab="doppelganger">
+          🔄 Doppelgänger
+        </button>
+      </div>
     </div>
 
     <!-- Loading State -->
@@ -221,23 +240,18 @@
           <div class="text-6xl mb-3">🥈</div>
           <div id="podium2" class="podium-player"></div>
         </div>
-
+        
         <!-- 1st Place -->
         <div class="leaderboard-card rounded-lg p-6 text-center ring-4 ring-yellow-500">
           <div class="text-8xl mb-3">🥇</div>
           <div id="podium1" class="podium-player"></div>
         </div>
-
+        
         <!-- 3rd Place -->
         <div class="leaderboard-card rounded-lg p-6 text-center mt-12">
           <div class="text-5xl mb-3">🥉</div>
           <div id="podium3" class="podium-player"></div>
         </div>
-      </div>
-
-      <!-- Sort Hint -->
-      <div class="text-xs text-gray-500 mb-2 flex items-center gap-1">
-        <span>💡</span> Click any column header to sort the table
       </div>
 
       <!-- Leaderboard Table -->
@@ -346,6 +360,30 @@
         description: 'Most coins earned',
         statLabel: 'Coins Earned',
         showPodium: false
+      },
+      thief: {
+        title: '🥷 Master Thief Leaderboard',
+        description: 'Most successful steals as the Captain',
+        statLabel: 'Steals',
+        showPodium: false
+      },
+      defender: {
+        title: '🛡️ Death Deferred Leaderboard',
+        description: 'Most assassinations blocked as the Contessa',
+        statLabel: 'Assassinations Blocked',
+        showPodium: false
+      },
+      seer: {
+        title: '👁️ All-Seeing Leaderboard',
+        description: 'Most examinations performed as the Inquisitor',
+        statLabel: 'Examinations',
+        showPodium: false
+      },
+      doppelganger: {
+        title: '🔄 Doppelgänger Leaderboard',
+        description: 'Most exchanges performed as the Ambassador or Inquisitor',
+        statLabel: 'Exchanges',
+        showPodium: false
       }
     };
 
@@ -375,20 +413,20 @@
 
       const userInfo = document.getElementById('userInfo');
       userInfo.classList.remove('hidden');
-
+      
       // Show and update Profile button
       const profileBtn = document.getElementById('profileBtn');
       if (profileBtn) {
         profileBtn.href = `/profile.html?user=${currentUser.username}`;
         profileBtn.classList.remove('hidden');
       }
-
+      
       // Show Settings button
       const settingsBtn = document.getElementById('settingsBtn');
       if (settingsBtn) {
         settingsBtn.classList.remove('hidden');
       }
-
+      
       // Show moderator button if user is admin or moderator
       if (currentUser.role === 'admin' || currentUser.role === 'moderator') {
         const moderatorBtn = document.getElementById('moderatorBtn');
@@ -396,7 +434,7 @@
           moderatorBtn.classList.remove('hidden');
         }
       }
-
+      
       // Show logout button, hide login button
       const logoutBtn = document.getElementById('logoutBtn');
       const loginBtn = document.getElementById('loginBtn');
@@ -407,8 +445,8 @@
 
       if (currentUser.stats) {
         document.getElementById('userElo').textContent = currentUser.stats.elo_rating || 1200;
-
-        const winRate = currentUser.stats.games_played > 0
+        
+        const winRate = currentUser.stats.games_played > 0 
           ? ((currentUser.stats.games_won / currentUser.stats.games_played) * 100).toFixed(1)
           : 0;
         document.getElementById('userWinRate').textContent = winRate + '%';
@@ -440,7 +478,7 @@
 
     async function loadLeaderboard(type) {
       currentLeaderboard = type;
-
+      
       // Update tab styling
       document.querySelectorAll('.tab-button').forEach(btn => {
         if (btn.dataset.tab === type) {
@@ -457,7 +495,7 @@
 
       try {
         const response = await fetch(`${API_BASE}/api/leaderboards/${type}?limit=100&minGames=5`);
-
+        
         if (!response.ok) {
           throw new Error('Failed to load leaderboard');
         }
@@ -668,13 +706,13 @@
     async function init() {
       await verifyAuth();
       await loadLeaderboard('elo');
-
+      
       // Show login button if not logged in
       if (!currentUser) {
         const loginBtn = document.getElementById('loginBtn');
         if (loginBtn) loginBtn.classList.remove('hidden');
       }
-
+      
       // Add logout handler
       const logoutBtn = document.getElementById('logoutBtn');
       if (logoutBtn) {
@@ -686,7 +724,7 @@
     }
 
     init();
-
+    
     // Socket.io connection for online user tracking
     const socketScript = document.createElement('script');
     socketScript.src = '/socket.io/socket.io.js';
@@ -695,7 +733,7 @@
       const socket = io({
         auth: { token: authToken }
       });
-
+      
       socket.on('connect', () => {
         // For guests, get username from localStorage
         const guestUsername = localStorage.getItem('coupGuestUsername');

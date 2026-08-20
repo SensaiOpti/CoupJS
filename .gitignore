@@ -2,3 +2,6 @@ version/
 markdowns/
 node_modules/
 coup.db
+.env
+.DS_Store
+*.log

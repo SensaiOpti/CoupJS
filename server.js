@@ -1,11 +1,15 @@
+require('dotenv').config({ quiet: true }); // Load .env before anything else - auth.js reads JWT_SECRET at import time
+
 const express = require('express');
 const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const auth = require('./auth');
 const db = require('./database');
+const emailService = require('./email');
 
 const JWT_SECRET = process.env.JWT_SECRET || 'coup-secret-key-change-in-production';
 
@@ -65,6 +69,52 @@ function getClientIP(req) {
          'unknown';
 }
 
+// --- Rate limiting ---
+// Uses the same proxy-aware getClientIP() the ban system already relies on, rather than
+// Express's built-in req.ip, since this app doesn't set `trust proxy` - if it's ever run
+// behind a reverse proxy/load balancer, req.ip alone would report the proxy's address for
+// every request, making per-IP limiting either useless or (worse) block everyone at once.
+// ipKeyGenerator() is express-rate-limit's own helper for safely normalizing IPv6 addresses
+// in custom keys - required to avoid an IPv6-based bypass of the limit.
+function rateLimitKey(req) {
+  return ipKeyGenerator(getClientIP(req));
+}
+
+// Catch-all safety net for every /api/ route.
+const generalApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  message: { success: false, error: 'Too many requests. Please slow down and try again shortly.' }
+});
+app.use('/api/', generalApiLimiter);
+
+// Strict limiter for the classic brute-force targets: login and password changes.
+// Keyed by IP + username together, so one attacker can't reset their budget by just
+// switching target accounts, and one popular shared IP (e.g. an office) can't lock
+// every account behind it out just because one person mistyped a password a lot.
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => `${rateLimitKey(req)}:${(req.body?.username || '').toLowerCase()}`,
+  message: { success: false, error: 'Too many attempts. Please try again in 15 minutes.' }
+});
+
+// Looser limiter for account creation (register/guest) - not trying to guess a
+// secret, but still worth capping to prevent mass fake-account/guest spam.
+const accountCreationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: rateLimitKey,
+  message: { success: false, error: 'Too many accounts created from this network. Please try again later.' }
+});
+
 // Check if IP is banned
 function isIPBanned(ip) {
   if (!ip || ip === 'unknown') return false;
@@ -98,7 +148,7 @@ app.use((req, res, next) => {
 });
 
 // Authentication routes
-app.post('/api/register', (req, res) => {
+app.post('/api/register', accountCreationLimiter, (req, res) => {
   const { username, password, email } = req.body;
   const result = auth.register(username, password, email);
   
@@ -109,7 +159,7 @@ app.post('/api/register', (req, res) => {
   }
 });
 
-app.post('/api/login', (req, res) => {
+app.post('/api/login', authLimiter, (req, res) => {
   const { username, password } = req.body;
   const result = auth.login(username, password);
   
@@ -152,7 +202,7 @@ app.post('/api/verify', (req, res) => {
 });
 
 // Guest login (for backward compatibility)
-app.post('/api/guest', (req, res) => {
+app.post('/api/guest', accountCreationLimiter, (req, res) => {
   const guestId = `guest_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   res.json({
     success: true,
@@ -287,6 +337,18 @@ app.post('/api/user/settings', (req, res) => {
     // Update email (optional, can be empty)
     const newEmail = typeof email === 'string' ? email.trim() : user.email || '';
     
+    // If setting a non-empty email, make sure no other account already uses it -
+    // password reset looks accounts up by email, and a duplicate would make that
+    // ambiguous (we intentionally refuse to guess which account to reset in that case).
+    if (newEmail) {
+      const existing = db.prepare(
+        'SELECT id FROM users WHERE email = ? COLLATE NOCASE AND id != ?'
+      ).get(newEmail, verification.user.id);
+      if (existing) {
+        return res.status(400).json({ error: 'That email address is already in use by another account.' });
+      }
+    }
+    
     // Profanity filter (boolean to integer)
     const newProfanityFilter = profanityFilter === true ? 1 : 0;
     
@@ -306,7 +368,7 @@ app.post('/api/user/settings', (req, res) => {
 });
 
 // POST /api/user/change-password - Change user password
-app.post('/api/user/change-password', (req, res) => {
+app.post('/api/user/change-password', authLimiter, (req, res) => {
   const token = req.headers.authorization?.split(' ')[1] || req.body.token;
   const verification = auth.verifyToken(token);
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
@@ -342,6 +404,72 @@ app.post('/api/user/change-password', (req, res) => {
   } catch (error) {
     console.error('Error changing password:', error);
     res.status(500).json({ error: 'Failed to change password' });
+  }
+});
+
+// POST /api/user/delete-account - Permanently delete your own account
+app.post('/api/user/delete-account', authLimiter, (req, res) => {
+  const token = req.headers.authorization?.split(' ')[1] || req.body.token;
+  const verification = auth.verifyToken(token);
+  if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
+
+  try {
+    const { password } = req.body;
+    const result = auth.deleteAccount(verification.user.id, password);
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (error) {
+    console.error('Error deleting account:', error);
+    res.status(500).json({ error: 'Failed to delete account' });
+  }
+});
+
+// POST /api/forgot-password - Request a password reset email
+// Always returns the same generic message regardless of whether the account
+// exists, has an email on file, or the email send actually succeeded - this
+// endpoint must never be usable to test whether a given username/email has
+// an account (user enumeration).
+app.post('/api/forgot-password', authLimiter, async (req, res) => {
+  const GENERIC_MESSAGE = 'If an account with that username or email exists, we\'ve sent password reset instructions to its email address.';
+
+  try {
+    const { identifier } = req.body;
+    const result = auth.requestPasswordReset(identifier);
+
+    if (result.found && result.email && result.token) {
+      // Fire-and-forget: email sending is not awaited into the response,
+      // and its outcome never changes what we tell the client.
+      emailService.sendPasswordResetEmail(result.email, result.token).catch(err => {
+        console.error('Error sending password reset email:', err);
+      });
+    }
+
+    res.json({ success: true, message: GENERIC_MESSAGE });
+  } catch (error) {
+    console.error('Error in forgot-password:', error);
+    // Still return the generic message - don't leak internal errors either
+    res.json({ success: true, message: GENERIC_MESSAGE });
+  }
+});
+
+// POST /api/reset-password - Complete a password reset using the emailed token
+app.post('/api/reset-password', authLimiter, (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    const result = auth.resetPasswordWithToken(token, newPassword);
+
+    if (result.success) {
+      res.json(result);
+    } else {
+      res.status(400).json(result);
+    }
+  } catch (error) {
+    console.error('Error in reset-password:', error);
+    res.status(500).json({ success: false, error: 'Failed to reset password' });
   }
 });
 
@@ -799,6 +927,35 @@ const rooms = new Map();
 const disconnectionTimers = new Map(); // Map of playerId -> timeout
 const DISCONNECTION_GRACE_PERIOD = 30000; // 30 seconds
 
+// --- Socket.io rate limiting ---
+// express-rate-limit only works on HTTP requests, so socket events (chat spam,
+// room-creation spam) need their own lightweight throttle. Tracks recent event
+// timestamps per key in memory; keys are cleaned up on disconnect so this doesn't
+// grow unbounded over a long-running server.
+const socketEventTimestamps = new Map(); // key -> array of timestamps (ms)
+
+function isSocketRateLimited(key, maxEvents, windowMs) {
+  const now = Date.now();
+  const recent = (socketEventTimestamps.get(key) || []).filter(t => now - t < windowMs);
+
+  if (recent.length >= maxEvents) {
+    socketEventTimestamps.set(key, recent); // keep pruned even when blocking
+    return true;
+  }
+
+  recent.push(now);
+  socketEventTimestamps.set(key, recent);
+  return false;
+}
+
+function clearSocketRateLimits(socketId) {
+  for (const key of socketEventTimestamps.keys()) {
+    if (key.startsWith(`${socketId}:`)) {
+      socketEventTimestamps.delete(key);
+    }
+  }
+}
+
 // Card definitions
 const CARDS = ['Duke', 'Assassin', 'Captain', 'Ambassador', 'Contessa'];
 const INQUISITOR_CARDS = ['Duke', 'Assassin', 'Captain', 'Inquisitor', 'Contessa'];
@@ -1126,6 +1283,7 @@ function startGame(room) {
       foreignaidDenied: 0,
       foreignaidblockSucceeded: 0,
       foreignaidblockFailed: 0,
+      stealsSucceeded: 0,
       stealsBlocked: 0,
       
       // Assassination stats
@@ -1785,6 +1943,7 @@ function resolveAction(room) {
         if (actor.gameStats) {
           actor.gameStats.coinsEarned += stolen;
           actor.gameStats.coinsStolen += stolen;
+          actor.gameStats.stealsSucceeded += 1;
           actor.gameStats.playersStolenFrom.add(target.userId || target.id);
           actor.gameStats.actionsPerformed += 1;
         }
@@ -2668,6 +2827,7 @@ function saveGameResults(room) {
             foreignaid_denied = foreignaid_denied + ?,
             foreignaidblock_succeeded = foreignaidblock_succeeded + ?,
             foreignaidblock_failed = foreignaidblock_failed + ?,
+            steals_succeeded = steals_succeeded + ?,
             steals_blocked = steals_blocked + ?,
             
             assassinations_succeeded = assassinations_succeeded + ?,
@@ -2706,6 +2866,7 @@ function saveGameResults(room) {
         player.gameStats.foreignaidDenied,
         player.gameStats.foreignaidblockSucceeded,
         player.gameStats.foreignaidblockFailed,
+        player.gameStats.stealsSucceeded,
         player.gameStats.stealsBlocked,
         
         player.gameStats.assassinationsSucceeded,
@@ -4390,6 +4551,50 @@ app.get('/api/leaderboards/:type', (req, res) => {
         `;
         break;
         
+      case 'thief':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.steals_succeeded DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'defender':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.contessa_succeeded DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'seer':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.influence_examined DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
+      case 'doppelganger':
+        query = `
+          SELECT u.id, u.username, s.* 
+          FROM user_stats s
+          JOIN users u ON s.user_id = u.id
+          WHERE s.games_played >= ?
+          ORDER BY s.influence_exchanged DESC, s.elo_rating DESC
+          LIMIT ?
+        `;
+        break;
+        
       default:
         return res.status(400).json({ error: 'Invalid leaderboard type' });
     }
@@ -4416,7 +4621,11 @@ app.get('/api/leaderboards/:type', (req, res) => {
                      type === 'tax' ? player.tax_succeeded :
                      type === 'assassin' ? player.assassinations_succeeded :
                      type === 'finisher' ? player.players_eliminated :
-                     type === 'economist' ? player.coins_earned : 0,
+                     type === 'economist' ? player.coins_earned :
+                     type === 'thief' ? player.steals_succeeded :
+                     type === 'defender' ? player.contessa_succeeded :
+                     type === 'seer' ? player.influence_examined :
+                     type === 'doppelganger' ? player.influence_exchanged : 0,
         secondaryStats: {
           gamesPlayed: player.games_played,
           gamesWon: player.games_won,
@@ -4743,6 +4952,11 @@ io.on('connection', (socket) => {
   }
 
   socket.on('createRoom', (data, callback) => {
+    if (isSocketRateLimited(`${socket.id}:createRoom`, 5, 60000)) {
+      callback({ success: false, error: 'You are creating rooms too quickly. Please wait a moment.' });
+      return;
+    }
+
     const roomCode = generateRoomCode();
     
     // Determine player name first (needed for default room name)
@@ -5579,6 +5793,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('lobbyChatMessage', (data) => {
+    if (isSocketRateLimited(`${socket.id}:lobbyChat`, 5, 10000)) {
+      socket.emit('chatRateLimited', { message: 'You are sending messages too quickly. Please slow down.' });
+      return;
+    }
+
     const userData = lobbySockets.get(socket.id);
     if (!userData) return;
     
@@ -5617,6 +5836,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('disconnect', () => {
+    clearSocketRateLimits(socket.id);
     
     // Handle player/spectator disconnection
     rooms.forEach((room, roomCode) => {
@@ -5769,6 +5989,11 @@ io.on('connection', (socket) => {
   });
 
   socket.on('sendChatMessage', (data) => {
+    if (isSocketRateLimited(`${socket.id}:gameChat`, 5, 10000)) {
+      socket.emit('chatRateLimited', { message: 'You are sending messages too quickly. Please slow down.' });
+      return;
+    }
+
     const { roomCode, message } = data;
     const room = rooms.get(roomCode);
     

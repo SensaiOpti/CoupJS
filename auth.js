@@ -1,10 +1,12 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const dbModule = require('./database');
 
 // Secret key for JWT (in production, use environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'coup-secret-key-change-in-production';
 const JWT_EXPIRES_IN = '30d'; // Token valid for 30 days
+const RESET_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // Password reset links are valid for 1 hour
 
 // Helper to get db instance
 function getDb() {
@@ -39,6 +41,18 @@ function register(username, password, email = null) {
   const existing = getUserByUsername.get(username);
   if (existing) {
     return { success: false, error: 'Username already taken' };
+  }
+
+  // If an email was provided, make sure no other account already uses it -
+  // password reset looks accounts up by email, and a duplicate would make
+  // that ambiguous for both accounts involved.
+  if (email && email.trim()) {
+    const existingEmail = dbModule.prepare(`
+      SELECT id FROM users WHERE email = ? COLLATE NOCASE
+    `).get(email.trim());
+    if (existingEmail) {
+      return { success: false, error: 'That email address is already in use by another account.' };
+    }
   }
 
   try {
@@ -236,10 +250,162 @@ function getUserByIdSimple(userId) {
   return getUserById.get(userId);
 }
 
+/**
+ * Starts a password reset. Looks up the account by username or email.
+ * Safe to call with arbitrary/unknown input - never throws. The caller should
+ * always show the same generic response regardless of the result, so this
+ * can't be used to test whether a given username/email has an account.
+ *
+ * Returns one of:
+ *   { found: false }                          - no matching account, or the
+ *                                                email matched more than one
+ *                                                account (shouldn't normally
+ *                                                happen, but email isn't
+ *                                                enforced unique - treated as
+ *                                                ambiguous rather than guessing)
+ *   { found: true, email: null }               - account exists but has no
+ *                                                email on file to send to
+ *   { found: true, email, token, username }    - account found, a fresh
+ *                                                token was generated and
+ *                                                saved; caller should email it
+ */
+function requestPasswordReset(identifier) {
+  if (!identifier || typeof identifier !== 'string') {
+    return { found: false };
+  }
+
+  const trimmed = identifier.trim();
+  if (!trimmed) return { found: false };
+
+  // Try username first (exact match, case-insensitive)
+  let user = dbModule.prepare(`
+    SELECT id, username, email FROM users WHERE username = ? COLLATE NOCASE
+  `).get(trimmed);
+
+  // Fall back to email - but only act on it if it uniquely identifies one
+  // account, since email isn't enforced unique at the database level
+  if (!user) {
+    const matches = dbModule.prepare(`
+      SELECT id, username, email FROM users
+      WHERE email = ? COLLATE NOCASE AND email IS NOT NULL AND email != ''
+    `).all(trimmed);
+    if (matches.length === 1) {
+      user = matches[0];
+    }
+  }
+
+  if (!user) {
+    return { found: false };
+  }
+
+  if (!user.email) {
+    return { found: true, email: null };
+  }
+
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const expiresAt = new Date(Date.now() + RESET_TOKEN_EXPIRY_MS).toISOString();
+
+  dbModule.prepare(`
+    UPDATE users SET reset_token_hash = ?, reset_token_expires = ? WHERE id = ?
+  `).run(tokenHash, expiresAt, user.id);
+  dbModule.saveDatabase();
+
+  return { found: true, email: user.email, token: rawToken, username: user.username };
+}
+
+/**
+ * Completes a password reset given the raw token from the emailed link.
+ * The token itself is never stored in plaintext - only its SHA-256 hash is
+ * compared against what's on file, and it's single-use (cleared on success).
+ */
+function resetPasswordWithToken(token, newPassword) {
+  if (!token || typeof token !== 'string') {
+    return { success: false, error: 'Invalid or expired reset link' };
+  }
+
+  if (!newPassword || newPassword.length < 6) {
+    return { success: false, error: 'Password must be at least 6 characters' };
+  }
+
+  const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
+
+  const user = dbModule.prepare(`
+    SELECT id, reset_token_expires FROM users WHERE reset_token_hash = ?
+  `).get(tokenHash);
+
+  if (!user) {
+    return { success: false, error: 'Invalid or expired reset link' };
+  }
+
+  if (!user.reset_token_expires || new Date(user.reset_token_expires).getTime() < Date.now()) {
+    return { success: false, error: 'This reset link has expired. Please request a new one.' };
+  }
+
+  const salt = bcrypt.genSaltSync(10);
+  const passwordHash = bcrypt.hashSync(newPassword, salt);
+
+  dbModule.prepare(`
+    UPDATE users SET password_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL WHERE id = ?
+  `).run(passwordHash, user.id);
+  dbModule.saveDatabase();
+
+  return { success: true };
+}
+
+/**
+ * Permanently deletes a user's own account after verifying their password.
+ *
+ * Cleans up related tables explicitly rather than relying on the schema's
+ * ON DELETE CASCADE/SET NULL clauses, since this database does not have
+ * SQLite foreign key enforcement turned on (those clauses are declared but
+ * not actually active here).
+ *
+ * Known limitation: game_history stores a JSON snapshot of every player in
+ * each match rather than a normalized reference to their user row, so a
+ * deleted user's username and stats will still appear in the historical
+ * match records of other players they've played against. This function
+ * does not attempt to rewrite that historical data.
+ */
+function deleteAccount(userId, password) {
+  const user = dbModule.prepare(`
+    SELECT id, username, password_hash, role FROM users WHERE id = ?
+  `).get(userId);
+
+  if (!user) {
+    return { success: false, error: 'Account not found' };
+  }
+
+  if (!password || !bcrypt.compareSync(password, user.password_hash)) {
+    return { success: false, error: 'Incorrect password' };
+  }
+
+  // Don't let the last remaining admin delete themselves and leave the
+  // site with no one able to moderate or manage it.
+  if (user.role === 'admin') {
+    const adminCount = dbModule.prepare(`
+      SELECT COUNT(*) as count FROM users WHERE role = 'admin'
+    `).get().count;
+    if (adminCount <= 1) {
+      return { success: false, error: 'You are the only admin. Promote another user to admin before deleting your account.' };
+    }
+  }
+
+  dbModule.prepare(`DELETE FROM user_stats WHERE user_id = ?`).run(userId);
+  dbModule.prepare(`UPDATE game_history SET winner_user_id = NULL WHERE winner_user_id = ?`).run(userId);
+  dbModule.prepare(`DELETE FROM users WHERE id = ?`).run(userId);
+  dbModule.saveDatabase();
+
+  return { success: true };
+}
+
 module.exports = {
   register,
   login,
   verifyToken,
   getUserByIdSimple,
+  requestPasswordReset,
+  resetPasswordWithToken,
+  deleteAccount,
   JWT_SECRET
 };

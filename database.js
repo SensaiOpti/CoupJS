@@ -29,6 +29,8 @@ async function initDatabase() {
       display_name TEXT NOT NULL,
       deck_preference TEXT DEFAULT 'default',
       sound_preference TEXT DEFAULT 'default',
+      reset_token_hash TEXT DEFAULT NULL,
+      reset_token_expires DATETIME DEFAULT NULL,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
       last_login DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -94,6 +96,18 @@ async function initDatabase() {
   } catch (e) {
     // Column already exists, ignore
   }
+  
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN reset_token_hash TEXT DEFAULT NULL`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+  
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN reset_token_expires DATETIME DEFAULT NULL`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS user_stats (
@@ -126,6 +140,7 @@ async function initDatabase() {
       foreignaid_denied INTEGER DEFAULT 0,
       foreignaidblock_succeeded INTEGER DEFAULT 0,
       foreignaidblock_failed INTEGER DEFAULT 0,
+      steals_succeeded INTEGER DEFAULT 0,
       steals_blocked INTEGER DEFAULT 0,
       
       -- Assassination stats
@@ -142,6 +157,13 @@ async function initDatabase() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     );
   `);
+
+  // Add steals_succeeded column if it doesn't exist (for existing databases)
+  try {
+    db.run(`ALTER TABLE user_stats ADD COLUMN steals_succeeded INTEGER DEFAULT 0`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
 
   db.run(`
     CREATE TABLE IF NOT EXISTS game_history (

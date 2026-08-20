@@ -368,6 +368,11 @@
     </div>
   </div>
 
+  <!-- Rate limit toast - lives outside #app so it isn't wiped out by the frequent re-renders -->
+  <div id="rateLimitToast" style="display: none; position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); z-index: 9999;" class="bg-yellow-900 border border-yellow-600 text-yellow-100 px-4 py-2 rounded-lg shadow-lg text-sm">
+    <span id="rateLimitToastText"></span>
+  </div>
+
   <script>
     // Game state
     let socket = null;
@@ -1133,6 +1138,10 @@
         console.log('Stored gameStats:', gameStats);
         render();
       });
+
+      socket.on('chatRateLimited', (data) => {
+        showRateLimitToast(data?.message || 'You are sending messages too quickly. Please slow down.');
+      });
     }
 
     function createRoom() {
@@ -1713,6 +1722,21 @@
     function handleGuideImageError(img) {
       img.style.display = 'none';
       document.getElementById('guideImageFallback').style.display = 'block';
+    }
+
+    // Brief, non-blocking toast for rate-limit notices. Lives outside #app so it
+    // survives the app's frequent full re-renders instead of vanishing instantly.
+    let rateLimitToastTimeout = null;
+    function showRateLimitToast(message) {
+      const toast = document.getElementById('rateLimitToast');
+      const text = document.getElementById('rateLimitToastText');
+      text.textContent = message;
+      toast.style.display = 'block';
+
+      clearTimeout(rateLimitToastTimeout);
+      rateLimitToastTimeout = setTimeout(() => {
+        toast.style.display = 'none';
+      }, 3000);
     }
 
     // Authentication functions

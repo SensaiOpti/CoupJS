@@ -52,11 +52,11 @@
   <div class="max-w-7xl mx-auto p-4 md:p-8">
 
     <!-- Header -->
-    <div class="flex justify-between items-center mb-8">
+    <div class="flex justify-between items-center mb-5">
       <div class="flex items-center gap-4">
-        <h1 class="text-4xl font-bold text-red-500">COUP</h1>
+        <h1 class="text-3xl font-bold text-red-500">COUP</h1>
         <span class="text-gray-400">|</span>
-        <h2 class="text-2xl text-gray-300">Settings</h2>
+        <h2 class="text-xl text-gray-300">Settings</h2>
       </div>
       <div class="flex gap-3">
         <a href="/leaderboards.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
@@ -81,7 +81,7 @@
     </div>
 
     <!-- Not logged in -->
-    <div id="notLoggedIn" class="hidden stat-card rounded-lg p-8 text-center">
+    <div id="notLoggedIn" class="hidden stat-card rounded-lg p-6 text-center">
       <div class="text-4xl mb-3">🔒</div>
       <div class="text-lg font-bold text-gray-300 mb-2">Not logged in</div>
       <div class="text-sm text-gray-400 mb-4">You must be logged in to view settings.</div>
@@ -89,95 +89,94 @@
     </div>
 
     <!-- Settings Content -->
-    <div id="settingsContent" class="hidden space-y-6">
-
-      <h2 class="text-3xl font-bold">⚙️ Settings</h2>
+    <div id="settingsContent" class="hidden space-y-4">
 
       <!-- Deck Preferences -->
-      <div class="stat-card rounded-lg p-6">
+      <div class="stat-card rounded-lg p-5">
         <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🎴 Card Deck Style</h3>
-        <p class="text-gray-400 text-sm mb-5">Choose the card art style used in your games.</p>
+        <p class="text-gray-400 text-sm mb-3">Choose the card art style used in your games.</p>
         <div id="deckOptions" class="grid grid-cols-2 md:grid-cols-4 gap-3">
           <!-- Populated by JS -->
         </div>
       </div>
 
       <!-- Sound Pack Preferences -->
-      <div class="stat-card rounded-lg p-6">
+      <div class="stat-card rounded-lg p-5">
         <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🔊 Sound Pack</h3>
-        <p class="text-gray-400 text-sm mb-5">Choose the sound effects used in your games. Click Preview to hear a sample.</p>
+        <p class="text-gray-400 text-sm mb-3">Choose the sound effects used in your games. Click Preview to hear a sample.</p>
         <div id="soundOptions" class="grid grid-cols-2 md:grid-cols-4 gap-3">
           <!-- Populated by JS -->
         </div>
       </div>
 
       <!-- Avatar Selection -->
-      <div class="stat-card rounded-lg p-6">
+      <div class="stat-card rounded-lg p-5">
         <h3 class="text-xl font-bold mb-1 flex items-center gap-2">Profile Avatar</h3>
-        <p class="text-gray-400 text-sm mb-5">Choose an icon or portrait to represent you throughout the site.</p>
+        <p class="text-gray-400 text-sm mb-3">Choose an icon or portrait to represent you throughout the site.</p>
         
         <!-- Current Avatar Preview -->
-        <div class="flex items-center gap-4 mb-4">
+        <div class="flex items-center gap-4 mb-3">
           <div class="text-sm text-gray-400">Current Avatar:</div>
-          <div id="currentAvatar" class="w-16 h-16 bg-gray-700 rounded-full flex items-center justify-center text-3xl overflow-hidden">
+          <div id="currentAvatar" class="w-14 h-14 bg-gray-700 rounded-full flex items-center justify-center text-2xl overflow-hidden">
             👤
           </div>
         </div>
         
         <!-- Emoji Avatars -->
-        <h4 class="text-lg font-semibold mb-2">Emoji Icons</h4>
-        <div id="avatarOptions" class="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-6">
+        <h4 class="text-base font-semibold mb-2">Emoji Icons</h4>
+        <div id="avatarOptions" class="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-2 mb-4">
           <!-- Populated by JS -->
         </div>
         
         <!-- Image Avatars -->
-        <h4 class="text-lg font-semibold mb-2">Portrait Avatars</h4>
+        <h4 class="text-base font-semibold mb-2">Portrait Avatars</h4>
         <div id="imageAvatarOptions" class="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
           <!-- Populated by JS -->
         </div>
       </div>
 
-      <!-- Profile Bio -->
-      <div class="stat-card rounded-lg p-6">
-        <h3 class="text-xl font-bold mb-1 flex items-center gap-2">✏️ Profile Bio</h3>
-        <p class="text-gray-400 text-sm mb-5">
-          Add a custom tagline or bio that appears on your profile. Visible to everyone. (Max 250 characters)
-        </p>
-        <textarea 
-          id="bioInput" 
-          maxlength="250" 
-          rows="3"
-          class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
-          placeholder="e.g., 'Bluffing enthusiast and Duke lover' or 'Coup champion since 2023'"></textarea>
-        <div class="text-xs text-gray-400 mt-1">
-          <span id="bioCharCount">0</span> / 250 characters
+      <!-- Profile Bio + Email -->
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div class="stat-card rounded-lg p-5">
+          <h3 class="text-xl font-bold mb-1 flex items-center gap-2">✏️ Profile Bio</h3>
+          <p class="text-gray-400 text-sm mb-3">
+            A custom tagline shown on your profile. Visible to everyone. (Max 250 characters)
+          </p>
+          <textarea 
+            id="bioInput" 
+            maxlength="250" 
+            rows="3"
+            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            placeholder="e.g., 'Bluffing enthusiast and Duke lover'"></textarea>
+          <div class="text-xs text-gray-400 mt-1">
+            <span id="bioCharCount">0</span> / 250 characters
+          </div>
+        </div>
+
+        <div class="stat-card rounded-lg p-5">
+          <h3 class="text-xl font-bold mb-1 flex items-center gap-2">📧 Email Address</h3>
+          <p class="text-gray-400 text-sm mb-3">
+            Optional. Used for future features like password recovery. Never displayed publicly.
+          </p>
+          <input 
+            type="email"
+            id="emailInput" 
+            class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
+            placeholder="your@email.com">
         </div>
       </div>
 
-      <!-- Email -->
-      <div class="stat-card rounded-lg p-6">
-        <h3 class="text-xl font-bold mb-1 flex items-center gap-2">📧 Email Address</h3>
-        <p class="text-gray-400 text-sm mb-5">
-          Optional. Used for future features like password recovery. Never displayed publicly.
-        </p>
-        <input 
-          type="email"
-          id="emailInput" 
-          class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-purple-500"
-          placeholder="your@email.com">
-      </div>
-
-      <!-- Privacy Settings -->
-      <div class="stat-card rounded-lg p-6">
+      <!-- Privacy Settings + Profanity Filter -->
+      <div class="stat-card rounded-lg p-5">
         <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🔒 Profile Privacy</h3>
-        <p class="text-gray-400 text-sm mb-5">
+        <p class="text-gray-400 text-sm mb-3">
           Your name, join date, games played, and Elo are always public.
           Toggle what else visitors can see on your profile.
         </p>
 
-        <div class="space-y-4">
+        <div>
           <!-- Win Rate -->
-          <div class="flex items-center justify-between py-3 border-b border-gray-700">
+          <div class="flex items-center justify-between py-2.5 border-b border-gray-700">
             <div>
               <div class="font-semibold">Win Rate & K/D</div>
               <div class="text-sm text-gray-400">Show your win rate, win/loss record, and kill/death ratio</div>
@@ -193,7 +192,7 @@
           </div>
 
           <!-- Individual Stats -->
-          <div class="flex items-center justify-between py-3 border-b border-gray-700">
+          <div class="flex items-center justify-between py-2.5 border-b border-gray-700">
             <div>
               <div class="font-semibold">Individual Stats</div>
               <div class="text-sm text-gray-400">Show your per-action stats (assassinations, taxes, bluffs, etc.)</div>
@@ -209,7 +208,7 @@
           </div>
 
           <!-- Achievements -->
-          <div class="flex items-center justify-between py-3 border-b border-gray-700">
+          <div class="flex items-center justify-between py-2.5 border-b border-gray-700">
             <div>
               <div class="font-semibold">Achievements</div>
               <div class="text-sm text-gray-400">Show your unlocked achievements and progress</div>
@@ -225,7 +224,7 @@
           </div>
 
           <!-- Match History -->
-          <div class="flex items-center justify-between py-3">
+          <div class="flex items-center justify-between py-2.5 border-b border-gray-700">
             <div>
               <div class="font-semibold">Match History</div>
               <div class="text-sm text-gray-400">Show your recent match results and stats</div>
@@ -239,40 +238,35 @@
               <span class="text-gray-400 text-sm w-14" id="labelMatchHistory">Private</span>
             </label>
           </div>
-        </div>
-      </div>
 
-      <!-- Profanity Filter -->
-      <div class="stat-card rounded-lg p-6">
-        <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🤐 Profanity Filter</h3>
-        <p class="text-gray-400 text-sm mb-5">
-          Filter out profanity from chat messages you see. This is a personal setting - it only affects what you see.
-        </p>
-        <div class="flex items-center justify-between py-3 border-b border-gray-700">
-          <div>
-            <div class="font-semibold">Enable Profanity Filter</div>
-            <div class="text-sm text-gray-400">Replace offensive words with asterisks in lobby and game chat</div>
-          </div>
-          <label class="flex items-center gap-2 cursor-pointer select-none">
-            <div class="relative">
-              <input type="checkbox" id="profanityFilter" class="sr-only">
-              <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg"></div>
-              <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot"></div>
+          <!-- Profanity Filter (personal viewing preference, not a privacy/visibility toggle,
+               but grouped here to avoid a whole extra card for one row) -->
+          <div class="flex items-center justify-between py-2.5">
+            <div>
+              <div class="font-semibold">Profanity Filter</div>
+              <div class="text-sm text-gray-400">Replace offensive words with asterisks in lobby and game chat (only affects what you see)</div>
             </div>
-            <span class="text-gray-400 text-sm w-14" id="labelProfanityFilter">Off</span>
-          </label>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <div class="relative">
+                <input type="checkbox" id="profanityFilter" class="sr-only">
+                <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot"></div>
+              </div>
+              <span class="text-gray-400 text-sm w-14" id="labelProfanityFilter">Off</span>
+            </label>
+          </div>
         </div>
       </div>
 
       <!-- Change Password -->
-      <div class="stat-card rounded-lg p-6">
+      <div class="stat-card rounded-lg p-5">
         <h3 class="text-xl font-bold mb-1 flex items-center gap-2">🔑 Change Password</h3>
-        <p class="text-gray-400 text-sm mb-5">
+        <p class="text-gray-400 text-sm mb-3">
           Update your password to keep your account secure.
         </p>
-        <div class="space-y-4">
+        <div class="space-y-3">
           <div>
-            <label class="block text-sm text-gray-400 mb-2">Current Password</label>
+            <label class="block text-sm text-gray-400 mb-1.5">Current Password</label>
             <input 
               type="password"
               id="currentPassword" 
@@ -280,7 +274,7 @@
               placeholder="Enter current password">
           </div>
           <div>
-            <label class="block text-sm text-gray-400 mb-2">New Password</label>
+            <label class="block text-sm text-gray-400 mb-1.5">New Password</label>
             <input 
               type="password"
               id="newPassword" 
@@ -288,7 +282,7 @@
               placeholder="Enter new password (6+ characters)">
           </div>
           <div>
-            <label class="block text-sm text-gray-400 mb-2">Confirm New Password</label>
+            <label class="block text-sm text-gray-400 mb-1.5">Confirm New Password</label>
             <input 
               type="password"
               id="confirmPassword" 
@@ -300,6 +294,51 @@
           </button>
           <div id="passwordMsg" class="hidden text-sm text-green-400">✓ Password changed successfully!</div>
           <div id="passwordErr" class="hidden text-sm text-red-400"></div>
+        </div>
+      </div>
+
+      <!-- Danger Zone -->
+      <div class="stat-card rounded-lg p-5 border border-red-800">
+        <h3 class="text-xl font-bold mb-1 flex items-center gap-2 text-red-400">⚠️ Danger Zone</h3>
+        <p class="text-gray-400 text-sm mb-3">
+          Permanently delete your account. This removes your login, stats, achievements, and settings.
+          Match history you share with other players may still show your old username in their records,
+          since that history isn't tied back to your account. <strong>This cannot be undone.</strong>
+        </p>
+
+        <button id="showDeleteBtn" onclick="showDeleteAccount()" class="bg-red-900 hover:bg-red-800 border border-red-600 px-6 py-2 rounded font-bold transition-colors">
+          Delete My Account
+        </button>
+
+        <div id="deleteAccountForm" class="hidden mt-4 space-y-3">
+          <div id="deleteErr" class="hidden bg-red-900 border border-red-600 rounded p-3 text-sm"></div>
+
+          <div>
+            <label class="block text-sm text-gray-400 mb-1.5">Enter your password to confirm</label>
+            <input
+              type="password"
+              id="deleteAccountPassword"
+              class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
+              placeholder="Your password">
+          </div>
+
+          <div>
+            <label class="block text-sm text-gray-400 mb-1.5">Type <strong class="text-red-400">DELETE</strong> to confirm</label>
+            <input
+              type="text"
+              id="deleteAccountConfirmText"
+              class="w-full bg-gray-700 border border-gray-600 rounded px-3 py-2 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-red-500"
+              placeholder="DELETE">
+          </div>
+
+          <div class="flex gap-3">
+            <button id="confirmDeleteBtn" onclick="confirmDeleteAccount()" class="bg-red-700 hover:bg-red-600 px-6 py-2 rounded font-bold transition-colors">
+              Permanently Delete My Account
+            </button>
+            <button onclick="hideDeleteAccount()" class="bg-gray-700 hover:bg-gray-600 px-6 py-2 rounded font-bold transition-colors">
+              Cancel
+            </button>
+          </div>
         </div>
       </div>
 
@@ -787,6 +826,75 @@
         console.error(e);
         document.getElementById('passwordErr').textContent = 'Network error. Please try again.';
         document.getElementById('passwordErr').classList.remove('hidden');
+      }
+    }
+
+    function showDeleteAccount() {
+      document.getElementById('showDeleteBtn').classList.add('hidden');
+      document.getElementById('deleteAccountForm').classList.remove('hidden');
+    }
+
+    function hideDeleteAccount() {
+      document.getElementById('showDeleteBtn').classList.remove('hidden');
+      document.getElementById('deleteAccountForm').classList.add('hidden');
+      document.getElementById('deleteAccountPassword').value = '';
+      document.getElementById('deleteAccountConfirmText').value = '';
+      document.getElementById('deleteErr').classList.add('hidden');
+    }
+
+    async function confirmDeleteAccount() {
+      const errEl = document.getElementById('deleteErr');
+      errEl.classList.add('hidden');
+
+      const password = document.getElementById('deleteAccountPassword').value;
+      const confirmText = document.getElementById('deleteAccountConfirmText').value;
+
+      if (!password) {
+        errEl.textContent = 'Please enter your password';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      if (confirmText !== 'DELETE') {
+        errEl.textContent = 'Please type DELETE (all caps) to confirm';
+        errEl.classList.remove('hidden');
+        return;
+      }
+
+      const confirmBtn = document.getElementById('confirmDeleteBtn');
+      confirmBtn.disabled = true;
+      confirmBtn.textContent = 'Deleting...';
+
+      try {
+        const res = await fetch(`${API_BASE}/api/user/delete-account`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${authToken}`
+          },
+          body: JSON.stringify({ password })
+        });
+
+        const data = await res.json();
+
+        if (!res.ok) {
+          errEl.textContent = data.error || 'Failed to delete account';
+          errEl.classList.remove('hidden');
+          confirmBtn.disabled = false;
+          confirmBtn.textContent = 'Permanently Delete My Account';
+          return;
+        }
+
+        // Success - clear local auth state and leave
+        localStorage.removeItem('coupAuthToken');
+        localStorage.removeItem('currentUser');
+        window.location.href = '/login.html';
+      } catch (e) {
+        console.error(e);
+        errEl.textContent = 'Network error. Please try again.';
+        errEl.classList.remove('hidden');
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = 'Permanently Delete My Account';
       }
     }
 

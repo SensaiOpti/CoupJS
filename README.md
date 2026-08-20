@@ -1,7 +1,7 @@
 # CoupJS
 An entirely (well, 99%+) AI generated web version of the social deception card game Coup. Based on my love of [secrethitler.io](https://github.com/cozuya/secret-hitler).
 
-Seriously, I know nothing about coding at all so enter at your own risk. I can promise there won't be any of those annoying emojis, though. Not once I purge them.
+Seriously, I know nothing about coding at all so enter at your own risk. I've done my best to remove em-dashes and emojis (kinda; they're nice for achievements).
 
 ## Non-AI Stuff
 There are a handful of items that are not AI generated. I've listed them below with extreme praise and thanks to their creator:
@@ -10,6 +10,7 @@ There are a handful of items that are not AI generated. I've listed them below w
 - In the anime card set, I use a font called [Lollipoptron](https://www.fontspace.com/lollipoptron-font-f29782) which was designed by heaven castro as a derivative of KineticPlasma Fonts' Hi. A mouthful!
 - In the pixel card set, I use a font called [PixelMplus](https://fontmeme.com/fonts/pixelmplus-font/) by the heroic Itou Hiroki. A font that evokes a feeling of nostalgia.
 - In the minimalist card set, the font [Rothenburg Decorative](https://www.fontspace.com/rothenburg-decorative-font-f56110) is used, with much love and care. Well done to the designer, Dieter Steffmann.
+- For several portrait avatars, images from [SecretHitler.io](https://github.com/cozuya/secret-hitler) are used. In fact, this whole project is really a love letter to what that team has done.
 
 ## Technologies Used
 
@@ -22,9 +23,7 @@ There are a handful of items that are not AI generated. I've listed them below w
 - **jsonwebtoken (JWT)** - JSON Web Token for stateless authentication
 
 ### Frontend
-- **React** - UI library for building interactive components
-- **TypeScript** - Superset of JavaScript that adds static typing
-- **lucide-react** - Lightweight icon library for React applications
+- **HTML/CSS/JavaScript** - Static pages served by Express
 
 ### Database
 - **SQLite (via SQL.js)** - Embedded SQL database that runs directly in the browser
@@ -32,7 +31,6 @@ There are a handful of items that are not AI generated. I've listed them below w
 ### More Info the AI Wanted Me to Tell You
 - **Real-time multiplayer** - WebSocket-based game communication
 - **Authentication system** - User registration, login, and JWT verification
-- **Game state management** - React hooks for state management (useState, useEffect, useRef)
 - **Card game mechanics** - Full implementation of Coup rules including the Inquisitor variant
   - Well, duh. I don't...I dunno why it wants you to know this, as if it is isn't the bare minimum as to what you'd expect from this.
 

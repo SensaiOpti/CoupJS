@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tutorial - Coup</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
+    }
+
+    .text-ambassador { color: #739C7B; }
+    .text-assassin { color: #2A2A2A; }
+    .text-captain { color: #33609F; }
+    .text-contessa { color: #8B1D20; }
+    .text-duke { color: #432762; }
+    .text-inquisitor { color: #EAC01E; }
+
+    .bg-ambassador { background-color: #739C7B; }
+    .bg-ambassador:hover { background-color: #628a69; }
+    .bg-assassin { background-color: #2A2A2A; }
+    .bg-assassin:hover { background-color: #3a3a3a; }
+    .bg-captain { background-color: #33609F; }
+    .bg-captain:hover { background-color: #2a5088; }
+    .bg-contessa { background-color: #8B1D20; }
+    .bg-contessa:hover { background-color: #7a1a1c; }
+    .bg-duke { background-color: #432762; }
+    .bg-duke:hover { background-color: #362053; }
+
+    .narration-box {
+      animation: fadeIn 0.3s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(-6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .action-btn:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    .progress-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #4b5563;
+    }
+    .progress-dot.done { background: #dc2626; }
+  </style>
+</head>
+<body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
+  <div class="max-w-3xl mx-auto p-4 md:p-8">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-4">
+      <h1 class="text-3xl font-bold text-red-500">Tutorial</h1>
+      <a href="/" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded text-sm">Exit Tutorial</a>
+    </div>
+
+    <!-- Progress dots -->
+    <div id="progressDots" class="flex gap-1 justify-center mb-4"></div>
+
+    <!-- Board -->
+    <div class="grid grid-cols-2 gap-4 mb-4">
+      <div id="playerBox" class="bg-gray-800 rounded-lg p-4"></div>
+      <div id="morganBox" class="bg-gray-800 rounded-lg p-4"></div>
+    </div>
+
+    <!-- Narration -->
+    <div id="narrationBox" class="narration-box bg-blue-900 bg-opacity-40 border-2 border-blue-600 rounded-lg p-5 mb-4">
+      <div id="narrationText" class="text-blue-100 leading-relaxed"></div>
+    </div>
+
+    <!-- Controls -->
+    <div id="controls" class="space-y-3"></div>
+
+    <!-- Complete screen -->
+    <div id="completeScreen" class="hidden bg-gray-800 rounded-lg p-8 text-center">
+      <div class="text-5xl mb-4">🎉</div>
+      <h2 class="text-2xl font-bold mb-2">You won!</h2>
+      <p class="text-gray-400 mb-6">
+        You've now used Income, Foreign Aid, Tax, Steal, Exchange, Assassinate, and Coup - claimed every
+        character, blocked and been blocked, bluffed successfully and been caught bluffing, and won by
+        elimination. That's the whole game. Ready for a real one?
+      </p>
+      <div class="flex gap-3 justify-center">
+        <a href="/create-game.html" class="bg-red-600 hover:bg-red-700 px-6 py-3 rounded font-bold">Create a Game</a>
+        <a href="/" class="bg-gray-700 hover:bg-gray-600 px-6 py-3 rounded font-bold">Back to Menu</a>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const deckPreference = localStorage.getItem('coupDeckPreference') || 'default';
+
+    function getCardImagePath(cardName) {
+      return `/images/cards/${deckPreference}/${cardName.toLowerCase()}.png`;
+    }
+
+    function handleCardImageError(img, cardName) {
+      const normalized = (cardName || 'back').toLowerCase();
+      if (img.dataset.fallbackApplied === 'default' || deckPreference === 'default') {
+        img.onerror = null;
+        return;
+      }
+      img.dataset.fallbackApplied = 'default';
+      img.src = `/images/cards/default/${normalized}.png`;
+    }
+
+    // --- Game state ---
+    const state = {
+      playerCoins: 2,
+      morganCoins: 2,
+      playerCards: [
+        { name: 'Duke', revealed: false },
+        { name: 'Captain', revealed: false }
+      ],
+      morganCards: [
+        { name: 'Duke', revealed: false },
+        { name: 'Contessa', revealed: false }
+      ],
+      turn: 'player' // 'player' or 'morgan', just for the visual turn indicator
+    };
+
+    let stepIndex = 0;
+    let awaitingContinue = false; // true = show resultText + Continue button instead of the action prompt
+
+    // --- The script ---
+    // Each step: narration (shown while waiting for input), one of requireAction/choices/none,
+    // resultText (shown after the action/choice is made, before advancing), and applyEffect
+    // (mutates state). turn controls the visual "whose turn" indicator during this step.
+    // Coin/card totals below are pre-computed and hardcoded into resultText rather than
+    // read live, since this is a fully scripted, deterministic walkthrough.
+    const STEPS = [
+      {
+        turn: 'player',
+        narration: "Welcome to Coup! The goal is simple: be the last player left with influence. You have two characters, dealt face-down - only you can see them - and 2 coins. You're up against Morgan, who also has 2 characters and 2 coins. Let's play a real game together, step by step."
+      },
+      {
+        turn: 'player',
+        narration: "Let's start with the simplest action. <strong>Income</strong> gives you 1 coin. It can never be blocked or challenged by anyone - it's always safe.",
+        requireAction: 'income',
+        applyEffect: () => { state.playerCoins += 1; },
+        resultText: "You take Income and collect 1 coin. You now have 3 coins."
+      },
+      {
+        turn: 'player',
+        narration: "<strong>Foreign Aid</strong> gives you 2 coins from the treasury - more than Income - but anyone claiming the Duke can block it. Let's try it and see what happens.",
+        requireAction: 'foreignAid',
+        applyEffect: () => { /* blocked, no coins gained */ },
+        resultText: "Morgan claims the Duke and blocks your Foreign Aid! You gain nothing this time. You could challenge a block like this if you don't believe it - but let's move on for now."
+      },
+      {
+        turn: 'player',
+        narration: "Time to use one of your own characters. Take a look at your hand below - you actually have the <span class='text-duke font-bold'>Duke</span>! Use <strong>Tax</strong> to claim 3 coins.",
+        requireAction: 'tax',
+        applyEffect: () => { state.playerCoins += 3; },
+        resultText: "You claim the Duke and collect Tax - 3 coins! Since you really have the Duke, nobody wants to challenge you: they'd lose an influence for guessing wrong."
+      },
+      {
+        turn: 'player',
+        narration: "You also have the <span class='text-captain font-bold'>Captain</span>! Use <strong>Steal</strong> to take coins from Morgan. This time, Morgan doesn't believe you and challenges.",
+        requireAction: 'steal',
+        applyEffect: () => {
+          // Morgan challenges, player reveals Captain (true) - Morgan loses the challenge and an influence
+          state.morganCards[0].revealed = true; // reveal Morgan's Duke as the lost influence
+          const stolen = Math.min(2, state.morganCoins);
+          state.playerCoins += stolen;
+          state.morganCoins -= stolen;
+        },
+        resultText: "Morgan challenges your claim to the Captain - but you really have it! You reveal it, the challenge fails, and <strong>Morgan loses an influence</strong> for challenging incorrectly. Your steal still goes through on top of that."
+      },
+      {
+        turn: 'player',
+        narration: "Let's try something bold. Claim the <span class='text-ambassador font-bold'>Ambassador</span> and use <strong>Exchange</strong> - even though you don't actually have it. This is called <em>bluffing</em>.",
+        requireAction: 'exchange',
+        applyEffect: () => {
+          state.playerCards = [
+            { name: 'Assassin', revealed: false },
+            { name: 'Duke', revealed: false }
+          ];
+        },
+        resultText: "Morgan doesn't challenge - your bluff worked! You draw new cards from the deck and swap out your hand. For this tutorial, let's say you end up keeping the Assassin and the Duke."
+      },
+      {
+        turn: 'player',
+        narration: "You now have the <span class='text-assassin font-bold'>Assassin</span> for real. <strong>Assassinate</strong> costs 3 coins and forces a target to lose an influence.",
+        requireAction: 'assassinate',
+        applyEffect: () => { state.playerCoins -= 3; /* blocked - no influence lost */ },
+        resultText: "Morgan claims the <span class='text-contessa font-bold'>Contessa</span> to block your assassination - and this time, Morgan really has it. If you challenged, you'd lose the challenge and an influence. Good instinct to let this one go - the 3 coins are still spent either way."
+      },
+      {
+        turn: 'morgan',
+        narration: "Morgan's turn. Morgan takes Foreign Aid. You have the real Duke - do you want to block it, or allow it?",
+        choices: [
+          { label: 'Block with Duke', correct: true },
+          { label: 'Allow', correct: false }
+        ],
+        applyEffect: () => { /* blocked, Morgan gains nothing */ },
+        resultText: "You block with your own Duke! Since you really have it, Morgan wisely doesn't challenge. Morgan gains no coins this turn."
+      },
+      {
+        turn: 'player',
+        narration: "Let's try one more bluff - claim the Captain and Steal from Morgan again, even though you no longer have it. This time, Morgan suspects something and will challenge.",
+        requireAction: 'steal',
+        applyEffect: () => {
+          // Bluff caught - player reveals a card and loses it.
+          state.playerCards[0].revealed = true;
+        },
+        resultText: "Morgan challenges - and this time you were bluffing! You must reveal a card and lose that influence. You're down to one influence now - in a real game, you'd need to protect it carefully from here on."
+      },
+      {
+        turn: 'player',
+        narration: "Let's build back up. Use Tax again with your real Duke.",
+        requireAction: 'tax',
+        applyEffect: () => { state.playerCoins += 3; },
+        resultText: "Tax succeeds again - 3 more coins."
+      },
+      {
+        turn: 'player',
+        narration: "One more Tax. Remember: once you hit 10 or more coins, you <strong>must</strong> Coup on your next turn - no other action is allowed.",
+        requireAction: 'tax',
+        applyEffect: () => { state.playerCoins += 3; },
+        resultText: "Tax succeeds once more. You're well past 10 coins now - time to finish this."
+      },
+      {
+        turn: 'player',
+        narration: "<strong>Coup</strong> costs 7 coins, eliminates an influence, and can't be blocked or challenged by anyone. Use it on Morgan to end the game.",
+        requireAction: 'coup',
+        applyEffect: () => {
+          state.playerCoins -= 7;
+          state.morganCards[1].revealed = true; // Morgan's last influence (Contessa) falls
+        },
+        resultText: "Coup lands. Morgan has no influence left and is eliminated. You win!",
+        isFinal: true
+      }
+    ];
+
+    function cardImg(cardObj, isMine) {
+      const showFace = isMine || cardObj.revealed;
+      const src = showFace ? getCardImagePath(cardObj.name) : getCardImagePath('back');
+      const label = showFace ? cardObj.name : 'Hidden card';
+      const errName = showFace ? cardObj.name : 'back';
+      return `
+        <div class="relative w-16 ${cardObj.revealed ? 'opacity-50' : ''}">
+          <img src="${src}" alt="${label}" class="w-full h-auto rounded" onerror="handleCardImageError(this, '${errName}')" />
+          ${cardObj.revealed ? '<div class="absolute inset-0 flex items-center justify-center text-[10px] font-bold text-red-300 bg-red-900 bg-opacity-80 rounded">LOST</div>' : ''}
+        </div>
+      `;
+    }
+
+    function renderPlayerBox() {
+      document.getElementById('playerBox').innerHTML = `
+        <div class="flex justify-between items-center mb-3">
+          <div class="font-bold text-lg">You ${state.turn === 'player' ? '<span class="text-xs bg-red-600 px-2 py-0.5 rounded ml-1">TURN</span>' : ''}</div>
+          <div class="flex items-center gap-1 text-yellow-500 font-bold">💰 ${state.playerCoins}</div>
+        </div>
+        <div class="flex gap-2">
+          ${state.playerCards.map(c => cardImg(c, true)).join('')}
+        </div>
+      `;
+    }
+
+    function renderMorganBox() {
+      document.getElementById('morganBox').innerHTML = `
+        <div class="flex justify-between items-center mb-3">
+          <div class="font-bold text-lg">Morgan ${state.turn === 'morgan' ? '<span class="text-xs bg-red-600 px-2 py-0.5 rounded ml-1">TURN</span>' : ''}</div>
+          <div class="flex items-center gap-1 text-yellow-500 font-bold">💰 ${state.morganCoins}</div>
+        </div>
+        <div class="flex gap-2">
+          ${state.morganCards.map(c => cardImg(c, false)).join('')}
+        </div>
+      `;
+    }
+
+    function renderProgress() {
+      const dots = STEPS.map((_, i) => `<div class="progress-dot ${i < stepIndex || (i === stepIndex && awaitingContinue) ? 'done' : ''}"></div>`).join('');
+      document.getElementById('progressDots').innerHTML = dots;
+    }
+
+    const ACTION_LABELS = {
+      income: 'Income (+1 💰)',
+      foreignAid: 'Foreign Aid (+2 💰)',
+      tax: 'Tax - Duke (+3 💰)',
+      steal: 'Steal - Captain',
+      exchange: 'Exchange - Ambassador',
+      assassinate: 'Assassinate (3 💰)',
+      coup: 'Coup (7 💰)'
+    };
+    const ALL_ACTIONS = Object.keys(ACTION_LABELS);
+
+    function renderControls() {
+      const step = STEPS[stepIndex];
+      const controls = document.getElementById('controls');
+
+      if (awaitingContinue) {
+        controls.innerHTML = `
+          <button onclick="handleContinue()" class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-lg font-bold">
+            Continue
+          </button>
+        `;
+        return;
+      }
+
+      if (step.choices) {
+        controls.innerHTML = `
+          <div class="grid grid-cols-2 gap-3">
+            ${step.choices.map((c, i) => `
+              <button onclick="handleChoice(${i})" class="bg-gray-700 hover:bg-gray-600 p-4 rounded font-bold">
+                ${c.label}
+              </button>
+            `).join('')}
+          </div>
+        `;
+        return;
+      }
+
+      if (step.requireAction) {
+        controls.innerHTML = `
+          <div class="grid grid-cols-2 gap-3">
+            ${ALL_ACTIONS.map(a => `
+              <button
+                class="action-btn bg-gray-700 p-3 rounded font-bold ${a === step.requireAction ? 'ring-2 ring-red-400 bg-gray-600 hover:bg-gray-500' : ''}"
+                onclick="handleAction('${a}')"
+                ${a === step.requireAction ? '' : 'disabled'}
+              >
+                ${ACTION_LABELS[a]}
+              </button>
+            `).join('')}
+          </div>
+        `;
+        return;
+      }
+
+      // No action required - just a continue button to move past narration-only steps
+      controls.innerHTML = `
+        <button onclick="handleContinue()" class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-lg font-bold">
+          Let's Go
+        </button>
+      `;
+    }
+
+    function render() {
+      if (stepIndex >= STEPS.length) {
+        document.getElementById('narrationBox').classList.add('hidden');
+        document.getElementById('controls').innerHTML = '';
+        document.getElementById('completeScreen').classList.remove('hidden');
+        renderPlayerBox();
+        renderMorganBox();
+        renderProgress();
+        return;
+      }
+
+      const step = STEPS[stepIndex];
+      state.turn = step.turn;
+
+      renderPlayerBox();
+      renderMorganBox();
+      renderProgress();
+
+      const narrationEl = document.getElementById('narrationText');
+      narrationEl.innerHTML = awaitingContinue ? step.resultText : step.narration;
+
+      renderControls();
+    }
+
+    function advance() {
+      const step = STEPS[stepIndex];
+      if (step.applyEffect) step.applyEffect();
+      awaitingContinue = true;
+      render();
+    }
+
+    function handleAction(action) {
+      const step = STEPS[stepIndex];
+      if (step.requireAction !== action) return; // shouldn't happen since others are disabled, but just in case
+      advance();
+    }
+
+    function handleChoice(index) {
+      const step = STEPS[stepIndex];
+      const choice = step.choices[index];
+      if (!choice.correct) {
+        const narrationEl = document.getElementById('narrationText');
+        narrationEl.innerHTML = step.narration + `<div class="mt-3 text-yellow-300 text-sm">Let's try the other option for this lesson.</div>`;
+        return;
+      }
+      advance();
+    }
+
+    function handleContinue() {
+      awaitingContinue = false;
+      stepIndex += 1;
+      render();
+    }
+
+    render();
+  </script>
+</body>
+</html>

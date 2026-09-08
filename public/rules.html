@@ -11,6 +11,19 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue', sans-serif;
     }
     
+    /* Distinct styling for the "Try the Tutorial" buttons so they stand out
+       from the rest of the (mostly gray) nav/action buttons on this page. */
+    .tutorial-btn {
+      background: linear-gradient(135deg, #7c3aed 0%, #2563eb 100%);
+      box-shadow: 0 0 0 1px rgba(167, 139, 250, 0.4), 0 4px 14px rgba(124, 58, 237, 0.35);
+      transition: all 0.2s ease;
+    }
+    .tutorial-btn:hover {
+      background: linear-gradient(135deg, #8b5cf6 0%, #3b82f6 100%);
+      box-shadow: 0 0 0 1px rgba(196, 181, 253, 0.6), 0 6px 18px rgba(124, 58, 237, 0.5);
+      transform: translateY(-1px);
+    }
+
     /* Custom character colors */
     .text-ambassador { color: #739C7B; }
     .text-assassin { color: #2A2A2A; }
@@ -45,6 +58,9 @@
         <h2 class="text-2xl text-gray-300">Rules</h2>
       </div>
       <div class="flex gap-3">
+        <a href="/tutorial.html" class="tutorial-btn px-4 py-2 rounded font-bold">
+          🎓 Try the Tutorial
+        </a>
         <a href="/leaderboards.html" class="bg-gray-700 hover:bg-gray-600 px-4 py-2 rounded transition-colors">
           Leaderboards
         </a>
@@ -144,45 +160,63 @@
         <!-- Character Grid -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
           <!-- Row 1: Assassin | Contessa -->
-          <div class="bg-assassin p-4 rounded">
-            <h3 class="text-xl font-bold text-white mb-2">Assassin</h3>
-            <p class="text-white"><strong>Action:</strong> Assassinate<br>Pay 3 coins to force a player to lose influence</p><br>
-            <p class="text-white"><strong>Blocks:</strong> --</p>
+          <div class="bg-assassin p-4 rounded flex items-center gap-4">
+            <div class="flex-1 min-w-0">
+              <h3 class="text-xl font-bold text-white mb-2">Assassin</h3>
+              <p class="text-white"><strong>Action:</strong> Assassinate<br>Pay 3 coins to force a player to lose influence</p><br>
+              <p class="text-white"><strong>Blocks:</strong> --</p>
+            </div>
+            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="assassin" alt="Assassin" onerror="handleCardImageError(this, 'assassin')">
           </div>
           
-          <div class="bg-contessa p-4 rounded">
-            <h3 class="text-xl font-bold text-white mb-2">Contessa</h3>
-            <p class="text-white"><strong>Action:</strong> --</p><br><br>
-            <p class="text-white"><strong>Blocks:</strong> Assassination</p>
+          <div class="bg-contessa p-4 rounded flex items-center gap-4">
+            <div class="flex-1 min-w-0">
+              <h3 class="text-xl font-bold text-white mb-2">Contessa</h3>
+              <p class="text-white"><strong>Action:</strong> --</p><br><br>
+              <p class="text-white"><strong>Blocks:</strong> Assassination</p>
+            </div>
+            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="contessa" alt="Contessa" onerror="handleCardImageError(this, 'contessa')">
           </div>
           
           <!-- Row 2: Captain | Duke -->
-          <div class="bg-captain p-4 rounded">
-            <h3 class="text-xl font-bold text-white mb-2">Captain</h3>
-            <p class="text-white"><strong>Action:</strong> Steal<br>Take 2 coins from another player</p><br>
-            <p class="text-white"><strong>Blocks:</strong> Stealing</p>
+          <div class="bg-captain p-4 rounded flex items-center gap-4">
+            <div class="flex-1 min-w-0">
+              <h3 class="text-xl font-bold text-white mb-2">Captain</h3>
+              <p class="text-white"><strong>Action:</strong> Steal<br>Take 2 coins from another player</p><br>
+              <p class="text-white"><strong>Blocks:</strong> Stealing</p>
+            </div>
+            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="captain" alt="Captain" onerror="handleCardImageError(this, 'captain')">
           </div>
           
-          <div class="bg-duke p-4 rounded">
-            <h3 class="text-xl font-bold text-white mb-2">Duke</h3>
-            <p class="text-white"><strong>Action:</strong> Tax<br>Take 3 coins from the treasury</p><br>
-            <p class="text-white"><strong>Blocks:</strong> Foreign Aid</p>
+          <div class="bg-duke p-4 rounded flex items-center gap-4">
+            <div class="flex-1 min-w-0">
+              <h3 class="text-xl font-bold text-white mb-2">Duke</h3>
+              <p class="text-white"><strong>Action:</strong> Tax<br>Take 3 coins from the treasury</p><br>
+              <p class="text-white"><strong>Blocks:</strong> Foreign Aid</p>
+            </div>
+            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="duke" alt="Duke" onerror="handleCardImageError(this, 'duke')">
           </div>
           
           <!-- Row 3: Ambassador | Inquisitor (Expansion) -->
-          <div class="bg-ambassador p-4 rounded">
-            <h3 class="text-xl font-bold text-white mb-2">Ambassador <span class="text-sm">(Vanilla)</span></h3>
-            <p class="text-white"><strong>Action:</strong> Exchange<br>Draw 2 cards. Choose which, if any, to exchange with your unrevealed cards.</p>
-            <br><br><br><p class="text-white"><strong>Blocks:</strong> Stealing</p>
-            <p class="text-white text-sm mt-2 italic">Replaced by Inquisitor when expansion is enabled</p>
+          <div class="bg-ambassador p-4 rounded flex items-center gap-4">
+            <div class="flex-1 min-w-0">
+              <h3 class="text-xl font-bold text-white mb-2">Ambassador <span class="text-sm">(Vanilla)</span></h3>
+              <p class="text-white"><strong>Action:</strong> Exchange<br>Draw 2 cards. Choose which, if any, to exchange with your unrevealed cards.</p>
+              <br><p class="text-white"><strong>Blocks:</strong> Stealing</p>
+              <p class="text-white text-sm mt-2 italic">Replaced by Inquisitor when expansion is enabled</p>
+            </div>
+            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="ambassador" alt="Ambassador" onerror="handleCardImageError(this, 'ambassador')">
           </div>
           
-          <div class="bg-inquisitor p-4 rounded">
-            <h4 class="text-xl font-bold text-gray-900 mb-2">Inquisitor <span class="text-sm">(Expansion)</span></h4>
-            <p class="text-gray-900"><strong>Action:</strong> Exchange<br>Draw 1 card. Choose which, if any, to exchange with your unrevealed cards.</p>
-            <p class="text-gray-900"><strong>Action:</strong> Examine<br>Look at one of another player's cards. You may force them to exchange it</p>
-            <br><p class="text-gray-900"><strong>Blocks:</strong> Stealing</p>
-            <p class="text-gray-900 text-sm mt-2 italic">Replaces Ambassador when expansion is enabled</p>
+          <div class="bg-inquisitor p-4 rounded flex items-center gap-4">
+            <div class="flex-1 min-w-0">
+              <h4 class="text-xl font-bold text-gray-900 mb-2">Inquisitor <span class="text-sm">(Expansion)</span></h4>
+              <p class="text-gray-900"><strong>Action:</strong> Exchange<br>Draw 1 card. Choose which, if any, to exchange with your unrevealed cards.</p>
+              <p class="text-gray-900"><strong>Action:</strong> Examine<br>Look at one of another player's cards. You may force them to exchange it</p>
+              <br><p class="text-gray-900"><strong>Blocks:</strong> Stealing</p>
+              <p class="text-gray-900 text-sm mt-2 italic">Replaces Ambassador when expansion is enabled</p>
+            </div>
+            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="inquisitor" alt="Inquisitor" onerror="handleCardImageError(this, 'inquisitor')">
           </div>
           </div>
         </section>
@@ -233,14 +267,49 @@
       </section>
     </div>
 
-    <div class="text-center mt-8">
+    <div class="text-center mt-8 flex flex-wrap gap-4 justify-center">
       <a href="/" class="bg-red-600 hover:bg-red-700 px-8 py-4 rounded text-xl font-bold inline-block">
         Start Playing
+      </a>
+      <a href="/tutorial.html" class="tutorial-btn px-8 py-4 rounded text-xl font-bold inline-block">
+        🎓 Try the Tutorial
       </a>
     </div>
   </div>
   
   <script>
+    // Character portrait images: default to the "default" deck immediately so
+    // nothing appears blank, then swap to the logged-in player's preferred
+    // deck (confirmed with the server below) if they have one set.
+    let deckPreference = localStorage.getItem('coupDeckPreference') || 'default';
+
+    function getCardImagePath(cardName) {
+      return `/images/cards/${deckPreference}/${cardName}.png`;
+    }
+
+    // If the selected deck is missing this card's image, fall back to the
+    // default deck's version of the same card (mirrors the same helper used
+    // in-game and in the tutorial).
+    function handleCardImageError(img, cardName) {
+      if (img.dataset.fallbackApplied === 'default' || deckPreference === 'default') {
+        img.onerror = null;
+        return;
+      }
+      img.dataset.fallbackApplied = 'default';
+      img.src = `/images/cards/default/${cardName}.png`;
+    }
+
+    function applyCharacterCardImages() {
+      document.querySelectorAll('.character-card-img').forEach(img => {
+        delete img.dataset.fallbackApplied;
+        img.onerror = null; // avoid a stray fallback firing against the old src while we swap it
+        img.src = getCardImagePath(img.dataset.card);
+        img.onerror = () => handleCardImageError(img, img.dataset.card);
+      });
+    }
+
+    applyCharacterCardImages();
+
     // Show Profile button if logged in
     const authToken = localStorage.getItem('coupAuthToken');
     const currentUser = authToken ? JSON.parse(localStorage.getItem('currentUser') || '{}') : null;
@@ -254,12 +323,6 @@
       const settingsBtn = document.getElementById('settingsBtn');
       if (settingsBtn) settingsBtn.classList.remove('hidden');
       
-      // Show moderator button if user is admin or moderator
-      if (currentUser.role === 'admin' || currentUser.role === 'moderator') {
-        const moderatorBtn = document.getElementById('moderatorBtn');
-        if (moderatorBtn) moderatorBtn.classList.remove('hidden');
-      }
-      
       // Show logout button
       const logoutBtn = document.getElementById('logoutBtn');
       if (logoutBtn) {
@@ -269,6 +332,31 @@
           window.location.href = '/login.html';
         });
       }
+
+      // Confirm the account's actual deck preference (and role) with the
+      // server - localStorage can be stale or simply empty on a new device.
+      fetch(`${window.location.origin}/api/verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: authToken })
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (!data.success) return;
+
+          if (data.user.deck_preference) {
+            deckPreference = data.user.deck_preference;
+            localStorage.setItem('coupDeckPreference', deckPreference);
+            applyCharacterCardImages();
+          }
+
+          // Show moderator button if user is admin or moderator
+          if (data.role === 'admin' || data.role === 'moderator') {
+            const moderatorBtn = document.getElementById('moderatorBtn');
+            if (moderatorBtn) moderatorBtn.classList.remove('hidden');
+          }
+        })
+        .catch(err => console.error('Error verifying auth:', err));
     } else {
       // Show login button if not logged in
       const loginBtn = document.getElementById('loginBtn');

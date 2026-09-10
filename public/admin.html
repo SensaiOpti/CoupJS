@@ -376,8 +376,8 @@
       container.innerHTML = filteredUsers.map(user => {
         // Username with guest indicator
         const usernameDisplay = user.isGuest 
-          ? `${user.username} <span class="text-xs text-gray-500">(guest)</span>`
-          : user.username;
+          ? `${escapeHtml(user.username)} <span class="text-xs text-gray-500">(guest)</span>`
+          : escapeHtml(user.username);
         
         // Status: Show connection state if online, otherwise account state
         let statusBadge = '';
@@ -402,9 +402,10 @@
           ? '<span class="bg-blue-700 px-2 py-1 rounded text-xs font-bold">ADMIN</span>'
           : '<span class="text-gray-400">User</span>';
         
-        // IP Address
+        // IP Address - user-influenced (comes from a client-supplied header),
+        // so it needs escaping just like any other displayed field.
         const ipDisplay = user.ip 
-          ? `<span class="font-mono text-sm text-gray-300">${user.ip}</span>`
+          ? `<span class="font-mono text-sm text-gray-300">${escapeHtml(user.ip)}</span>`
           : '<span class="text-gray-500 text-xs">—</span>';
         
         // Joined date
@@ -417,38 +418,47 @@
         
         let actions = '';
         if (!isSelf && canModerate) {
-          // Escape username for use in onclick handlers (replace single quotes)
-          const escapedUsername = user.username.replace(/'/g, "\\'");
+          // Username/IP are passed via data-* attributes rather than being
+          // interpolated straight into the onclick string below. A username
+          // or IP could contain a quote character, which would otherwise
+          // either break out of the onclick attribute (if unescaped) or, if
+          // only quote-escaped for the *JS string* context, still break out
+          // of the *HTML attribute* itself since that's a separate context.
+          // data-* attributes only need standard HTML-attribute escaping
+          // (handled by escapeHtml below), and the browser hands the
+          // decoded original string back via .dataset - no double-escaping
+          // gymnastics required.
+          const dataAttrs = `data-user-id="${user.id ?? ''}" data-username="${escapeHtml(user.username)}"`;
           
           // For guests, only show Ban IP button
           if (user.isGuest) {
             if (user.ip && user.ip !== 'unknown') {
-              actions = `<button onclick="banIP('${user.ip}', '${escapedUsername}')" class="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded text-xs transition-colors">Ban IP</button>`;
+              actions = `<button ${dataAttrs} data-ip="${escapeHtml(user.ip)}" onclick="banIPBtn(this)" class="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded text-xs transition-colors">Ban IP</button>`;
             }
           } else {
             // For registered users, show full moderation options
             if (user.banStatus.banned || user.banStatus.timedOut) {
-              actions = `<button onclick="unbanUser(${user.id}, '${escapedUsername}')" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs transition-colors">Unban</button>`;
+              actions = `<button ${dataAttrs} onclick="unbanUserBtn(this)" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs transition-colors">Unban</button>`;
             } else {
               actions = `
-                <button onclick="timeoutUser(${user.id}, '${escapedUsername}')" class="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded text-xs transition-colors mr-2">Timeout</button>
-                <button onclick="banUser(${user.id}, '${escapedUsername}')" class="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-xs transition-colors">Ban</button>
+                <button ${dataAttrs} onclick="timeoutUserBtn(this)" class="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded text-xs transition-colors mr-2">Timeout</button>
+                <button ${dataAttrs} onclick="banUserBtn(this)" class="bg-red-700 hover:bg-red-600 px-3 py-1 rounded text-xs transition-colors">Ban</button>
               `;
             }
             
             // Add IP ban button if user is online
             if (user.ip && user.ip !== 'unknown') {
-              actions += ` <button onclick="banIP('${user.ip}', '${escapedUsername}')" class="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded text-xs transition-colors ml-2">Ban IP</button>`;
+              actions += ` <button ${dataAttrs} data-ip="${escapeHtml(user.ip)}" onclick="banIPBtn(this)" class="bg-orange-700 hover:bg-orange-600 px-3 py-1 rounded text-xs transition-colors ml-2">Ban IP</button>`;
             }
             
             // Add Reset Password button for registered users
-            actions += ` <button onclick="resetPassword(${user.id}, '${escapedUsername}')" class="bg-teal-700 hover:bg-teal-600 px-3 py-1 rounded text-xs transition-colors ml-2">Reset Password</button>`;
+            actions += ` <button ${dataAttrs} onclick="resetPasswordBtn(this)" class="bg-teal-700 hover:bg-teal-600 px-3 py-1 rounded text-xs transition-colors ml-2">Reset Password</button>`;
             
             if (currentRole === 'admin') {
               if (user.role === 'user') {
-                actions += ` <button onclick="promoteUser(${user.id}, '${escapedUsername}')" class="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded text-xs transition-colors ml-2">Promote</button>`;
+                actions += ` <button ${dataAttrs} onclick="promoteUserBtn(this)" class="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded text-xs transition-colors ml-2">Promote</button>`;
               } else if (user.role === 'moderator') {
-                actions += ` <button onclick="demoteUser(${user.id}, '${escapedUsername}')" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs transition-colors ml-2">Demote</button>`;
+                actions += ` <button ${dataAttrs} onclick="demoteUserBtn(this)" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-xs transition-colors ml-2">Demote</button>`;
               }
             }
           }
@@ -465,6 +475,32 @@
           </tr>
         `;
       }).join('');
+    }
+
+    // These read the target user/IP back out of the button's data-* attributes
+    // (decoded safely by the browser) rather than having renderUsers() above
+    // interpolate that data directly into a JS string embedded in the onclick
+    // attribute, which is what made the old version breakable.
+    function timeoutUserBtn(btn) {
+      timeoutUser(parseInt(btn.dataset.userId, 10), btn.dataset.username);
+    }
+    function banUserBtn(btn) {
+      banUser(parseInt(btn.dataset.userId, 10), btn.dataset.username);
+    }
+    function unbanUserBtn(btn) {
+      unbanUser(parseInt(btn.dataset.userId, 10), btn.dataset.username);
+    }
+    function promoteUserBtn(btn) {
+      promoteUser(parseInt(btn.dataset.userId, 10), btn.dataset.username);
+    }
+    function demoteUserBtn(btn) {
+      demoteUser(parseInt(btn.dataset.userId, 10), btn.dataset.username);
+    }
+    function resetPasswordBtn(btn) {
+      resetPassword(parseInt(btn.dataset.userId, 10), btn.dataset.username);
+    }
+    function banIPBtn(btn) {
+      banIP(btn.dataset.ip, btn.dataset.username);
     }
 
     async function loadModLog() {
@@ -518,13 +554,13 @@
               <div>
                 <span class="${actionColor}">${actionText}</span>
                 <span class="text-gray-400"> - </span>
-                <span class="text-white">${action.target_username || 'Unknown User'}</span>
+                <span class="text-white">${escapeHtml(action.target_username || 'Unknown User')}</span>
               </div>
               <div class="text-xs text-gray-500">${date}</div>
             </div>
             <div class="text-xs text-gray-400 mt-1">
-              By: ${action.moderator_username || 'Unknown Admin'}
-              ${action.reason ? ` | Reason: ${action.reason}` : ''}
+              By: ${escapeHtml(action.moderator_username || 'Unknown Admin')}
+              ${action.reason ? ` | Reason: ${escapeHtml(action.reason)}` : ''}
             </div>
           </div>
         `;
@@ -876,13 +912,13 @@
           <div class="p-2 flex items-center justify-between">
             <div class="flex items-center gap-2 flex-1 min-w-0">
               <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
-                ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
+                ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
               </div>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center">
                   ${isAuth
-                    ? `<a href="/profile.html?user=${encodeURIComponent(user.username)}" class="font-semibold text-sm text-blue-300 hover:text-blue-100 hover:underline">${user.username}</a>`
-                    : `<span class="font-semibold text-sm">${user.username}</span>`
+                    ? `<a href="/profile.html?user=${encodeURIComponent(user.username)}" class="font-semibold text-sm text-blue-300 hover:text-blue-100 hover:underline">${escapeHtml(user.username)}</a>`
+                    : `<span class="font-semibold text-sm">${escapeHtml(user.username)}</span>`
                   }
                   ${badge}
                 </div>
@@ -905,8 +941,8 @@
       const isMod = data.role === 'moderator';
       const badge = isAdmin ? '<span class="text-yellow-500 text-xs">👑</span>' : isMod ? '<span class="text-yellow-500 text-xs">⭐</span>' : '';
       const nameHtml = isAuth
-        ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
-        : `<span class="font-bold text-blue-400">${data.username}</span>`;
+        ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${escapeHtml(data.username)}</a>`
+        : `<span class="font-bold text-blue-400">${escapeHtml(data.username)}</span>`;
       
       const avatar = data.avatar || '👤';
       const isImageAvatar = avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
@@ -917,7 +953,7 @@
       messageEl.innerHTML = `
         <div class="p-2 flex gap-2">
           <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
-            ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
+            ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
           </div>
           <div class="flex-1 min-w-0">
             <div>
@@ -934,10 +970,20 @@
       container.scrollTop = container.scrollHeight;
     }
 
+    // Escapes a value for safe insertion into HTML - both as text content and
+    // inside an attribute value (e.g. src="..."). This page in particular is
+    // viewed by admins/moderators, so anything rendered here that ultimately
+    // originates from another player (username, avatar, IP, ban reason) needs
+    // this - the previous DOM-based version didn't escape quote characters,
+    // which left attribute contexts (like src="...") breakable.
     function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
+      if (text === null || text === undefined) return '';
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     function sendChatMessage(event) {
@@ -980,18 +1026,22 @@
         return `
           <div class="bg-gray-700/30 rounded p-3 text-sm flex items-center justify-between">
             <div>
-              <div class="font-mono text-white">${ip.ip_address}</div>
+              <div class="font-mono text-white">${escapeHtml(ip.ip_address)}</div>
               <div class="text-xs text-gray-400 mt-1">
-                Banned on ${date} by ${ip.banned_by_username || 'Unknown'}
-                ${ip.reason ? ` | ${ip.reason}` : ''}
+                Banned on ${date} by ${escapeHtml(ip.banned_by_username || 'Unknown')}
+                ${ip.reason ? ` | ${escapeHtml(ip.reason)}` : ''}
               </div>
             </div>
-            <button onclick="unbanIP('${ip.ip_address}')" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs transition-colors">
+            <button data-ip="${escapeHtml(ip.ip_address)}" onclick="unbanIPBtn(this)" class="bg-green-700 hover:bg-green-600 px-3 py-1 rounded text-xs transition-colors">
               Unban
             </button>
           </div>
         `;
       }).join('');
+    }
+
+    function unbanIPBtn(btn) {
+      unbanIP(btn.dataset.ip);
     }
 
     function banIP(ip, username) {

@@ -1550,17 +1550,25 @@
       const characters = ['Duke', 'Assassin', 'Captain', 'Ambassador', 'Inquisitor', 'Contessa'];
       const actions = ['Tax', 'Steal', 'Exchange', 'exchanges', 'Examine', 'examines', 'Income', 'Foreign Aid', 'Coup', 'assassinate', 'assassinates', 'assassination', 'steals', 'blocks'];
       
-      let result = message;
+      // Escape the raw message first - these are built server-side and embed
+      // other players' display names, which are untrusted input. Everything
+      // below adds markup on top of this already-escaped text, rather than
+      // escaping at the end (which would also escape the markup we're adding).
+      let result = escapeHtml(message);
       
       // Get all player and spectator names
       const allNames = [...players.map(p => p.name), ...spectators.map(s => s.name)];
       
       // Make player names bold (but not when followed by "'s turn")
       allNames.forEach(name => {
-        // Escape special regex characters in the name
-        const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        // Match the name but not when it's followed by "'s turn"
-        const regex = new RegExp(`\\b(${escapedName})\\b(?!'s turn)`, 'g');
+        // Match against the same escaped form the name will appear in within
+        // `result`, then escape any regex-special characters so it's safe to
+        // drop into `new RegExp(...)`.
+        const escapedName = escapeHtml(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        if (!escapedName) return;
+        // Match the name but not when it's followed by "'s turn" (the
+        // apostrophe is itself HTML-escaped in `result` above)
+        const regex = new RegExp(`\\b(${escapedName})\\b(?!&#39;s turn)`, 'g');
         result = result.replace(regex, `<span class="font-bold">$1</span>`);
       });
       
@@ -1959,10 +1967,20 @@
       render();
     }
 
+    // Escapes a value for safe insertion into HTML - both as text content and
+    // inside an attribute value (e.g. src="..."). The previous DOM-based
+    // version only escaped &, <, > (fine for text nodes) but left quote
+    // characters untouched, which meant a malicious player/room name or
+    // avatar value containing a `"` could break out of an attribute like
+    // src="/images/avatars/${avatar}" and inject its own attributes/handlers.
     function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
+      if (text === null || text === undefined) return '';
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     function cancelPreview() {
@@ -2476,9 +2494,9 @@
                         <div class="p-2 flex items-center justify-between">
                           <div class="flex items-center gap-2 flex-1 min-w-0">
                             <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
-                              ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
+                              ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
                             </div>
-                            <span class="font-semibold text-sm">${player.name}</span>
+                            <span class="font-semibold text-sm">${escapeHtml(player.name)}</span>
                           </div>
                           <div class="flex items-center gap-2">
                             ${eloRating ? `<span class="text-base text-yellow-500 font-bold">${eloRating}</span>` : ''}
@@ -2508,7 +2526,7 @@
                     <div class="space-y-1">
                       ${spectators.map(spectator => `
                         <div class="p-2 flex items-center justify-between">
-                          <span class="font-semibold text-sm">${spectator.name}</span>
+                          <span class="font-semibold text-sm">${escapeHtml(spectator.name)}</span>
                           ${spectator.isMe ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded">YOU</span>' : ''}
                         </div>
                       `).join('')}
@@ -2666,11 +2684,11 @@
                       const chip = `
                         <div class="flex flex-col items-center flex-shrink-0 w-16 ${!player.alive ? 'opacity-30' : ''}">
                           <div class="relative w-10 h-10 rounded-full flex items-center justify-center text-lg bg-gray-700 ${isCurrent ? 'ring-2 ring-red-500 pulse-ring' : isNext ? 'ring-2 ring-yellow-500' : ''} ${isImageAvatar ? 'overflow-hidden' : ''}">
-                            ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
+                            ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
                             ${!player.alive ? '<div class="absolute inset-0 flex items-center justify-center text-red-400 text-xl">✕</div>' : ''}
                           </div>
-                          <div class="text-[10px] mt-1 max-w-[4rem] truncate text-center ${isCurrent ? 'text-red-400 font-bold' : isNext ? 'text-yellow-400 font-semibold' : 'text-gray-400'}" title="${player.name}">
-                            ${player.name}${player.isMe ? ' (You)' : ''}
+                          <div class="text-[10px] mt-1 max-w-[4rem] truncate text-center ${isCurrent ? 'text-red-400 font-bold' : isNext ? 'text-yellow-400 font-semibold' : 'text-gray-400'}" title="${escapeHtml(player.name)}">
+                            ${escapeHtml(player.name)}${player.isMe ? ' (You)' : ''}
                           </div>
                           <div class="text-[9px] font-bold ${isCurrent ? 'text-red-400' : isNext ? 'text-yellow-400' : 'text-transparent'}">
                             ${isCurrent ? '▶ TURN' : isNext ? 'NEXT' : '·'}
@@ -2717,17 +2735,17 @@
                     
                     return `
                     <div class="bg-gray-800 rounded-lg p-4 ${!player.alive ? 'eliminate' : ''} ${player.disconnected ? 'opacity-75' : ''} ${targetClass}" ${targetClickHandler}>
-                      ${isValidTarget && previewText ? `<div class="target-preview">${previewText}</div>` : ''}
+                      ${isValidTarget && previewText ? `<div class="target-preview">${escapeHtml(previewText)}</div>` : ''}
                       <div class="flex justify-between items-start mb-3 p-2 -m-2 rounded-lg ${isCurrentTurn ? 'ring-2 ring-red-500 pulse-ring' : isNextPlayer ? 'ring-2 ring-yellow-500' : ''}">
                         <div class="flex-1">
                           <div class="flex items-center gap-2 mb-1">
                             ${!anonymousMode ? `
                               <div class="w-8 h-8 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-base'} flex-shrink-0">
-                                ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
+                                ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
                               </div>
                             ` : ''}
                             <h3 class="font-bold text-lg">
-                              ${player.name}
+                              ${escapeHtml(player.name)}
                               ${player.isMe ? '<span class="text-xs ml-2 text-red-500">(YOU)</span>' : ''}
                               ${player.hasLeft ? '<span class="text-xs ml-2 text-gray-400">LEFT</span>' : player.disconnected ? '<span class="text-xs ml-2 text-yellow-500">⚠️ DISCONNECTED</span>' : ''}
                             </h3>
@@ -3062,7 +3080,7 @@
                 ${mustExamine && examineTarget ? `
                   <div class="mb-6 bg-purple-900 border-2 border-purple-600 rounded-lg p-6">
                     <div class="flex justify-between items-center mb-4">
-                      <h3 class="text-xl font-bold text-purple-300">Examine ${examineTarget.name}'s Card</h3>
+                      <h3 class="text-xl font-bold text-purple-300">Examine ${escapeHtml(examineTarget.name)}'s Card</h3>
                       ${countdown !== null ? `
                         <div class="countdown-timer bg-purple-800 px-4 py-2 rounded-lg animate-pulse">
                           <span class="countdown-number text-2xl font-bold text-purple-200">${countdown}</span>
@@ -3071,12 +3089,12 @@
                       ` : ''}
                     </div>
                     ${myPlayer.examinedCard ? `
-                      <p class="mb-4 text-purple-100">You see one of ${examineTarget.name}'s cards:</p>
+                      <p class="mb-4 text-purple-100">You see one of ${escapeHtml(examineTarget.name)}'s cards:</p>
                       <div class="bg-purple-800 rounded p-4 mb-4 text-center card-reveal max-w-xs mx-auto cursor-pointer card-clickable" onclick="openCardZoom('${myPlayer.examinedCard}')">
                         <img src="${getCardImagePath(myPlayer.examinedCard)}" alt="${myPlayer.examinedCard}" class="w-full h-auto rounded" onerror="handleCardImageError(this, '${myPlayer.examinedCard}')" />
                         <div class="text-xs text-gray-400 mt-2">Click to zoom</div>
                       </div>
-                      <p class="mb-4 text-purple-100">Do you want to force ${examineTarget.name} to exchange this card for a new one from the deck?</p>
+                      <p class="mb-4 text-purple-100">Do you want to force ${escapeHtml(examineTarget.name)} to exchange this card for a new one from the deck?</p>
                       <div class="flex gap-3">
                         <button 
                           onclick="completeExamine(true)" 
@@ -3092,7 +3110,7 @@
                         </button>
                       </div>
                     ` : `
-                      <p class="text-purple-100 text-center py-8">Waiting for ${examineTarget.name} to choose a card to show...</p>
+                      <p class="text-purple-100 text-center py-8">Waiting for ${escapeHtml(examineTarget.name)} to choose a card to show...</p>
                     `}
                   </div>
                 ` : ''}
@@ -3212,23 +3230,23 @@
                   <div class="bg-gray-800 rounded-lg p-6 text-center">
                     <h3 class="text-xl font-bold mb-4 text-gray-400">Waiting...</h3>
                     ${someoneRevealing && actionInProgress?.pendingBlockChallengeResolution ? `
-                      <p class="text-gray-300">${players.find(p => p.id === actionInProgress.pendingBlockChallengeResolution.challengerId)?.name} challenged ${someoneRevealing.name}'s block!</p>
+                      <p class="text-gray-300">${escapeHtml(players.find(p => p.id === actionInProgress.pendingBlockChallengeResolution.challengerId)?.name)} challenged ${escapeHtml(someoneRevealing.name)}'s block!</p>
                     ` : someoneRevealing && actionInProgress?.pendingChallengeResolution ? `
-                      <p class="text-gray-300">${players.find(p => p.id === actionInProgress.pendingChallengeResolution.challengerId)?.name} challenged ${someoneRevealing.name}!</p>
+                      <p class="text-gray-300">${escapeHtml(players.find(p => p.id === actionInProgress.pendingChallengeResolution.challengerId)?.name)} challenged ${escapeHtml(someoneRevealing.name)}!</p>
                     ` : someoneRevealing ? `
-                      <p class="text-gray-300">${someoneRevealing.name} is choosing which influence to lose</p>
+                      <p class="text-gray-300">${escapeHtml(someoneRevealing.name)} is choosing which influence to lose</p>
                     ` : someoneExchanging ? `
-                      <p class="text-gray-300">${someoneExchanging.name} is exchanging cards</p>
+                      <p class="text-gray-300">${escapeHtml(someoneExchanging.name)} is exchanging cards</p>
                     ` : someoneExamining ? `
-                      <p class="text-gray-300">${someoneExamining.name} is examining a card</p>
+                      <p class="text-gray-300">${escapeHtml(someoneExamining.name)} is examining a card</p>
                     ` : someoneShowingCard ? `
-                      <p class="text-gray-300">${someoneShowingCard.name} is choosing a card to show</p>
+                      <p class="text-gray-300">${escapeHtml(someoneShowingCard.name)} is choosing a card to show</p>
                     ` : ''}
                   </div>
                 ` : !isMyTurn && !canIRespond && !canIChallengeBlock && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && actionInProgress && actionInProgress.postChallengeBlocking && myPlayer?.alive && !isSpectator ? `
                   <div class="bg-gray-800 rounded-lg p-6 text-center">
                     <h3 class="text-xl font-bold mb-4 text-gray-400">Waiting...</h3>
-                    <p class="text-gray-300">${players.find(p => p.id === actionInProgress.targetId)?.name} is deciding whether to block</p>
+                    <p class="text-gray-300">${escapeHtml(players.find(p => p.id === actionInProgress.targetId)?.name)} is deciding whether to block</p>
                   </div>
                 ` : !isMyTurn && !canIRespond && !canIChallengeBlock && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && actionInProgress && actionInProgress.pausedForDisconnection && myPlayer?.alive && !isSpectator ? `
                   <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
@@ -3238,7 +3256,7 @@
                 ` : !isMyTurn && !mustReveal && !mustExchange && !mustExamine && !mustShowCard && !actionInProgress && myPlayer?.alive && !isSpectator && players[currentPlayerId]?.disconnected ? `
                   <div class="bg-yellow-900 border-2 border-yellow-600 rounded-lg p-6 text-center">
                     <h3 class="text-xl font-bold mb-4 text-yellow-300">⚠️ Game Paused</h3>
-                    <p class="text-yellow-100">${players.find(p => p.id === currentPlayerId)?.name} is disconnected</p>
+                    <p class="text-yellow-100">${escapeHtml(players.find(p => p.id === currentPlayerId)?.name)} is disconnected</p>
                     <p class="text-yellow-200 text-sm mt-2">Waiting for them to reconnect...</p>
                   </div>
                 ` : ''}
@@ -3331,7 +3349,7 @@
                         const isImageAvatar = !anonymousMode && avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
                         // Non-clickable names - white for players, light blue for spectators
                         const nameColor = isSpectatorChat ? 'text-blue-300' : 'text-white';
-                        const nameHtml = `<span class="font-bold ${nameColor}">${log.playerName}</span>`;
+                        const nameHtml = `<span class="font-bold ${nameColor}">${escapeHtml(log.playerName)}</span>`;
                         const badge = isSpectatorChat ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded ml-1">SPEC</span>' : '';
                         const timestamp = log.time ? new Date(log.time).toLocaleTimeString() : '';
                         const filteredMessage = escapeHtml(filterProfanity(log.message));
@@ -3349,7 +3367,7 @@
                             <div class="p-2 flex gap-2">
                               ${!anonymousMode ? `
                                 <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
-                                  ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
+                                  ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
                                 </div>
                               ` : ''}
                               <div class="flex-1 min-w-0">
@@ -3405,7 +3423,7 @@
                       ${spectators.map(spectator => `
                         <div class="text-sm text-gray-300 flex items-center gap-2">
                           <span class="text-blue-500">👁️</span>
-                          <span>${spectator.name}</span>
+                          <span>${escapeHtml(spectator.name)}</span>
                           ${spectator.isMe ? '<span class="text-xs bg-blue-600 px-2 py-1 rounded ml-auto">YOU</span>' : ''}
                         </div>
                       `).join('')}
@@ -3433,7 +3451,7 @@
               <!-- Header -->
               <div class="text-center mb-8">
                 <h1 class="text-5xl font-bold mb-4">🎉 Game Over! 🎉</h1>
-                <p class="text-3xl text-yellow-400 mb-2">${winner?.name || gameStats[0].playerName} Wins!</p>
+                <p class="text-3xl text-yellow-400 mb-2">${escapeHtml(winner?.name || gameStats[0].playerName)} Wins!</p>
                 ${isSpectator ? `<p class="text-blue-400 text-lg">You were spectating</p>` : ''}
               </div>
 
@@ -3469,8 +3487,8 @@
                               <div class="flex-1">
                                 <div class="text-xl font-bold">
                                   ${player.username 
-                                    ? `<a href="/profile.html?user=${encodeURIComponent(player.username)}" class="hover:text-blue-300 hover:underline">${player.playerName}</a>`
-                                    : player.playerName
+                                    ? `<a href="/profile.html?user=${encodeURIComponent(player.username)}" class="hover:text-blue-300 hover:underline">${escapeHtml(player.playerName)}</a>`
+                                    : escapeHtml(player.playerName)
                                   }
                                 </div>
                                 <div class="text-sm text-gray-300 mt-1">
@@ -3516,7 +3534,7 @@
         <div class="min-h-screen bg-gradient-to-br from-red-900 via-gray-900 to-black text-white flex items-center justify-center">
           <div class="bg-gray-800 rounded-lg p-12 text-center max-w-md">
             <h1 class="text-4xl font-bold mb-4">Game Over!</h1>
-            <p class="text-2xl mb-8 text-red-400">${winner?.name} wins!</p>
+            <p class="text-2xl mb-8 text-red-400">${escapeHtml(winner?.name)} wins!</p>
             ${isSpectator ? `
               <p class="text-blue-400 mb-4">You were spectating</p>
             ` : ''}

@@ -46,9 +46,61 @@
     .bg-inquisitor:hover { background-color: #d1a819; }
     
     .bg-general-action { background-color: #4B5563; }
+
+    /* Card zoom modal (click a character portrait to see it full-size) */
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    @keyframes zoomIn {
+      from { transform: scale(0.8); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    .card-zoom-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.85);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 9999;
+      cursor: pointer;
+      animation: fadeIn 0.2s ease-out;
+    }
+    .card-zoom-container {
+      max-width: 90vw;
+      max-height: 90vh;
+      cursor: default;
+      animation: zoomIn 0.2s ease-out;
+    }
+    .card-zoom-image {
+      max-width: 100%;
+      max-height: 90vh;
+      width: auto;
+      height: auto;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+    }
+    .card-clickable {
+      cursor: pointer;
+      transition: transform 0.2s;
+    }
+    .card-clickable:hover {
+      transform: scale(1.05);
+    }
   </style>
 </head>
 <body class="bg-gradient-to-br from-red-900 via-gray-900 to-black text-white min-h-screen">
+
+  <!-- Card Zoom Modal -->
+  <div id="cardZoomModal" class="card-zoom-overlay" style="display: none;" onclick="closeCardZoom()">
+    <div class="card-zoom-container" onclick="event.stopPropagation()">
+      <img id="cardZoomImage" class="card-zoom-image" src="" alt="Card" />
+    </div>
+  </div>
   <div class="max-w-7xl mx-auto p-4 md:p-8">
     <!-- Header -->
     <div class="flex justify-between items-center mb-8">
@@ -166,7 +218,7 @@
               <p class="text-white"><strong>Action:</strong> Assassinate<br>Pay 3 coins to force a player to lose influence</p><br>
               <p class="text-white"><strong>Blocks:</strong> --</p>
             </div>
-            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="assassin" alt="Assassin" onerror="handleCardImageError(this, 'assassin')">
+            <img class="character-card-img card-clickable w-24 sm:w-28 md:w-32 h-auto rounded shadow-lg flex-shrink-0" data-card="assassin" alt="Assassin" onclick="openCardZoom('assassin')" onerror="handleCardImageError(this, 'assassin')">
           </div>
           
           <div class="bg-contessa p-4 rounded flex items-center gap-4">
@@ -175,7 +227,7 @@
               <p class="text-white"><strong>Action:</strong> --</p><br><br>
               <p class="text-white"><strong>Blocks:</strong> Assassination</p>
             </div>
-            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="contessa" alt="Contessa" onerror="handleCardImageError(this, 'contessa')">
+            <img class="character-card-img card-clickable w-24 sm:w-28 md:w-32 h-auto rounded shadow-lg flex-shrink-0" data-card="contessa" alt="Contessa" onclick="openCardZoom('contessa')" onerror="handleCardImageError(this, 'contessa')">
           </div>
           
           <!-- Row 2: Captain | Duke -->
@@ -185,7 +237,7 @@
               <p class="text-white"><strong>Action:</strong> Steal<br>Take 2 coins from another player</p><br>
               <p class="text-white"><strong>Blocks:</strong> Stealing</p>
             </div>
-            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="captain" alt="Captain" onerror="handleCardImageError(this, 'captain')">
+            <img class="character-card-img card-clickable w-24 sm:w-28 md:w-32 h-auto rounded shadow-lg flex-shrink-0" data-card="captain" alt="Captain" onclick="openCardZoom('captain')" onerror="handleCardImageError(this, 'captain')">
           </div>
           
           <div class="bg-duke p-4 rounded flex items-center gap-4">
@@ -194,7 +246,7 @@
               <p class="text-white"><strong>Action:</strong> Tax<br>Take 3 coins from the treasury</p><br>
               <p class="text-white"><strong>Blocks:</strong> Foreign Aid</p>
             </div>
-            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="duke" alt="Duke" onerror="handleCardImageError(this, 'duke')">
+            <img class="character-card-img card-clickable w-24 sm:w-28 md:w-32 h-auto rounded shadow-lg flex-shrink-0" data-card="duke" alt="Duke" onclick="openCardZoom('duke')" onerror="handleCardImageError(this, 'duke')">
           </div>
           
           <!-- Row 3: Ambassador | Inquisitor (Expansion) -->
@@ -205,7 +257,7 @@
               <br><p class="text-white"><strong>Blocks:</strong> Stealing</p>
               <p class="text-white text-sm mt-2 italic">Replaced by Inquisitor when expansion is enabled</p>
             </div>
-            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="ambassador" alt="Ambassador" onerror="handleCardImageError(this, 'ambassador')">
+            <img class="character-card-img card-clickable w-24 sm:w-28 md:w-32 h-auto rounded shadow-lg flex-shrink-0" data-card="ambassador" alt="Ambassador" onclick="openCardZoom('ambassador')" onerror="handleCardImageError(this, 'ambassador')">
           </div>
           
           <div class="bg-inquisitor p-4 rounded flex items-center gap-4">
@@ -216,7 +268,7 @@
               <br><p class="text-gray-900"><strong>Blocks:</strong> Stealing</p>
               <p class="text-gray-900 text-sm mt-2 italic">Replaces Ambassador when expansion is enabled</p>
             </div>
-            <img class="character-card-img w-24 sm:w-28 md:w-32 aspect-[3/4] object-cover rounded shadow-lg flex-shrink-0" data-card="inquisitor" alt="Inquisitor" onerror="handleCardImageError(this, 'inquisitor')">
+            <img class="character-card-img card-clickable w-24 sm:w-28 md:w-32 h-auto rounded shadow-lg flex-shrink-0" data-card="inquisitor" alt="Inquisitor" onclick="openCardZoom('inquisitor')" onerror="handleCardImageError(this, 'inquisitor')">
           </div>
           </div>
         </section>
@@ -309,6 +361,30 @@
     }
 
     applyCharacterCardImages();
+
+    // Click a character portrait to see it full-size in an overlay
+    function openCardZoom(cardName) {
+      const modal = document.getElementById('cardZoomModal');
+      const image = document.getElementById('cardZoomImage');
+      delete image.dataset.fallbackApplied; // reset fallback state each time the modal is reused
+      image.onerror = () => handleCardImageError(image, cardName);
+      image.src = getCardImagePath(cardName);
+      image.alt = cardName;
+      modal.style.display = 'flex';
+      document.addEventListener('keydown', handleCardZoomEscape);
+    }
+
+    function closeCardZoom() {
+      const modal = document.getElementById('cardZoomModal');
+      modal.style.display = 'none';
+      document.removeEventListener('keydown', handleCardZoomEscape);
+    }
+
+    function handleCardZoomEscape(event) {
+      if (event.key === 'Escape') {
+        closeCardZoom();
+      }
+    }
 
     // Show Profile button if logged in
     const authToken = localStorage.getItem('coupAuthToken');

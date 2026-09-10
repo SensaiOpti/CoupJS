@@ -462,7 +462,7 @@
             <div class="flex justify-between items-start mb-3">
               <div>
                 <div class="flex items-center gap-2 mb-1">
-                  <span class="text-xl font-bold text-white">${room.name || room.code}</span>
+                  <span class="text-xl font-bold text-white">${escapeHtml(room.name || room.code)}</span>
                   <span class="${statusColor} text-xs px-2 py-1 rounded">${statusText}</span>
                 </div>
                 <div class="text-sm text-gray-400">
@@ -552,13 +552,13 @@
           <div class="online-user p-2 flex items-center justify-between">
             <div class="flex items-center gap-2 flex-1 min-w-0">
               <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
-                ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
+                ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
               </div>
               <div class="flex-1 min-w-0">
                 <div class="flex items-center">
                   ${isAuth
-                    ? `<a href="/profile.html?user=${encodeURIComponent(user.username)}" class="font-semibold text-sm text-blue-300 hover:text-blue-100 hover:underline">${user.username}</a>`
-                    : `<span class="font-semibold text-sm">${user.username}</span>`
+                    ? `<a href="/profile.html?user=${encodeURIComponent(user.username)}" class="font-semibold text-sm text-blue-300 hover:text-blue-100 hover:underline">${escapeHtml(user.username)}</a>`
+                    : `<span class="font-semibold text-sm">${escapeHtml(user.username)}</span>`
                   }
                   ${badge}
                 </div>
@@ -581,8 +581,8 @@
       const isMod = data.role === 'moderator';
       const badge = isAdmin ? '<span class="text-yellow-500 text-xs">👑</span>' : isMod ? '<span class="text-yellow-500 text-xs">⭐</span>' : '';
       const nameHtml = isAuth
-        ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${data.username}</a>`
-        : `<span class="font-bold text-blue-400">${data.username}</span>`;
+        ? `<a href="/profile.html?user=${encodeURIComponent(data.username)}" class="font-bold text-blue-400 hover:text-blue-200 hover:underline">${escapeHtml(data.username)}</a>`
+        : `<span class="font-bold text-blue-400">${escapeHtml(data.username)}</span>`;
       
       const avatar = data.avatar || '👤';
       const isImageAvatar = avatar && (avatar.includes('.png') || avatar.includes('.jpg') || avatar.includes('.jpeg') || avatar.includes('.gif') || avatar.includes('.webp'));
@@ -593,7 +593,7 @@
       messageEl.innerHTML = `
         <div class="p-2 flex gap-2">
           <div class="w-10 h-10 bg-gray-600 rounded-full flex items-center justify-center ${isImageAvatar ? 'overflow-hidden' : 'text-xl'} flex-shrink-0">
-            ${isImageAvatar ? `<img src="/images/avatars/${avatar}" alt="Avatar" class="w-full h-full object-cover">` : avatar}
+            ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
           </div>
           <div class="flex-1 min-w-0">
             <div>
@@ -625,10 +625,18 @@
       container.scrollTop = container.scrollHeight;
     }
 
+    // Escapes a value for safe insertion into HTML - both as text content and
+    // inside an attribute value (e.g. src="..."). Room names, guest
+    // usernames, and avatars are all attacker-controllable, so anywhere they
+    // get interpolated into an innerHTML template needs this.
     function escapeHtml(text) {
-      const div = document.createElement('div');
-      div.textContent = text;
-      return div.innerHTML;
+      if (text === null || text === undefined) return '';
+      return String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
 
     function sendChatMessage(event) {

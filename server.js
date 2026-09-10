@@ -44,6 +44,62 @@ function getAvailableSoundPacks() {
   }
 }
 
+// --- Input sanitization helpers -------------------------------------------
+// Display names, room names, and avatars all get broadcast to every other
+// connected client and rendered via innerHTML, so anything accepted here
+// needs to be safe by construction. This is a second, server-side layer -
+// the client also HTML-escapes everything before display - but keeping
+// garbage out of game state and the database in the first place matters too
+// (game state gets persisted into game_history, for one).
+
+// Trims, strips control characters, and caps length. Control characters have
+// no legitimate use in a display name and could otherwise smuggle things
+// like ANSI escape sequences into server logs and other players' consoles.
+function sanitizeDisplayName(name, maxLength, fallback) {
+  if (typeof name !== 'string') return fallback;
+  const cleaned = name.replace(/[\x00-\x1F\x7F]/g, '').trim();
+  if (!cleaned) return fallback;
+  return cleaned.slice(0, maxLength);
+}
+
+// Persistent player IDs are only ever meant to be the random alphanumeric
+// tokens the client generates for itself (see getOrCreatePlayerId() in
+// index.html/lobby.html). They get interpolated into inline onclick
+// handlers client-side (e.g. onclick="performAction('steal', '<id>')"), so
+// an attacker-supplied value containing a quote could break out of that
+// JavaScript string and run arbitrary code in other players' browsers.
+// Reject anything that doesn't look like one of our generated IDs and fall
+// back to the always-safe socket ID instead.
+const PERSISTENT_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
+function sanitizePersistentId(id, fallback) {
+  return (typeof id === 'string' && PERSISTENT_ID_PATTERN.test(id)) ? id : fallback;
+}
+
+// Avatars are either a short emoji/text glyph or the filename of an image
+// that actually exists in public/images/avatars. Anything else - including
+// anything HTML/script-looking - is rejected so the caller keeps their
+// existing avatar (or the default) instead.
+function isValidAvatarValue(avatar) {
+  if (typeof avatar !== 'string' || avatar.length === 0 || avatar.length > 100) return false;
+
+  // Looks like a filename - only accept it if it's actually one of the
+  // images on disk, so nothing arbitrary can ride along disguised as one.
+  if (/\.(png|jpe?g|gif|webp)$/i.test(avatar)) {
+    try {
+      const avatarDir = path.join(__dirname, 'public', 'images', 'avatars');
+      return fs.existsSync(avatarDir) && fs.readdirSync(avatarDir).includes(avatar);
+    } catch (error) {
+      return false;
+    }
+  }
+
+  // Otherwise, treat it as an emoji/short text avatar: reject any HTML
+  // metacharacters and cap it to a handful of code points (generous enough
+  // for even multi-codepoint emoji sequences).
+  if (/[<>&"'`]/.test(avatar)) return false;
+  return [...avatar].length <= 8;
+}
+
 const app = express();
 const server = http.createServer(app);
 const io = socketIO(server, {
@@ -352,9 +408,10 @@ app.post('/api/user/settings', (req, res) => {
     // Profanity filter (boolean to integer)
     const newProfanityFilter = profanityFilter === true ? 1 : 0;
     
-    // Avatar validation - allow emoji (short) or image filenames (longer)
-    const isValidAvatar = typeof avatar === 'string' && avatar.length > 0 && avatar.length <= 100;
-    const newAvatar = isValidAvatar ? avatar : user.avatar || '👤';
+    // Avatar validation - allow emoji (short) or image filenames that
+    // actually exist on disk. Anything else (including HTML/script-looking
+    // content) is rejected and the user keeps their existing avatar.
+    const newAvatar = isValidAvatarValue(avatar) ? avatar : (user.avatar || '👤');
     
     db.prepare('UPDATE users SET privacy_settings = ?, deck_preference = ?, sound_preference = ?, bio = ?, email = ?, profanity_filter = ?, avatar = ? WHERE id = ?')
       .run(JSON.stringify(newPrivacy), newDeck, newSound, newBio, newEmail, newProfanityFilter, newAvatar, verification.user.id);
@@ -3085,12 +3142,15 @@ function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedU
     stats = authenticatedUser.stats;
   }
 
+  const safePersistentId = sanitizePersistentId(persistentPlayerId, socketId);
+  const safeName = sanitizeDisplayName(name, 40, spectator.name);
+
   // Add to players
   const player = {
-    id: persistentPlayerId || socketId,
-    persistentId: persistentPlayerId || socketId,
+    id: safePersistentId,
+    persistentId: safePersistentId,
     socketId: socketId,
-    name: authenticatedUser ? authenticatedUser.username : (name || spectator.name),
+    name: authenticatedUser ? authenticatedUser.username : safeName,
     userId: authenticatedUser ? authenticatedUser.id : null,
     username: authenticatedUser ? authenticatedUser.username : null,
     isGuest: !authenticatedUser,
@@ -4960,10 +5020,10 @@ io.on('connection', (socket) => {
     const roomCode = generateRoomCode();
     
     // Determine player name first (needed for default room name)
-    const playerName = authenticatedUser ? authenticatedUser.username : (data.playerName || 'Player');
+    const playerName = authenticatedUser ? authenticatedUser.username : sanitizeDisplayName(data.playerName, 40, 'Player');
     
     // Generate default room name if none provided
-    const roomName = data.gameName || `${playerName}'s Room`;
+    const roomName = sanitizeDisplayName(data.gameName, 40, `${playerName}'s Room`);
     
     const room = createRoom(roomCode, { 
       name: roomName,
@@ -4982,9 +5042,11 @@ io.on('connection', (socket) => {
       stats = authenticatedUser.stats;
     }
     
+    const safePersistentId = sanitizePersistentId(data.persistentPlayerId, socket.id);
+
     const player = {
-      id: data.persistentPlayerId || socket.id,
-      persistentId: data.persistentPlayerId || socket.id,
+      id: safePersistentId,
+      persistentId: safePersistentId,
       socketId: socket.id,
       name: playerName,
       userId: authenticatedUser ? authenticatedUser.id : null,
@@ -5139,6 +5201,14 @@ io.on('connection', (socket) => {
       return;
     }
 
+    // Values that get stored on the room and broadcast to every other
+    // client - sanitize once up front, then use the safe versions below.
+    // (The raw persistentPlayerId is still used for the reconnect lookups
+    // just below - those are pure equality checks against already-sanitized
+    // IDs already stored on other players, so they're safe either way.)
+    const safePersistentId = sanitizePersistentId(persistentPlayerId, socket.id);
+    const safePlayerName = sanitizeDisplayName(playerName, 40, null);
+
     // Check password if room is password protected
     if (room.password && room.password !== password) {
       callback({ success: false, error: 'Incorrect password' });
@@ -5189,7 +5259,7 @@ io.on('connection', (socket) => {
       const spectator = {
         id: socket.id,
         socketId: socket.id,
-        name: authenticatedUser ? authenticatedUser.username : (playerName || `Spectator ${room.spectators.length + 1}`)
+        name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Spectator ${room.spectators.length + 1}`)
       };
 
       room.spectators.push(spectator);
@@ -5211,7 +5281,7 @@ io.on('connection', (socket) => {
       const spectator = {
         id: socket.id,
         socketId: socket.id,
-        name: authenticatedUser ? authenticatedUser.username : (playerName || `Spectator ${room.spectators.length + 1}`)
+        name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Spectator ${room.spectators.length + 1}`)
       };
 
       room.spectators.push(spectator);
@@ -5230,10 +5300,10 @@ io.on('connection', (socket) => {
     }
     
     const player = {
-      id: persistentPlayerId || socket.id,
-      persistentId: persistentPlayerId || socket.id,
+      id: safePersistentId,
+      persistentId: safePersistentId,
       socketId: socket.id,
-      name: authenticatedUser ? authenticatedUser.username : (playerName || `Player ${room.players.length + 1}`),
+      name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Player ${room.players.length + 1}`),
       userId: authenticatedUser ? authenticatedUser.id : null,
       username: authenticatedUser ? authenticatedUser.username : null,
       isGuest: !authenticatedUser,
@@ -5304,7 +5374,7 @@ io.on('connection', (socket) => {
 
     // Update socket ID, persistent ID, and mark as reconnected
     player.socketId = socket.id;
-    player.persistentId = persistentPlayerId; // Update to new device's persistent ID
+    player.persistentId = sanitizePersistentId(persistentPlayerId, player.persistentId); // Update to new device's persistent ID
     player.disconnected = false;
     socket.join(roomCode);
 
@@ -5719,7 +5789,7 @@ io.on('connection', (socket) => {
     if (authenticatedUser) {
       username = authenticatedUser.username;
     } else {
-      username = data.username || `Guest_${Math.random().toString(36).substr(2, 6)}`;
+      username = sanitizeDisplayName(data.username, 40, `Guest_${Math.random().toString(36).substr(2, 6)}`);
     }
     
     // Cancel any pending removal for this user

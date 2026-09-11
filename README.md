@@ -46,6 +46,24 @@ npm install
 npm start
 ```
 
+## Configuration
+Everything below is set via environment variables. Nothing here is required to get a basic instance running, though you should definitely read through this if you plan to expose it to the internet.
+
+### `TRUST_PROXY` - if you're behind a reverse proxy, CDN, or tunnel
+By default, this app trusts **no** proxy headers at all - it uses the raw TCP connection address as the client's IP, which is the correct, safe choice if you're just running `node server.js` (or a Docker container) with nothing in front of it. IP addresses matter here for rate limiting (login attempts, room passwords, etc.) and IP bans, so getting this setting right matters once something *is* in front of Node - otherwise every visitor can end up sharing the same apparent IP (breaking rate limits/bans for everyone at once), or worse, a visitor can just set the header themselves and claim to be anyone.
+
+Set `TRUST_PROXY` to:
+- **`cloudflare`** - if you're serving this through Cloudflare, whether via a standard Cloudflare-proxied ("orange cloud") domain or a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) (`cloudflared`). This trusts Cloudflare's own `CF-Connecting-IP` header, which is simpler and more reliable than counting proxy hops.
+- **A number**, e.g. `1` or `2` - for any other reverse proxy/CDN setup. Use `1` if there's a single reverse proxy (nginx, your host's load balancer) directly in front of Node. Use `2` if there's a CDN in front of *that* reverse proxy, and so on - it should match how many hops of infrastructure you control and trust to have appended their own observed address to `X-Forwarded-For`.
+
+**Whichever mode you use, make sure Node's port isn't *also* reachable directly** (bypassing the proxy/tunnel) - otherwise an attacker can hit that path and set these headers themselves, same as if `TRUST_PROXY` were never set. A Cloudflare Tunnel is safe by default here since it never opens an inbound port at all.
+
+### `JWT_SECRET` - required for real deployments
+Falls back to a hardcoded placeholder if unset, which is fine for trying things out locally but must **not** be used for anything public - anyone who knows the placeholder can forge a valid login for any account. Set it to a long, random string.
+
+### Email (password reset)
+See the comment block at the top of `email.js` for the SMTP-related environment variables. If these aren't set, "forgot password" links are only logged to the server console instead of emailed - fine for local testing, but means anyone who can read your server's logs can reset any account's password, so make sure real SMTP credentials are configured before letting the public register.
+
 ### First Time Use / Administrators
 The first created user account is an administrator...a super one! This super admin has access to special privileges. I **strongly advise** you, as the one hosting this, to create an admin user prior to allowing others to register. 
 

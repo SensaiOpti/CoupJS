@@ -114,22 +114,114 @@ const io = socketIO(server, {
 
 app.use(express.json());
 
+// --- Client IP resolution behind a reverse proxy/CDN -----------------------
+// Controls how (and whether) proxy-supplied headers are trusted when
+// resolving a request's real client IP - used for rate limiting, IP bans,
+// and anything else that keys off "who is making this request". Getting
+// this wrong in either direction is bad: trusting headers with nothing
+// actually in front of you hands attackers full control over their own
+// apparent IP, while failing to trust a header a real proxy did set
+// collapses every visitor onto that proxy's own IP (breaking rate limits
+// and bans for everyone at once, since they'd all share one key).
+//
+// Defaults to trusting nothing, which is the correct/safe choice for a bare
+// `node server.js` with no proxy in front - this app is meant to be easy for
+// anyone to self-host, and plenty of people will run it exactly that way.
+// Set the TRUST_PROXY env var to opt in to one of:
+//   "cloudflare"  - trust Cloudflare's CF-Connecting-IP header. Correct for
+//                   both a standard Cloudflare-proxied domain and a
+//                   Cloudflare Tunnel (cloudflared) in front of this app -
+//                   in either case Cloudflare's edge is the only thing that
+//                   can set this header for traffic that reaches you, and
+//                   there's no chain length to worry about (see caveat
+//                   below). This is what you want if you followed the
+//                   Cloudflare Tunnel setup in the README.
+//   a number, e.g. "1" or "2" - trust that many hops of X-Forwarded-For (and
+//                   X-Real-IP as a single-value fallback), for a generic
+//                   reverse proxy/CDN setup that isn't Cloudflare. 1 = a
+//                   single reverse proxy directly in front of Node; 2 = e.g.
+//                   a CDN in front of that reverse proxy.
+//
+// Caveat that applies to every mode above: they all assume the only way
+// traffic can reach this process is through the proxy/tunnel you've
+// configured. If Node's port is also separately reachable directly (a
+// misconfigured firewall, a Cloudflare Tunnel alongside an exposed port,
+// etc.), an attacker can hit that path and set these headers themselves,
+// same as if TRUST_PROXY were never set at all.
+const TRUST_PROXY_RAW = (process.env.TRUST_PROXY || '').trim().toLowerCase();
+const TRUST_PROXY_MODE = TRUST_PROXY_RAW === 'cloudflare'
+  ? 'cloudflare'
+  : /^[1-9]\d*$/.test(TRUST_PROXY_RAW)
+    ? 'hops'
+    : 'off';
+const TRUST_PROXY_HOPS = TRUST_PROXY_MODE === 'hops' ? parseInt(TRUST_PROXY_RAW, 10) : 0;
+
+if (TRUST_PROXY_MODE === 'cloudflare') {
+  app.set('trust proxy', 1); // cloudflared/Cloudflare's edge is a single hop in front of us
+} else if (TRUST_PROXY_MODE === 'hops') {
+  app.set('trust proxy', TRUST_PROXY_HOPS);
+}
+// mode 'off' (the default): leave Express's own default (false) in place -
+// we don't ask it to trust anything either.
+
+if (TRUST_PROXY_MODE === 'off' && (process.env.TRUST_PROXY || '').trim()) {
+  console.warn(`⚠️  TRUST_PROXY="${process.env.TRUST_PROXY}" not recognized - expected "cloudflare" or a positive number. Falling back to trusting no proxy at all.`);
+}
+
+// Resolves the real client IP given a request's headers and the address of
+// whoever is *directly* connected to us (never a header value - that's the
+// one thing here a client can't spoof, since it comes from the TCP socket
+// itself). Used for both plain HTTP requests and Socket.IO handshakes so the
+// two stay consistent.
+function resolveClientIp(headers, directRemoteAddr) {
+  if (TRUST_PROXY_MODE === 'cloudflare') {
+    // Set exclusively by Cloudflare's edge and reflects the actual visitor
+    // regardless of X-Forwarded-For chain length - no hop-counting needed.
+    return headers['cf-connecting-ip'] || directRemoteAddr || 'unknown';
+  }
+
+  if (TRUST_PROXY_MODE === 'hops') {
+    // X-Forwarded-For is a left-to-right chain: "who this hop received the
+    // request from", with each trusted proxy appending its own observed
+    // address to the end as it forwards the request onward. The address
+    // our own trust boundary actually observed is therefore the Nth entry
+    // counting from the *right* (N = TRUST_PROXY_HOPS) - anything left of
+    // that could be anything the original client (or an untrusted
+    // intermediary) claimed. Naively taking the first/leftmost entry hands
+    // an attacker their pick of IP even when a proxy is correctly in front.
+    const forwardedFor = headers['x-forwarded-for'];
+    if (forwardedFor) {
+      const chain = forwardedFor.split(',').map(ip => ip.trim()).filter(Boolean);
+      const trustedIndex = chain.length - TRUST_PROXY_HOPS;
+      if (trustedIndex >= 0 && trustedIndex < chain.length) {
+        return chain[trustedIndex];
+      }
+      // Chain shorter than the configured trust depth (misconfigured hop
+      // count, or a hop didn't append as expected) - don't guess at an
+      // unverified entry; fall through to the options below instead.
+    }
+    // Some proxies (e.g. nginx's $remote_addr) set this single-value header
+    // instead of, or alongside, X-Forwarded-For.
+    if (headers['x-real-ip']) {
+      return headers['x-real-ip'];
+    }
+  }
+
+  // mode 'off', or nothing usable matched above: use the raw connection
+  // address only - the one thing here a client can never spoof.
+  return directRemoteAddr || 'unknown';
+}
+
 // Helper to get client IP address
 function getClientIP(req) {
-  // Check various headers for proxied requests
-  return req.headers['x-forwarded-for']?.split(',')[0].trim() ||
-         req.headers['x-real-ip'] ||
-         req.connection.remoteAddress ||
-         req.socket.remoteAddress ||
-         req.connection.socket?.remoteAddress ||
-         'unknown';
+  return resolveClientIp(req.headers, req.socket?.remoteAddress || req.connection?.remoteAddress);
 }
 
 // --- Rate limiting ---
 // Uses the same proxy-aware getClientIP() the ban system already relies on, rather than
-// Express's built-in req.ip, since this app doesn't set `trust proxy` - if it's ever run
-// behind a reverse proxy/load balancer, req.ip alone would report the proxy's address for
-// every request, making per-IP limiting either useless or (worse) block everyone at once.
+// Express's built-in req.ip directly, so HTTP and Socket.IO requests are resolved through
+// identical logic (see resolveClientIp above) instead of two different code paths that could
+// disagree with each other.
 // ipKeyGenerator() is express-rate-limit's own helper for safely normalizing IPv6 addresses
 // in custom keys - required to avoid an IPv6-based bypass of the limit.
 function rateLimitKey(req) {
@@ -1012,6 +1104,26 @@ function clearSocketRateLimits(socketId) {
     }
   }
 }
+
+// clearSocketRateLimits() only removes keys prefixed with a socket.id, so
+// keys scoped to something longer-lived (e.g. an IP address, for limits that
+// need to survive a reconnect) are never cleaned up that way. Sweep the
+// whole map periodically and drop any entry with no timestamps left inside
+// a generous retention window, so a long-running server doesn't slowly
+// accumulate one stale entry per unique key ever seen.
+const RATE_LIMIT_RETENTION_MS = 15 * 60 * 1000; // 15 minutes - comfortably longer than any window in use
+function cleanStaleRateLimitEntries() {
+  const now = Date.now();
+  for (const [key, timestamps] of socketEventTimestamps.entries()) {
+    const recent = timestamps.filter(t => now - t < RATE_LIMIT_RETENTION_MS);
+    if (recent.length === 0) {
+      socketEventTimestamps.delete(key);
+    } else if (recent.length !== timestamps.length) {
+      socketEventTimestamps.set(key, recent);
+    }
+  }
+}
+setInterval(cleanStaleRateLimitEntries, 5 * 60 * 1000);
 
 // Card definitions
 const CARDS = ['Duke', 'Assassin', 'Captain', 'Ambassador', 'Contessa'];
@@ -4987,11 +5099,10 @@ function broadcastOnlineUsers() {
 // Socket.IO event handlers
 io.on('connection', (socket) => {
   
-  // Get client IP
-  const clientIP = socket.handshake.headers['x-forwarded-for']?.split(',')[0].trim() ||
-                   socket.handshake.headers['x-real-ip'] ||
-                   socket.handshake.address ||
-                   'unknown';
+  // Get client IP - same resolveClientIp() logic used for HTTP requests, so
+  // a ban or rate limit means the same thing whether it was triggered via a
+  // REST call or a socket event.
+  const clientIP = resolveClientIp(socket.handshake.headers, socket.handshake.address);
   
   // Check if IP is banned
   if (isIPBanned(clientIP)) {
@@ -5210,9 +5321,21 @@ io.on('connection', (socket) => {
     const safePlayerName = sanitizeDisplayName(playerName, 40, null);
 
     // Check password if room is password protected
-    if (room.password && room.password !== password) {
-      callback({ success: false, error: 'Incorrect password' });
-      return;
+    if (room.password) {
+      // Throttle attempts per (IP, room) rather than per-socket - a client
+      // could otherwise reset its budget just by disconnecting and
+      // reconnecting with a fresh socket.id. This is the socket-layer
+      // equivalent of authLimiter: express-rate-limit only covers HTTP
+      // requests, so without this a password could be brute-forced over the
+      // socket connection as fast as the network allows.
+      if (isSocketRateLimited(`${clientIP}:joinRoomPassword:${roomCode}`, 5, 60000)) {
+        callback({ success: false, error: 'Too many incorrect password attempts. Please wait a minute and try again.' });
+        return;
+      }
+      if (room.password !== password) {
+        callback({ success: false, error: 'Incorrect password' });
+        return;
+      }
     }
 
     // Check if this persistent ID is already connected in this room

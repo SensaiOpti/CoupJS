@@ -109,6 +109,17 @@ async function initDatabase() {
     // Column already exists, ignore
   }
 
+  // Bumped on every password change (self-service or admin-initiated) and
+  // embedded in each JWT at sign time - lets verifyToken() reject tokens
+  // issued before the most recent password change, since JWTs are otherwise
+  // self-contained and stay valid for their full lifetime regardless of
+  // what happens to the account afterward.
+  try {
+    db.run(`ALTER TABLE users ADD COLUMN token_version INTEGER DEFAULT 0`);
+  } catch (e) {
+    // Column already exists, ignore
+  }
+
   db.run(`
     CREATE TABLE IF NOT EXISTS user_stats (
       user_id INTEGER PRIMARY KEY,

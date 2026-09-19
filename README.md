@@ -58,8 +58,15 @@ Set `TRUST_PROXY` to:
 
 **Whichever mode you use, make sure Node's port isn't *also* reachable directly** (bypassing the proxy/tunnel) - otherwise an attacker can hit that path and set these headers themselves, same as if `TRUST_PROXY` were never set. A Cloudflare Tunnel is safe by default here since it never opens an inbound port at all.
 
+### `CSP_ENFORCE` - locking down which origins scripts/styles/connections can load from
+The server sends a [Content-Security-Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP) restricting scripts, styles, and connections to this app's own origin plus the two external CDNs it actually uses (Tailwind's Play CDN and the socket.io client). By default this runs in **report-only** mode - violations are logged to the browser's console, but nothing is actually blocked, so it can never break a deployment on its own.
+
+Once you've opened your own instance and checked the browser console for unexpected CSP violations (mainly relevant if you've added custom card decks, sound packs, or other assets - see "Customization" below), set `CSP_ENFORCE=true` to have the policy actually block anything outside the allowlist.
+
 ### `JWT_SECRET` - required for real deployments
 Falls back to a hardcoded placeholder if unset, which is fine for trying things out locally but must **not** be used for anything public - anyone who knows the placeholder can forge a valid login for any account. Set it to a long, random string.
+
+The server will refuse to start with the placeholder value if `TRUST_PROXY` is set or `NODE_ENV=production` (both signal a real deployment); otherwise it just logs a warning, since local testing without a real secret is fine. The same startup check also warns (without blocking) if SMTP isn't configured on what looks like a real deployment - see "Email" below for why that matters.
 
 ### Email (password reset)
 See the comment block at the top of `email.js` for the SMTP-related environment variables. If these aren't set, "forgot password" links are only logged to the server console instead of emailed - fine for local testing, but means anyone who can read your server's logs can reset any account's password, so make sure real SMTP credentials are configured before letting the public register.

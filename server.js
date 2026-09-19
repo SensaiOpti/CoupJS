@@ -6,6 +6,7 @@ const socketIO = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
+const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 const auth = require('./auth');
 const db = require('./database');
@@ -102,6 +103,54 @@ function isValidAvatarValue(avatar) {
 
 const app = express();
 const server = http.createServer(app);
+
+// --- Security headers -------------------------------------------------------
+// helmet's defaults assume a fairly "vanilla" app and would break this one
+// outright: script-src-attr defaults to 'none', which blocks every inline
+// onclick="..." handler (used throughout this codebase), and the default
+// script-src would block both external scripts this app actually loads
+// (Tailwind's Play CDN and the socket.io client CDN fallback). The directives
+// below are built from an actual audit of every external resource this app
+// references (see README.md "Configuration"), not helmet's generic default.
+//
+// Because the app relies on inline <script> blocks and inline onclick
+// handlers throughout, 'unsafe-inline' is unavoidable for script-src/
+// script-src-attr without a much larger refactor - this CSP still adds real
+// value (nothing can load a script/style/connection from an origin outside
+// this explicit allowlist even if some other injection point were ever
+// found), but it is not a full defense against script injection on its own.
+//
+// Defaults to report-only: violations show up in the browser console instead
+// of anything actually being blocked, so a misjudged directive can't break a
+// live deployment. Set CSP_ENFORCE=true once you've checked your own
+// instance's console for unexpected violations (e.g. if you've added custom
+// assets that load from somewhere not covered below).
+const CSP_ENFORCE = process.env.CSP_ENFORCE === 'true';
+if (!CSP_ENFORCE) {
+  console.log('ℹ️  Content-Security-Policy is running in report-only mode (violations are logged in the browser console, nothing is blocked). Set CSP_ENFORCE=true once verified - see README.md "Configuration".');
+}
+
+app.use(helmet({
+  contentSecurityPolicy: {
+    reportOnly: !CSP_ENFORCE,
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'", 'https://cdn.tailwindcss.com', 'https://cdn.socket.io'],
+      scriptSrcAttr: ["'unsafe-inline'"], // covers onclick="..." and similar inline event handler attributes
+      styleSrc: ["'self'", "'unsafe-inline'"], // Tailwind's CDN injects <style> tags at runtime; a handful of pages also use inline style=""
+      imgSrc: ["'self'", 'data:'],
+      fontSrc: ["'self'"],
+      connectSrc: ["'self'"], // all API/socket.io traffic is same-origin
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"],
+      frameAncestors: ["'none'"], // this app is never meant to be embedded in another site's iframe
+      upgradeInsecureRequests: null // would force same-origin requests to https:// even during plain local `npm start` testing over http://
+    }
+  },
+  frameguard: { action: 'deny' } // X-Frame-Options fallback for older/non-CSP-aware clients, matching frameAncestors above
+}));
+
 const io = socketIO(server, {
   cors: {
     origin: "*",
@@ -534,7 +583,7 @@ app.post('/api/user/change-password', authLimiter, (req, res) => {
     }
     
     // Get user's current password hash
-    const user = db.prepare('SELECT password_hash FROM users WHERE id = ?').get(verification.user.id);
+    const user = db.prepare('SELECT password_hash, token_version FROM users WHERE id = ?').get(verification.user.id);
     
     // Verify current password
     const bcrypt = require('bcryptjs');
@@ -544,12 +593,20 @@ app.post('/api/user/change-password', authLimiter, (req, res) => {
       return res.status(400).json({ error: 'Current password is incorrect' });
     }
     
-    // Hash new password and update
+    // Hash new password and update. Bumping token_version invalidates any
+    // other tokens for this account (e.g. a stolen one this change is meant
+    // to shut out) - but that would also invalidate the token this very
+    // request just authenticated with, so issue a fresh one below rather
+    // than leaving the user's own session broken immediately after a
+    // successful password change.
     const newHash = bcrypt.hashSync(newPassword, 10);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, verification.user.id);
+    const newTokenVersion = (user.token_version || 0) + 1;
+    db.prepare('UPDATE users SET password_hash = ?, token_version = ? WHERE id = ?').run(newHash, newTokenVersion, verification.user.id);
     db.saveDatabase();
+
+    const newToken = auth.signToken(verification.user.id, verification.user.username, newTokenVersion);
     
-    res.json({ success: true, message: 'Password updated successfully' });
+    res.json({ success: true, message: 'Password updated successfully', token: newToken });
   } catch (error) {
     console.error('Error changing password:', error);
     res.status(500).json({ error: 'Failed to change password' });
@@ -612,7 +669,12 @@ app.post('/api/reset-password', authLimiter, (req, res) => {
     const result = auth.resetPasswordWithToken(token, newPassword);
 
     if (result.success) {
-      res.json(result);
+      // Kick any already-connected session for this account right now, not
+      // just future reconnect attempts (token_version already blocks those)
+      // - this flow exists precisely for "someone else may have access to
+      // my account", so an active session needs to die immediately.
+      disconnectUser(result.userId, 'Your password was reset. Please log in again.');
+      res.json({ success: true });
     } else {
       res.status(400).json(result);
     }
@@ -640,10 +702,15 @@ app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    // Hash new password and update
+    // Hash new password and update. Bumping token_version invalidates any
+    // session this user already has open - correct here, since forcing a
+    // fresh login with the new password is the whole point of an admin
+    // resetting someone else's password (unlike the self-service change-
+    // password endpoint, there's no "own session" to preserve for the
+    // caller - the admin and the target account are different people).
     const bcrypt = require('bcryptjs');
     const newHash = bcrypt.hashSync(newPassword, 10);
-    db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(newHash, userId);
+    db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?').run(newHash, userId);
     
     // Log the action
     db.prepare(`
@@ -652,6 +719,11 @@ app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
     `).run(userId, req.moderator.id, 'password_reset', 'Password reset by admin');
     
     db.saveDatabase();
+
+    // Kick any session the target already has open right now, not just
+    // future reconnect attempts - matches disconnectUser()'s use for bans,
+    // just with a password-reset-specific message.
+    disconnectUser(Number(userId), 'Your password was reset by an administrator. Please log in again.');
     
     res.json({ success: true, message: 'Password reset successfully' });
   } catch (error) {
@@ -753,6 +825,11 @@ app.post('/api/moderation/timeout', requireModerator, (req, res) => {
     `).run(userId, req.moderator.id, 'timeout', reason || 'No reason provided', 24, expiresAt);
     
     db.saveDatabase();
+
+    // Don't just block future connections - kick them out right now if
+    // they're already connected, rather than leaving an active session
+    // running until they happen to disconnect on their own.
+    disconnectUser(Number(userId), `Account timed out until ${new Date(expiresAt).toLocaleString()}`);
     
     res.json({ success: true, message: 'User timed out for 24 hours', expiresAt });
   } catch (error) {
@@ -788,6 +865,11 @@ app.post('/api/moderation/ban', requireModerator, (req, res) => {
     `).run(userId, req.moderator.id, 'ban', reason || 'No reason provided');
     
     db.saveDatabase();
+
+    // Don't just block future connections - kick them out right now if
+    // they're already connected, rather than leaving an active session
+    // running until they happen to disconnect on their own.
+    disconnectUser(Number(userId), 'Account permanently banned.');
     
     res.json({ success: true, message: 'User permanently banned' });
   } catch (error) {
@@ -3199,6 +3281,128 @@ function checkGameSpecificAchievements(room, winner) {
   }
 }
 
+// Applies the same "forfeit" treatment used when a player leaves voluntarily
+// or fails to reconnect after a disconnect: reveals their remaining cards,
+// records their elimination placement, checks for a win, and advances the
+// turn if it was theirs. Shared by leaveRoom, the disconnect grace-period
+// timeout, and forced removals (IP bans, account bans/timeouts) so all of
+// them behave identically instead of each re-implementing (and potentially
+// drifting out of sync with) the same rules.
+//
+// Does NOT remove the player from room.players - callers keep the entry
+// around (marked hasLeft) so their revealed cards stay visible to everyone
+// still in the game, matching how a voluntary leave has always worked. Only
+// meaningful while room.state === 'playing'; callers are expected to check
+// that themselves (a player who leaves/gets removed before the game starts
+// should just be dropped from the array instead - see removePlayerFromRoom
+// and removeSpectatorFromRoom below).
+function forfeitPlayerFromGame(room, playerIndex, logMessage) {
+  const player = room.players[playerIndex];
+  if (!player || player.hasLeft) return;
+
+  // Cancel any pending "reconnect within 30s or forfeit" timer for this
+  // player - we're forfeiting them right now, so that timer must not also
+  // fire later and re-run this same forfeit a second time (which would
+  // double-count their elimination, and, if this ends the game, double-
+  // write final stats/game history to the database).
+  const timerKey = `${room.code}-${player.persistentId}`;
+  if (disconnectionTimers.has(timerKey)) {
+    clearTimeout(disconnectionTimers.get(timerKey));
+    disconnectionTimers.delete(timerKey);
+  }
+
+  player.hasLeft = true;
+
+  // Reveal all remaining influences
+  const revealedCards = [];
+  player.influences.forEach(inf => {
+    if (!inf.revealed) {
+      inf.revealed = true;
+      revealedCards.push(inf.card);
+    }
+  });
+
+  // Track elimination placement before marking as not alive
+  if (player.alive) {
+    const alivePlayers = room.players.filter(p => p.alive && p.id !== player.id).length;
+    const placement = alivePlayers + 1;
+    room.eliminationOrder.push({
+      playerId: player.id,
+      playerName: player.name,
+      userId: player.userId,
+      username: player.username,
+      coinsEarned: player.gameStats?.coinsEarned || 0,
+      eliminations: player.gameStats?.playersEliminated || 0,
+      placement
+    });
+  }
+
+  player.alive = false;
+  player.disconnected = true; // stays visible with revealed cards, not silently removed
+  player.mustRevealInfluence = false;
+  player.mustChooseExchange = false;
+  player.mustChooseExamine = false;
+  player.mustShowCardToExaminer = false;
+  player.influencesToLose = 0;
+
+  addLogToRoom(room, logMessage, 'info');
+  if (revealedCards.length > 0) {
+    addLogToRoom(room, `${getDisplayName(room, player)}'s cards are revealed: ${revealedCards.join(' and ')}`, 'info');
+  }
+
+  // Check win condition
+  checkWinCondition(room);
+
+  // If it was their turn, advance to next player
+  if (room.currentPlayerIndex === playerIndex) {
+    room.actionInProgress = null;
+    nextTurn(room);
+  }
+}
+
+// Removes a player from a room for good, whichever treatment is appropriate
+// for the room's current state: forfeiting them out of an active game (see
+// forfeitPlayerFromGame above) or simply dropping them from the array if the
+// game hasn't started yet (no cards/turns to worry about). Shared by
+// leaveRoom, the disconnect grace-period timeout, and forced removals so all
+// of them apply the exact same rule for "is this an active game or not".
+function removePlayerFromRoom(room, playerIndex, logMessage) {
+  const player = room.players[playerIndex];
+  if (!player || player.hasLeft) return;
+
+  if (room.state === 'playing') {
+    forfeitPlayerFromGame(room, playerIndex, logMessage);
+  } else {
+    player.hasLeft = true;
+    player.disconnected = false;
+    room.players.splice(playerIndex, 1);
+  }
+}
+
+// Spectators don't have cards or turns, so leaving is always a straight
+// removal regardless of room state - shared purely so every caller marks
+// hasLeft consistently before splicing.
+function removeSpectatorFromRoom(room, spectatorIndex) {
+  const spectator = room.spectators[spectatorIndex];
+  if (!spectator || spectator.hasLeft) return;
+
+  spectator.hasLeft = true;
+  room.spectators.splice(spectatorIndex, 1);
+}
+
+// Deletes a room once nobody active is left in it (mirrors the cleanup
+// check duplicated across leaveRoom, the disconnect timeout, and forced
+// removals). Returns true if the room was deleted.
+function cleanupRoomIfEmpty(room) {
+  const activePlayers = room.players.filter(p => !p.hasLeft);
+  const activeSpectators = room.spectators.filter(s => !s.hasLeft);
+  if (activePlayers.length === 0 && activeSpectators.length === 0) {
+    rooms.delete(room.code);
+    return true;
+  }
+  return false;
+}
+
 function nextTurn(room) {
   // Check if anyone is still choosing cards for exchange
   const someoneExchanging = room.players.some(p => p.mustChooseExchange);
@@ -3271,7 +3475,8 @@ function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedU
     coins: 2,
     influences: [],
     alive: true,
-    disconnected: false
+    disconnected: false,
+    ip: spectator.ip || null
   };
 
   room.players.push(player);
@@ -3300,7 +3505,9 @@ function switchToSpectator(room, socketId) {
   const spectator = {
     id: socketId,
     socketId: socketId,
-    name: player.name
+    name: player.name,
+    userId: player.userId || null,
+    ip: player.ip || null
   };
 
   room.spectators.push(spectator);
@@ -4937,44 +5144,122 @@ setInterval(cleanOldChatMessages, 5 * 60 * 1000);
 // Function to disconnect all sockets from a specific IP
 function disconnectIP(ip) {
   if (!ip || ip === 'unknown') return;
-  
+
+  const errorPayload = { message: 'Your IP address has been banned.' };
+
   // Disconnect from lobby
   lobbySockets.forEach((userData, socketId) => {
     if (userData.ip === ip) {
       const socket = io.sockets.sockets.get(socketId);
       if (socket) {
-        socket.emit('error', { message: 'Your IP address has been banned.' });
+        socket.emit('error', errorPayload);
         socket.disconnect(true);
       }
       lobbySockets.delete(socketId);
     }
   });
-  
-  // Disconnect from game rooms
-  Object.values(rooms).forEach(room => {
-    // Check players
-    room.players = room.players.filter(player => {
+
+  // Disconnect from game rooms - forfeiting an active player the same way a
+  // voluntary leave would (cards revealed, elimination recorded, turn
+  // advanced), rather than silently vanishing from the game. `rooms` is a
+  // Map, not a plain object - Object.values(rooms) always returns [] and
+  // silently skipped this entire block, so an IP-banned player already
+  // inside a game was never actually disconnected by this function before
+  // (only the lobby-listing socket above was). Array.from(rooms.values())
+  // is the correct way to iterate a Map's values, matching how it's done
+  // elsewhere (e.g. broadcastRoomList). Each inner loop re-searches after
+  // every removal (rather than a single filter pass) so more than one
+  // connection sharing this IP in the same room - a household/NAT address,
+  // for instance - all get caught, not just the first.
+  Array.from(rooms.values()).forEach(room => {
+    let changed = false;
+
+    let playerIndex;
+    while ((playerIndex = room.players.findIndex(p => p.ip === ip && !p.hasLeft)) !== -1) {
+      const player = room.players[playerIndex];
       const socket = io.sockets.sockets.get(player.socketId);
-      if (socket && player.ip === ip) {
-        socket.emit('error', { message: 'Your IP address has been banned.' });
+      removePlayerFromRoom(room, playerIndex, `${getDisplayName(room, player)}'s IP address was banned and they forfeit!`);
+      if (socket) {
+        socket.emit('error', errorPayload);
         socket.disconnect(true);
-        return false;
       }
-      return true;
-    });
-    
-    // Check spectators
-    room.spectators = room.spectators.filter(spectator => {
+      changed = true;
+    }
+
+    let spectatorIndex;
+    while ((spectatorIndex = room.spectators.findIndex(s => s.ip === ip && !s.hasLeft)) !== -1) {
+      const spectator = room.spectators[spectatorIndex];
       const socket = io.sockets.sockets.get(spectator.socketId);
-      if (socket && spectator.ip === ip) {
-        socket.emit('error', { message: 'Your IP address has been banned.' });
+      removeSpectatorFromRoom(room, spectatorIndex);
+      if (socket) {
+        socket.emit('error', errorPayload);
         socket.disconnect(true);
-        return false;
       }
-      return true;
-    });
+      changed = true;
+    }
+
+    if (changed && !cleanupRoomIfEmpty(room)) {
+      emitToRoom(room.code, 'gameState');
+    }
   });
-  
+
+  broadcastOnlineUsers();
+  broadcastRoomList();
+}
+
+// Same idea as disconnectIP(), but for an account-level ban/timeout rather
+// than an IP ban - matches by userId instead. Without this, a user who was
+// already connected when an admin banned/timed them out would keep playing
+// uninterrupted until they happened to disconnect on their own; the
+// connection-time check in io.on('connection') only stops *new* connections.
+function disconnectUser(userId, message) {
+  if (!userId) return;
+
+  const errorPayload = { message };
+
+  lobbySockets.forEach((userData, socketId) => {
+    if (userData.userId === userId) {
+      const socket = io.sockets.sockets.get(socketId);
+      if (socket) {
+        socket.emit('error', errorPayload);
+        socket.disconnect(true);
+      }
+      lobbySockets.delete(socketId);
+    }
+  });
+
+  Array.from(rooms.values()).forEach(room => {
+    let changed = false;
+
+    let playerIndex;
+    while ((playerIndex = room.players.findIndex(p => p.userId === userId && !p.hasLeft)) !== -1) {
+      const player = room.players[playerIndex];
+      const socket = io.sockets.sockets.get(player.socketId);
+      removePlayerFromRoom(room, playerIndex, `${getDisplayName(room, player)} was removed by an administrator and forfeits!`);
+      if (socket) {
+        socket.emit('error', errorPayload);
+        socket.disconnect(true);
+      }
+      changed = true;
+    }
+
+    let spectatorIndex;
+    while ((spectatorIndex = room.spectators.findIndex(s => s.userId === userId && !s.hasLeft)) !== -1) {
+      const spectator = room.spectators[spectatorIndex];
+      const socket = io.sockets.sockets.get(spectator.socketId);
+      removeSpectatorFromRoom(room, spectatorIndex);
+      if (socket) {
+        socket.emit('error', errorPayload);
+        socket.disconnect(true);
+      }
+      changed = true;
+    }
+
+    if (changed && !cleanupRoomIfEmpty(room)) {
+      emitToRoom(room.code, 'gameState');
+    }
+  });
+
   broadcastOnlineUsers();
   broadcastRoomList();
 }
@@ -5119,6 +5404,27 @@ io.on('connection', (socket) => {
     const verification = auth.verifyToken(token);
     if (verification.success) {
       authenticatedUser = verification.user;
+
+      // Ban/timeout status was previously only enforced via /api/verify,
+      // which the client calls voluntarily - a banned user with a still-
+      // valid token could simply skip that call (or ignore its result) and
+      // keep connecting straight over the socket. Enforce it here too, at
+      // the one place every socket connection actually has to pass through.
+      const banStatus = checkBanStatus(authenticatedUser.id);
+      if (banStatus.banned) {
+        socket.emit('error', { message: 'Account permanently banned.', banned: true });
+        socket.disconnect(true);
+        return;
+      }
+      if (banStatus.timedOut) {
+        socket.emit('error', {
+          message: `Account timed out until ${new Date(banStatus.expiresAt).toLocaleString()}`,
+          timedOut: true,
+          expiresAt: banStatus.expiresAt
+        });
+        socket.disconnect(true);
+        return;
+      }
     }
   }
 
@@ -5168,7 +5474,8 @@ io.on('connection', (socket) => {
       coins: 2,
       influences: [],
       alive: true,
-      disconnected: false
+      disconnected: false,
+      ip: clientIP
     };
 
     room.players.push(player);
@@ -5382,7 +5689,9 @@ io.on('connection', (socket) => {
       const spectator = {
         id: socket.id,
         socketId: socket.id,
-        name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Spectator ${room.spectators.length + 1}`)
+        name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Spectator ${room.spectators.length + 1}`),
+        userId: authenticatedUser ? authenticatedUser.id : null,
+        ip: clientIP
       };
 
       room.spectators.push(spectator);
@@ -5404,7 +5713,9 @@ io.on('connection', (socket) => {
       const spectator = {
         id: socket.id,
         socketId: socket.id,
-        name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Spectator ${room.spectators.length + 1}`)
+        name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Spectator ${room.spectators.length + 1}`),
+        userId: authenticatedUser ? authenticatedUser.id : null,
+        ip: clientIP
       };
 
       room.spectators.push(spectator);
@@ -5435,7 +5746,8 @@ io.on('connection', (socket) => {
       coins: 2,
       influences: [],
       alive: true,
-      disconnected: false
+      disconnected: false,
+      ip: clientIP
     };
 
     room.players.push(player);
@@ -5794,103 +6106,18 @@ io.on('connection', (socket) => {
     
     if (playerIndex !== -1) {
       const player = room.players[playerIndex];
-      
-      // Mark player as having left so they stop receiving updates
-      player.hasLeft = true;
-      player.disconnected = false; // Clear disconnected flag if they were disconnected
-      
-      // Remove socket from the room
       socket.leave(roomCode);
-      
-      if (room.state === 'playing') {
-        // Player forfeits - reveal all influences and eliminate
-        const revealedCards = [];
-        player.influences.forEach(inf => {
-          if (!inf.revealed) {
-            inf.revealed = true;
-            revealedCards.push(inf.card);
-          }
-        });
-        
-        // Track elimination before marking as not alive
-        if (player.alive) {
-          const alivePlayers = room.players.filter(p => p.alive && p.id !== player.id).length;
-          const placement = alivePlayers + 1;
-          const eliminationEntry = {
-            playerId: player.id,
-            playerName: player.name,
-            userId: player.userId,
-            username: player.username,
-            coinsEarned: player.gameStats?.coinsEarned || 0,
-            eliminations: player.gameStats?.playersEliminated || 0,
-            placement: placement
-          };
-          room.eliminationOrder.push(eliminationEntry);
-        }
-        
-        player.alive = false;
-        player.disconnected = true; // Mark as disconnected so they stay visible
-        player.mustRevealInfluence = false;
-        player.mustChooseExchange = false;
-        player.mustChooseExamine = false;
-        player.mustShowCardToExaminer = false;
-        player.influencesToLose = 0;
-        
-        // Log the forfeit and reveal cards
-        addLogToRoom(room, `${getDisplayName(room, player)} left the game and forfeits!`, 'info');
-        if (revealedCards.length > 0) {
-          const cardList = revealedCards.join(' and ');
-          addLogToRoom(room, `${getDisplayName(room, player)}'s cards are revealed: ${cardList}`, 'info');
-        }
-        
-        // Check win condition
-        checkWinCondition(room);
-        
-        // If it was their turn, advance to next player
-        if (room.currentPlayerIndex === playerIndex) {
-          room.actionInProgress = null;
-          nextTurn(room);
-        }
-        
-        // Don't remove from array - keep them visible with revealed cards
-        // Emit to other players (not this one since hasLeft = true)
-        emitToRoom(roomCode, 'gameState');
-        
-        // Clean up room if no active players/spectators left
-        const activePlayers = room.players.filter(p => !p.hasLeft);
-        const activeSpectators = room.spectators.filter(s => !s.hasLeft);
-        if (activePlayers.length === 0 && activeSpectators.length === 0) {
-          rooms.delete(roomCode);
-          broadcastRoomList();
-        }
-      } else {
-        // In lobby, remove them completely
-        room.players.splice(playerIndex, 1);
-        
-        // Check if there are any active players or spectators left
-        const activePlayers = room.players.filter(p => !p.hasLeft);
-        const activeSpectators = room.spectators.filter(s => !s.hasLeft);
-        if (activePlayers.length === 0 && activeSpectators.length === 0) {
-          rooms.delete(roomCode);
-        } else {
-          emitToRoom(roomCode, 'gameState');
-        }
-      }
+
+      removePlayerFromRoom(room, playerIndex, `${getDisplayName(room, player)} left the game and forfeits!`);
+
+      cleanupRoomIfEmpty(room);
+      emitToRoom(roomCode, 'gameState');
     } else if (spectatorIndex !== -1) {
-      const spectator = room.spectators[spectatorIndex];
-      spectator.hasLeft = true;
       socket.leave(roomCode);
-      
-      room.spectators.splice(spectatorIndex, 1);
-      
-      // Check if there are any active players or spectators left
-      const activePlayers = room.players.filter(p => !p.hasLeft);
-      const activeSpectators = room.spectators.filter(s => !s.hasLeft);
-      if (activePlayers.length === 0 && activeSpectators.length === 0) {
-        rooms.delete(roomCode);
-      } else {
-        emitToRoom(roomCode, 'gameState');
-      }
+      removeSpectatorFromRoom(room, spectatorIndex);
+
+      cleanupRoomIfEmpty(room);
+      emitToRoom(roomCode, 'gameState');
     }
     
     // Mark user as not in game in lobby
@@ -6046,68 +6273,15 @@ io.on('connection', (socket) => {
           
           const timerKey = `${roomCode}-${player.persistentId}`;
           const forfeitTimer = setTimeout(() => {
-            // Grace period expired - forfeit
-            
-            // Check if player is still disconnected
+            // Grace period expired - forfeit, unless they reconnected (clears
+            // `disconnected`) or were already removed some other way in the
+            // meantime (e.g. banned - clears via hasLeft, and would also
+            // have cleared this exact timer, but check defensively anyway).
             const currentPlayer = room.players[playerIndex];
-            if (currentPlayer && currentPlayer.disconnected) {
-              currentPlayer.hasLeft = true;
-              currentPlayer.disconnected = false; // Clear disconnected flag since they're now marked as left
-              
-              // Forfeit - reveal all influences and eliminate
-              const revealedCards = [];
-              currentPlayer.influences.forEach(inf => {
-                if (!inf.revealed) {
-                  inf.revealed = true;
-                  revealedCards.push(inf.card);
-                }
-              });
-              
-              // Track elimination before marking as not alive
-              if (currentPlayer.alive) {
-                const alivePlayers = room.players.filter(p => p.alive && p.id !== currentPlayer.id).length;
-                const placement = alivePlayers + 1;
-                const eliminationEntry = {
-                  playerId: currentPlayer.id,
-                  playerName: currentPlayer.name,
-                  userId: currentPlayer.userId,
-                  username: currentPlayer.username,
-                  coinsEarned: currentPlayer.gameStats?.coinsEarned || 0,
-                  eliminations: currentPlayer.gameStats?.playersEliminated || 0,
-                  placement: placement
-                };
-                room.eliminationOrder.push(eliminationEntry);
-              }
-              
-              currentPlayer.alive = false;
-              currentPlayer.mustRevealInfluence = false;
-              currentPlayer.mustChooseExchange = false;
-              currentPlayer.mustChooseExamine = false;
-              currentPlayer.mustShowCardToExaminer = false;
-              currentPlayer.influencesToLose = 0;
-              
-              addLogToRoom(room, `${getDisplayName(room, currentPlayer)} failed to reconnect and forfeits!`, 'info');
-              if (revealedCards.length > 0) {
-                const cardList = revealedCards.join(' and ');
-                addLogToRoom(room, `${getDisplayName(room, currentPlayer)}'s cards are revealed: ${cardList}`, 'info');
-              }
-              
-              // Check win condition
-              checkWinCondition(room);
-              
-              // If it was their turn, advance to next player
-              if (room.currentPlayerIndex === playerIndex) {
-                room.actionInProgress = null;
-                nextTurn(room);
-              }
-              
+            if (currentPlayer && currentPlayer.disconnected && !currentPlayer.hasLeft) {
+              removePlayerFromRoom(room, playerIndex, `${getDisplayName(room, currentPlayer)} failed to reconnect and forfeits!`);
               emitToRoom(roomCode, 'gameState');
-              
-              // Clean up room if no active players/spectators left
-              const activePlayers = room.players.filter(p => !p.hasLeft);
-              const activeSpectators = room.spectators.filter(s => !s.hasLeft);
-              if (activePlayers.length === 0 && activeSpectators.length === 0) {
-                rooms.delete(roomCode);
+              if (cleanupRoomIfEmpty(room)) {
                 broadcastRoomList();
               }
             }
@@ -6122,31 +6296,15 @@ io.on('connection', (socket) => {
           // They should stay visible with revealed cards
         } else {
           // In lobby, just remove them
-          player.hasLeft = true;
-          player.disconnected = false; // Clear disconnected flag
-          room.players.splice(playerIndex, 1);
-          
-          // Check if there are any active players or spectators left
-          const activePlayers = room.players.filter(p => !p.hasLeft);
-          const activeSpectators = room.spectators.filter(s => !s.hasLeft);
-          if (activePlayers.length === 0 && activeSpectators.length === 0) {
-            rooms.delete(roomCode);
-          } else {
+          removePlayerFromRoom(room, playerIndex, null);
+          if (!cleanupRoomIfEmpty(room)) {
             emitToRoom(roomCode, 'gameState');
           }
         }
       } else if (spectatorIndex !== -1) {
-        const spectator = room.spectators[spectatorIndex];
-        spectator.hasLeft = true;
+        removeSpectatorFromRoom(room, spectatorIndex);
         
-        room.spectators.splice(spectatorIndex, 1);
-        
-        // Check if there are any active players or spectators left
-        const activePlayers = room.players.filter(p => !p.hasLeft);
-        const activeSpectators = room.spectators.filter(s => !s.hasLeft);
-        if (activePlayers.length === 0 && activeSpectators.length === 0) {
-          rooms.delete(roomCode);
-        } else {
+        if (!cleanupRoomIfEmpty(room)) {
           emitToRoom(roomCode, 'gameState');
         }
       }
@@ -6249,26 +6407,57 @@ io.on('connection', (socket) => {
         });
       }
     }
-    
-    // Handle lobby disconnection
-    const userData = lobbySockets.get(socket.id);
-    if (userData) {
-      lobbySockets.delete(socket.id);
-      
-      // Broadcast updated user list immediately
-      broadcastOnlineUsers();
-      
-      // Also broadcast room list in case they were in a game
-      broadcastRoomList();
-    }
   });
 });
 
 const PORT = process.env.PORT || 3001;
 
+// --- Startup configuration safety checks -----------------------------------
+// A wrong-but-silent config here is much worse than a loud one: an unset
+// JWT_SECRET means anyone can forge a login for any account (including an
+// admin's), and SMTP being unset means "forgot password" links only ever
+// reach the server's own console log rather than the actual user. Both
+// already have working fallbacks for local testing (see auth.js / email.js),
+// so this only escalates to refusing to start once the app shows signs of
+// being a real, public-facing deployment rather than someone just trying the
+// project out on their own machine - specifically, TRUST_PROXY being set
+// (this app's own signal for "there's a proxy/tunnel in front of me") or
+// NODE_ENV=production.
+const INSECURE_DEFAULT_JWT_SECRET = 'coup-secret-key-change-in-production';
+function runStartupConfigChecks() {
+  const looksLikeRealDeployment = TRUST_PROXY_MODE !== 'off' || process.env.NODE_ENV === 'production';
+  const usingDefaultSecret = !process.env.JWT_SECRET || process.env.JWT_SECRET === INSECURE_DEFAULT_JWT_SECRET;
+
+  if (usingDefaultSecret) {
+    if (looksLikeRealDeployment) {
+      console.error('');
+      console.error('❌ Refusing to start: this looks like a real, public-facing deployment (TRUST_PROXY or NODE_ENV=production is set), but JWT_SECRET is unset or still the insecure hardcoded default.');
+      console.error('   Anyone who knows that default can forge a valid login for any account, including an admin.');
+      console.error(`   Set JWT_SECRET to a long random string, e.g.: node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`);
+      console.error('   See .env.example / README.md "Configuration" for details.');
+      console.error('');
+      process.exit(1);
+    } else {
+      console.warn('');
+      console.warn('⚠️  JWT_SECRET is unset - using an insecure hardcoded default. This is fine for local testing only.');
+      console.warn('   Set a real JWT_SECRET before this is ever reachable from outside your own machine. See .env.example.');
+      console.warn('');
+    }
+  }
+
+  if (looksLikeRealDeployment && !emailService.isEmailConfigured()) {
+    console.warn('');
+    console.warn("⚠️  This looks like a real deployment, but no SMTP settings are configured - password reset links will only be logged to this console, not emailed.");
+    console.warn("   Anyone who can read these server logs could reset any account's password. See .env.example \"Email\" section.");
+    console.warn('');
+  }
+}
+
 // Initialize database and start server
 async function startServer() {
   try {
+    runStartupConfigChecks();
+
     await db.initDatabase();
     
     server.listen(PORT, () => {

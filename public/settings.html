@@ -356,7 +356,7 @@
 
   <script>
     const API_BASE = '';
-    const authToken = localStorage.getItem('coupAuthToken');
+    let authToken = localStorage.getItem('coupAuthToken');
     const currentUser = authToken ? JSON.parse(localStorage.getItem('currentUser') || '{}') : null;
 
     // Escapes a value for safe insertion into HTML - both as text content and
@@ -827,7 +827,15 @@
           return;
         }
         
-        // Success
+        // Success - a fresh token was issued since the password change
+        // invalidates the one this request was authenticated with (see
+        // server.js). Store it so the rest of this session, and future
+        // page loads, keep working without needing to log in again.
+        if (data.token) {
+          authToken = data.token;
+          localStorage.setItem('coupAuthToken', data.token);
+        }
+
         document.getElementById('passwordMsg').classList.remove('hidden');
         document.getElementById('currentPassword').value = '';
         document.getElementById('newPassword').value = '';

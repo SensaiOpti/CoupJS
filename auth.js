@@ -13,6 +13,18 @@ function getDb() {
   return dbModule.prepare.bind(dbModule);
 }
 
+// Signs a JWT for a given account. Centralized so every caller embeds the
+// same payload shape (in particular, tokenVersion - see verifyToken()) and
+// so anything that needs to issue a fresh token, like change-password below,
+// doesn't have to duplicate the secret/expiry/payload details separately.
+function signToken(userId, username, tokenVersion) {
+  return jwt.sign(
+    { id: userId, username: username, tokenVersion: tokenVersion || 0 },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
+}
+
 /**
  * Register a new user
  */
@@ -99,11 +111,7 @@ function register(username, password, email = null) {
     dbModule.saveDatabase();
 
     // Generate JWT token
-    const token = jwt.sign(
-      { id: userId, username: username },
-      JWT_SECRET,
-      { expiresIn: JWT_EXPIRES_IN }
-    );
+    const token = signToken(userId, username, 0); // 0 matches the token_version column's default for a fresh row
 
     return {
       success: true,
@@ -137,7 +145,7 @@ function login(username, password) {
 
   // Get user
   const getUserByUsername = dbModule.prepare(`
-    SELECT id, username, password_hash, display_name, deck_preference, sound_preference, created_at, last_login
+    SELECT id, username, password_hash, display_name, deck_preference, sound_preference, token_version, created_at, last_login
     FROM users
     WHERE username = ? COLLATE NOCASE
   `);
@@ -170,11 +178,7 @@ function login(username, password) {
   const stats = getUserStats.get(user.id);
 
   // Generate JWT token
-  const token = jwt.sign(
-    { id: user.id, username: user.username },
-    JWT_SECRET,
-    { expiresIn: JWT_EXPIRES_IN }
-  );
+  const token = signToken(user.id, user.username, user.token_version);
 
   return {
     success: true,
@@ -200,13 +204,27 @@ function verifyToken(token) {
     
     // Get user data
     const getUserById = dbModule.prepare(`
-      SELECT id, username, display_name, deck_preference, sound_preference, avatar, created_at, last_login
+      SELECT id, username, display_name, deck_preference, sound_preference, avatar, token_version, created_at, last_login
       FROM users
       WHERE id = ?
     `);
     const user = getUserById.get(decoded.id);
     if (!user) {
       return { success: false, error: 'User not found' };
+    }
+
+    // Reject tokens issued before the account's most recent password
+    // change. JWTs are otherwise self-contained and would stay valid for
+    // their full lifetime (30 days) regardless of what happens to the
+    // account afterward - this is what makes "change your password" actually
+    // invalidate a stolen token instead of just adding a second valid one.
+    // Tokens signed before this check existed have no tokenVersion claim at
+    // all; treating that as 0 (rather than rejecting outright) means
+    // deploying this doesn't force everyone to re-log-in immediately - only
+    // accounts that have actually changed their password since get bumped
+    // past 0, which is exactly when their old tokens should stop working.
+    if ((decoded.tokenVersion || 0) !== (user.token_version || 0)) {
+      return { success: false, error: 'Session expired due to a password change. Please log in again.' };
     }
 
     // Get stats
@@ -345,12 +363,18 @@ function resetPasswordWithToken(token, newPassword) {
   const salt = bcrypt.genSaltSync(10);
   const passwordHash = bcrypt.hashSync(newPassword, salt);
 
+  // Bump token_version so any previously-issued tokens for this account stop
+  // working immediately - this reset flow exists precisely for "someone else
+  // may have my password", so an attacker's existing session needs to die
+  // the moment the password changes, not up to 30 days later.
   dbModule.prepare(`
-    UPDATE users SET password_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL WHERE id = ?
+    UPDATE users
+    SET password_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL, token_version = token_version + 1
+    WHERE id = ?
   `).run(passwordHash, user.id);
   dbModule.saveDatabase();
 
-  return { success: true };
+  return { success: true, userId: user.id };
 }
 
 /**
@@ -407,5 +431,6 @@ module.exports = {
   requestPasswordReset,
   resetPasswordWithToken,
   deleteAccount,
+  signToken,
   JWT_SECRET
 };

@@ -388,6 +388,16 @@
         }
       });
 
+      // The server emits this right before forcibly disconnecting a socket
+      // (IP ban, account ban/timeout while already connected, etc.) - without
+      // this handler the person just sees a silent disconnect with no
+      // explanation of why.
+      socket.on('error', (data) => {
+        if (data?.message) {
+          alert(data.message);
+        }
+      });
+
       socket.on('reconnect', (attemptNumber) => {
         console.log('Reconnected after', attemptNumber, 'attempts');
         // Rejoin lobby after reconnection

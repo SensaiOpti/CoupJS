@@ -388,6 +388,21 @@
     let currentPlayerId = null;
     let actionInProgress = null;
     let gameLog = [];
+    let lastLogIdSeen = null; // highest game-log entry id we've already processed (null = no state received yet)
+
+    // Whatever the server sends, only well-formed log entries get this far. One
+    // malformed entry used to throw inside the gameState handler (or inside
+    // render, for anyone with the profanity filter on) and freeze the whole page.
+    function normalizeGameLog(raw) {
+      if (!Array.isArray(raw)) return [];
+      return raw
+        .filter(entry => entry && typeof entry === 'object' && typeof entry.message === 'string')
+        .map(entry => ({
+          ...entry,
+          playerName: typeof entry.playerName === 'string' ? entry.playerName : '',
+          avatar: typeof entry.avatar === 'string' ? entry.avatar : undefined
+        }));
+    }
     let selectedTarget = null;
     let pendingConfirmAction = null; // Holds an action name (income/foreignAid/tax/exchange) awaiting confirmation before firing
     let playerName = localStorage.getItem('coupGuestName') || '';
@@ -407,6 +422,7 @@
     let ranked = true; // Track if game is ranked
     let hasPassword = false; // Track if game has password
     let anonymousMode = false; // Track if game is in anonymous mode
+    let hostId = null; // Public id of the player who may start the game
 
     // Game log filters
     let showAllActions = true; // true = show all players' actions, false = show only my actions
@@ -435,22 +451,37 @@
 
     let shouldAutoScroll = true; // Track if we should auto-scroll
     let lastActionSignature = null; // Track which action panel is showing to prevent re-animation
-    let persistentPlayerId = null; // Persistent ID for reconnection
 
     // Sound effects system
     let audioContext = null;
     let soundEnabled = true;
 
-    // Get or create persistent player ID
-    function getOrCreatePlayerId() {
-      if (!persistentPlayerId) {
-        persistentPlayerId = localStorage.getItem('coupPlayerId');
-        if (!persistentPlayerId) {
-          persistentPlayerId = 'player_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-          localStorage.setItem('coupPlayerId', persistentPlayerId);
-        }
+    // Seat session. When you create/join a game as a player, the server hands
+    // back a secret reconnect token meant only for you. It's what lets you take
+    // your seat back after a disconnect (logged-in users are recognised by their
+    // account as well). It is never shown to other players, so keep it private.
+    // The old browser-generated "coupPlayerId" was visible to everyone in the
+    // room and could be used to take over your seat - drop it if it's still around.
+    localStorage.removeItem('coupPlayerId');
+
+    function getReconnectToken() {
+      return localStorage.getItem('coupReconnectToken') || null;
+    }
+
+    function saveRoomSession(code, token, asSpectator) {
+      localStorage.setItem('coupCurrentRoom', code);
+      localStorage.setItem('coupIsSpectator', asSpectator ? 'true' : 'false');
+      if (token) {
+        localStorage.setItem('coupReconnectToken', token);
+      } else {
+        localStorage.removeItem('coupReconnectToken');
       }
-      return persistentPlayerId;
+    }
+
+    function clearRoomSession() {
+      localStorage.removeItem('coupCurrentRoom');
+      localStorage.removeItem('coupIsSpectator');
+      localStorage.removeItem('coupReconnectToken');
     }
 
     function initAudioContext() {
@@ -769,17 +800,18 @@
           // Attempt to reconnect to previous game
           socket.emit('attemptReconnect', {
             roomCode: storedRoomCode,
-            persistentPlayerId: getOrCreatePlayerId()
+            reconnectToken: getReconnectToken()
           }, (response) => {
             if (response.success) {
               console.log('Successfully reconnected to game!');
               roomCode = storedRoomCode;
               isSpectator = false;
+              saveRoomSession(storedRoomCode, response.reconnectToken, false);
               // Server will emit gameState which will update everything
             } else {
               console.log('Could not reconnect:', response.error);
               // Clear stored room if reconnection failed
-              localStorage.removeItem('coupCurrentRoom');
+              clearRoomSession();
             }
           });
         }
@@ -847,6 +879,10 @@
           hasPassword = state.hasPassword;
         }
 
+        if (state.hostId !== undefined) {
+          hostId = state.hostId;
+        }
+
         if (state.anonymousMode !== undefined) {
           anonymousMode = state.anonymousMode;
         }
@@ -901,7 +937,7 @@
         myPlayerId = state.myPlayerId;
         currentPlayerId = state.currentPlayerId;
         actionInProgress = state.actionInProgress;
-        gameLog = state.gameLog;
+        gameLog = normalizeGameLog(state.gameLog);
         deckSize = state.deckSize || 0;
         
         // Check if reveal requirement changed (after state update)
@@ -1062,8 +1098,19 @@
           }
         }
         
-        // NOW trigger sound effects
-        if (gameLog.length > oldGameLog.length) {
+        // NOW trigger sound effects.
+        // "New" means a higher id than anything already seen. (The server trims
+        // old entries off the log, so comparing array lengths doesn't work, and
+        // the very first state after connecting is treated as history rather than
+        // replaying a burst of sounds for everything that already happened.)
+        const previousMaxLogId = lastLogIdSeen;
+        const newestLogId = gameLog.reduce((max, log) => (typeof log.id === 'number' && log.id > max ? log.id : max), 0);
+        lastLogIdSeen = Math.max(previousMaxLogId ?? 0, newestLogId);
+        const newLogs = previousMaxLogId === null
+          ? []
+          : gameLog.filter(log => typeof log.id === 'number' && log.id > previousMaxLogId);
+
+        if (newLogs.length > 0) {
           // Check if user is near bottom before new messages arrive
           const logContainer = document.getElementById('gameLogContainer');
           if (logContainer) {
@@ -1073,8 +1120,7 @@
             }
           }
           
-          const newLogs = gameLog.slice(oldGameLog.length);
-          newLogs.forEach(log => {
+          try { newLogs.forEach(log => {
             // Game start - dealing cards
             if (log.message.includes('Game started')) {
               playSound('deal');
@@ -1107,7 +1153,10 @@
             else if (log.type === 'fail') {
               playSound('fail');
             }
-          });
+          }); } catch (soundError) {
+            // Sounds are decoration - never let them stop the page from updating.
+            console.error('Error playing log sounds:', soundError);
+          }
         }
         
         // Check if it's now your turn
@@ -1208,14 +1257,12 @@
         password: settings.password,
         ranked: settings.ranked,
         anonymousMode: settings.anonymousMode || false,
-        allowLargeGames: settings.allowLargeGames || false,
-        persistentPlayerId: getOrCreatePlayerId()
+        allowLargeGames: settings.allowLargeGames || false
       }, (response) => {
         if (response.success) {
           roomCode = response.roomCode;
           isSpectator = false;
-          localStorage.setItem('coupCurrentRoom', roomCode);
-          localStorage.setItem('coupIsSpectator', 'false');
+          saveRoomSession(roomCode, response.reconnectToken, false);
         } else {
           alert(response.error);
         }
@@ -1249,7 +1296,7 @@
       
       previewRoomCode = code;
       
-      socket.emit('previewRoom', { roomCode: code }, (response) => {
+      socket.emit('previewRoom', { roomCode: code, password: localStorage.getItem('coupRoomPassword') || null }, (response) => {
         if (response.success) {
           previewMode = true;
           previewData = response.roomData;
@@ -1277,7 +1324,7 @@
         playerName: name, 
         asSpectator: false,
         password: password,
-        persistentPlayerId: getOrCreatePlayerId()
+        reconnectToken: getReconnectToken()
       }, (response) => {
         if (response.success) {
           roomCode = previewRoomCode;
@@ -1290,8 +1337,7 @@
           localStorage.removeItem('coupRoomPassword');
           
           if (!isSpectator) {
-            localStorage.setItem('coupCurrentRoom', roomCode);
-            localStorage.setItem('coupIsSpectator', 'false');
+            saveRoomSession(roomCode, response.reconnectToken, false);
           }
         } else if (response.shouldReconnect) {
           // Authenticated user trying to reconnect from different device
@@ -1337,7 +1383,7 @@
     function attemptReconnect(targetRoomCode) {
       socket.emit('attemptReconnect', {
         roomCode: targetRoomCode,
-        persistentPlayerId: getOrCreatePlayerId()
+        reconnectToken: getReconnectToken()
       }, (response) => {
         if (response.success) {
           console.log('Successfully reconnected to game!');
@@ -1349,8 +1395,7 @@
           
           // Clear password from storage
           localStorage.removeItem('coupRoomPassword');
-          localStorage.setItem('coupCurrentRoom', roomCode);
-          localStorage.setItem('coupIsSpectator', 'false');
+          saveRoomSession(roomCode, response.reconnectToken, false);
           // Server will emit gameState which will update everything
         } else {
           alert(response.error || 'Failed to reconnect');
@@ -1361,12 +1406,11 @@
     }
 
     function switchToPlayer() {
-      socket.emit('switchToPlayer', { 
-        roomCode,
-        persistentPlayerId: getOrCreatePlayerId()
-      }, (response) => {
+      socket.emit('switchToPlayer', { roomCode }, (response) => {
         if (!response.success) {
           alert(response.error);
+        } else {
+          saveRoomSession(roomCode, response.reconnectToken, false);
         }
       });
     }
@@ -1629,11 +1673,17 @@
           // Clear game stats
           gameStats = null;
           
-          // Store the new room code and redirect
+          // Store the new room code and redirect. If the rematch room is password
+          // protected, the server also hands back a one-time pass for us to use
+          // when the page reloads (so nobody has to retype the password).
+          if (response.rematchToken) {
+            localStorage.setItem('coupRematchToken', response.rematchToken);
+          } else {
+            localStorage.removeItem('coupRematchToken');
+          }
           localStorage.setItem('coupJoinCode', response.newRoomCode);
           localStorage.setItem('coupPlayAgainAutoJoin', 'true'); // Flag to auto-join as player
-          localStorage.removeItem('coupCurrentRoom');
-          localStorage.removeItem('coupIsSpectator');
+          clearRoomSession();
           
           // Reload the page - will auto-join as player
           window.location.reload();
@@ -1651,8 +1701,7 @@
       }
       
       // Clear stored room
-      localStorage.removeItem('coupCurrentRoom');
-      localStorage.removeItem('coupIsSpectator');
+      clearRoomSession();
       gameStats = null; // Clear game stats
       
       // Redirect back to lobby
@@ -2507,6 +2556,7 @@
                               ${isImageAvatar ? `<img src="/images/avatars/${escapeHtml(avatar)}" alt="Avatar" class="w-full h-full object-cover">` : escapeHtml(avatar)}
                             </div>
                             <span class="font-semibold text-sm">${escapeHtml(player.name)}</span>
+                            ${!previewMode && player.id === hostId ? '<span class="text-xs bg-yellow-700 text-yellow-100 px-2 py-0.5 rounded font-bold">HOST</span>' : ''}
                           </div>
                           <div class="flex items-center gap-2">
                             ${eloRating ? `<span class="text-base text-yellow-500 font-bold">${eloRating}</span>` : ''}
@@ -2570,14 +2620,14 @@
                   ` : ''}
                 </div>
               ` : `
-                ${!isSpectator && players.length >= 2 && !roomIsPlaying ? `
+                ${!isSpectator && players.length >= 2 && !roomIsPlaying && players.some(p => p.isMe && p.id === hostId) ? `
                   <button onclick="startGame()" class="w-full bg-red-600 hover:bg-red-700 p-4 rounded text-xl font-bold">
                     Start Game
                   </button>
-                ` : !isSpectator && !roomIsPlaying ? `
+                ` : !isSpectator && players.length < 2 && !roomIsPlaying ? `
                   <div class="text-center text-gray-400">Waiting for at least 2 players...</div>
                 ` : !roomIsPlaying ? `
-                  <div class="text-center text-blue-400">Waiting for host to start the game...</div>
+                  <div class="text-center text-blue-400">Waiting for the host to start the game...</div>
                 ` : ''}
               `}
             </div>
@@ -3602,15 +3652,16 @@
                   roomCode: lobbyJoinCode,
                   playerName: currentUser ? currentUser.username : (localStorage.getItem('coupGuestUsername') || 'Guest'),
                   asSpectator: true,
-                  persistentPlayerId: getOrCreatePlayerId(),
                   password: password
                 }, (joinResponse) => {
                   if (joinResponse.success) {
                     roomCode = lobbyJoinCode;
                     isSpectator = true;
-                    localStorage.setItem('coupCurrentRoom', roomCode);
-                    localStorage.setItem('coupIsSpectator', 'true');
+                    saveRoomSession(roomCode, null, true);
                     // Server will emit gameState
+                  } else if (joinResponse.shouldReconnect) {
+                    // This account already has a seat in this game (e.g. opened from another device)
+                    attemptReconnect(lobbyJoinCode);
                   } else {
                     alert('Failed to join game: ' + (joinResponse.error || 'Unknown error'));
                     window.location.href = '/lobby.html';
@@ -3623,19 +3674,23 @@
               if (playAgainAutoJoin === 'true') {
                 // Auto-join as player without showing preview
                 console.log('Auto-joining as player from Play Again');
+                const rematchPass = localStorage.getItem('coupRematchToken');
+                localStorage.removeItem('coupRematchToken'); // single use
                 socket.emit('joinRoom', {
                   roomCode: lobbyJoinCode,
                   playerName: currentUser ? currentUser.username : (localStorage.getItem('coupGuestUsername') || 'Guest'),
                   asSpectator: false,
-                  persistentPlayerId: getOrCreatePlayerId(),
+                  reconnectToken: getReconnectToken(),
+                  rematchToken: rematchPass,
                   password: null
                 }, (joinResponse) => {
                   if (joinResponse.success) {
                     roomCode = lobbyJoinCode;
                     isSpectator = false;
-                    localStorage.setItem('coupCurrentRoom', roomCode);
-                    localStorage.setItem('coupIsSpectator', 'false');
+                    saveRoomSession(roomCode, joinResponse.reconnectToken, false);
                     // Server will emit gameState
+                  } else if (joinResponse.shouldReconnect) {
+                    attemptReconnect(lobbyJoinCode);
                   } else {
                     alert('Failed to join game: ' + (joinResponse.error || 'Unknown error'));
                     window.location.href = '/lobby.html';
@@ -3647,20 +3702,19 @@
               // Try reconnecting first (for both authenticated users and guests who might be disconnected)
               socket.emit('attemptReconnect', {
                 roomCode: lobbyJoinCode,
-                persistentPlayerId: getOrCreatePlayerId()
+                reconnectToken: getReconnectToken()
               }, (reconnectResponse) => {
                 if (reconnectResponse.success) {
                   // Successfully reconnected!
                   console.log('Successfully reconnected to game from lobby!');
                   roomCode = lobbyJoinCode;
                   isSpectator = false;
-                  localStorage.setItem('coupCurrentRoom', roomCode);
-                  localStorage.setItem('coupIsSpectator', 'false');
+                  saveRoomSession(roomCode, reconnectResponse.reconnectToken, false);
                   // Server will emit gameState which will update everything via socket handler
                 } else {
                   // Not a rejoin, show preview as normal
                   console.log('Not a rejoin, showing preview');
-                  socket.emit('previewRoom', { roomCode: lobbyJoinCode }, (response) => {
+                  socket.emit('previewRoom', { roomCode: lobbyJoinCode, password: localStorage.getItem('coupRoomPassword') || null }, (response) => {
                       if (response.success) {
                         previewMode = true;
                         previewRoomCode = lobbyJoinCode;
@@ -3673,6 +3727,11 @@
                         chatMode = previewData.chatMode || 'separate';
                         gameState = 'lobby';
                         render();
+                      } else if (response.passwordRequired) {
+                        // Wrong/missing password: say so, forget the bad one, and go back to the lobby
+                        localStorage.removeItem('coupRoomPassword');
+                        alert(response.error || 'This room is password protected');
+                        window.location.href = '/lobby.html';
                       } else {
                         alert('Room not found: ' + lobbyJoinCode);
                       }

@@ -239,6 +239,22 @@
             </label>
           </div>
 
+          <!-- Show on Leaderboards (the only switch that is ON by default) -->
+          <div class="flex items-center justify-between py-2.5 border-b border-gray-700">
+            <div>
+              <div class="font-semibold">Show on Leaderboards</div>
+              <div class="text-sm text-gray-400">List you on the leaderboards, which show your rank, wins and win rate. Turn off to be left off every leaderboard.</div>
+            </div>
+            <label class="flex items-center gap-2 cursor-pointer select-none">
+              <div class="relative">
+                <input type="checkbox" id="privacyLeaderboards" class="sr-only">
+                <div class="w-9 h-5 bg-gray-600 rounded-full toggle-bg"></div>
+                <div class="absolute top-0.5 left-0.5 w-4 h-4 bg-white rounded-full toggle-dot"></div>
+              </div>
+              <span class="text-gray-400 text-sm w-14" id="labelLeaderboards">Shown</span>
+            </label>
+          </div>
+
           <!-- Profanity Filter (personal viewing preference, not a privacy/visibility toggle,
                but grouped here to avoid a whole extra card for one row) -->
           <div class="flex items-center justify-between py-2.5">
@@ -456,7 +472,8 @@
         showWinRate: false,
         showIndividualStats: false,
         showAchievements: false,
-        showMatchHistory: false
+        showMatchHistory: false,
+        showOnLeaderboards: true
       }
     };
 
@@ -584,6 +601,14 @@
       setToggle('privacyIndividualStats', 'labelIndividualStats', settings.privacy?.showIndividualStats);
       setToggle('privacyAchievements', 'labelAchievements', settings.privacy?.showAchievements);
       setToggle('privacyMatchHistory', 'labelMatchHistory', settings.privacy?.showMatchHistory);
+      // On unless the account has explicitly opted out
+      setToggle('privacyLeaderboards', 'labelLeaderboards', settings.privacy?.showOnLeaderboards !== false, 'Shown', 'Hidden');
+      document.getElementById('privacyLeaderboards').addEventListener('change', (e) => {
+        document.getElementById('labelLeaderboards').textContent = e.target.checked ? 'Shown' : 'Hidden';
+        document.getElementById('labelLeaderboards').className = e.target.checked
+          ? 'text-green-400 text-sm w-14'
+          : 'text-gray-400 text-sm w-14';
+      });
 
       // Profanity filter toggle
       const profanityInput = document.getElementById('profanityFilter');
@@ -610,11 +635,11 @@
       });
     }
 
-    function setToggle(inputId, labelId, value) {
+    function setToggle(inputId, labelId, value, onText = 'Public', offText = 'Private') {
       const input = document.getElementById(inputId);
       const label = document.getElementById(labelId);
       input.checked = !!value;
-      label.textContent = value ? 'Public' : 'Private';
+      label.textContent = value ? onText : offText;
       label.className = value ? 'text-green-400 text-sm w-14' : 'text-gray-400 text-sm w-14';
     }
 
@@ -720,7 +745,8 @@
         showWinRate: document.getElementById('privacyWinRate').checked,
         showIndividualStats: document.getElementById('privacyIndividualStats').checked,
         showAchievements: document.getElementById('privacyAchievements').checked,
-        showMatchHistory: document.getElementById('privacyMatchHistory').checked
+        showMatchHistory: document.getElementById('privacyMatchHistory').checked,
+        showOnLeaderboards: document.getElementById('privacyLeaderboards').checked
       };
 
       const bio = document.getElementById('bioInput').value;

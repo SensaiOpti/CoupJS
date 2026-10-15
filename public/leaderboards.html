@@ -468,7 +468,12 @@
 
         const data = await response.json();
 
-        if (data.rank) {
+        if (data.hidden) {
+          // This player turned off "Show on Leaderboards" in Settings
+          const rankEl = document.getElementById('userRank');
+          rankEl.textContent = 'Hidden';
+          rankEl.title = 'You are not listed on the leaderboards (change this in Settings)';
+        } else if (data.rank) {
           document.getElementById('userRank').textContent = '#' + data.rank;
         }
       } catch (error) {

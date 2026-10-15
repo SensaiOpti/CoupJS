@@ -249,14 +249,14 @@
     let rooms = [];
     let currentFilter = 'all';
     
-    // Persistent player ID for reconnection
-    function getOrCreatePlayerId() {
-      let persistentPlayerId = localStorage.getItem('coupPlayerId');
-      if (!persistentPlayerId) {
-        persistentPlayerId = 'player_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
-        localStorage.setItem('coupPlayerId', persistentPlayerId);
-      }
-      return persistentPlayerId;
+    // The browser-generated "coupPlayerId" used to double as a reconnect
+    // credential and was visible to other players; it's no longer used.
+    localStorage.removeItem('coupPlayerId');
+
+    // Secret reconnect token for a seat this browser holds (set by the game page).
+    // Sent to the server only so it can tell us which room listings are "ours".
+    function getReconnectToken() {
+      return localStorage.getItem('coupReconnectToken') || null;
     }
 
     // Themed guest name generator
@@ -376,7 +376,7 @@
 
       socket.on('connect', () => {
         console.log('Connected to server');
-        socket.emit('joinLobby', { username });
+        socket.emit('joinLobby', { username, reconnectToken: getReconnectToken() });
       });
 
       socket.on('disconnect', (reason) => {
@@ -401,7 +401,7 @@
       socket.on('reconnect', (attemptNumber) => {
         console.log('Reconnected after', attemptNumber, 'attempts');
         // Rejoin lobby after reconnection
-        socket.emit('joinLobby', { username });
+        socket.emit('joinLobby', { username, reconnectToken: getReconnectToken() });
       });
 
       socket.on('roomListUpdate', (data) => {
@@ -461,11 +461,10 @@
         const statusColor = isWaiting ? 'bg-green-600' : 'bg-blue-600';
         const statusText = isWaiting ? 'Waiting for players' : 'Game in progress';
         
-        // Check if current user is a player in this room (for rejoin)
-        // For authenticated users, check userId
-        // For guest players, check if their persistentId is in the disconnected list
-        const isMyGame = (currentUser && room.playerUserIds && room.playerUserIds.includes(currentUser.id)) ||
-                        (room.disconnectedPersistentIds && room.disconnectedPersistentIds.includes(getOrCreatePlayerId()));
+        // Does this browser/account hold a seat in this room (for the Rejoin button)?
+        // The server works that out privately for each viewer - it no longer
+        // broadcasts user IDs or reconnect credentials to everyone.
+        const isMyGame = room.isMine === true;
 
         return `
           <div class="room-item bg-gray-700 rounded-lg p-4 border-l-4 ${isWaiting ? 'border-green-500' : 'border-blue-500'}">

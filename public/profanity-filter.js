@@ -2729,21 +2729,50 @@ const PROFANITY_WORDS = [
   "🖕"
 ];
 
+// Compiled once, on first use. This used to build ~2,500 regular expressions
+// from scratch on every call - and the game page calls it for every chat message
+// on every re-render - which made a busy chat noticeably slow the page down.
+let compiledProfanityPatterns = null;
+const filteredTextCache = new Map(); // input text -> filtered text (only used while the filter is on)
+function getProfanityPatterns() {
+  if (!compiledProfanityPatterns) {
+    compiledProfanityPatterns = [];
+    PROFANITY_WORDS.forEach(word => {
+      try {
+        // Use word boundaries to avoid false positives
+        compiledProfanityPatterns.push({ regex: new RegExp(`\\b${word}\\b`, 'gi'), length: word.length });
+      } catch (error) {
+        // A list entry that isn't a valid pattern is skipped instead of breaking the whole filter
+      }
+    });
+  }
+  return compiledProfanityPatterns;
+}
+
 /**
  * Filter profanity from text based on user preference
  * @param {string} text - The text to filter
  * @returns {string} - The filtered text (or original if filter is disabled)
  */
 function filterProfanity(text) {
+  // Always work with a string, whatever we were handed
+  if (typeof text !== 'string') text = (text === null || text === undefined) ? '' : String(text);
+
   // Check if profanity filter is enabled in localStorage
   const filterEnabled = localStorage.getItem('coupProfanityFilter') === '1';
   if (!filterEnabled) return text;
   
+  // The game page re-renders its whole chat on every update, so the same
+  // messages get filtered over and over. Remember recent results.
+  const cached = filteredTextCache.get(text);
+  if (cached !== undefined) return cached;
+
   let filtered = text;
-  PROFANITY_WORDS.forEach(word => {
-    // Use word boundaries to avoid false positives
-    const regex = new RegExp(`\\b${word}\\b`, 'gi');
-    filtered = filtered.replace(regex, '*'.repeat(word.length));
+  getProfanityPatterns().forEach(({ regex, length }) => {
+    filtered = filtered.replace(regex, '*'.repeat(length));
   });
+
+  if (filteredTextCache.size >= 500) filteredTextCache.clear();
+  filteredTextCache.set(text, filtered);
   return filtered;
 }

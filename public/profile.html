@@ -272,14 +272,16 @@
     async function loadProfile() {
       try {
         // Fetch profile data
-        const profileRes = await fetch(`${API_BASE}/api/profile/${username}`);
+        // Send the login token (if any) so the server knows when you are looking at your own profile
+        const authHeaders = authToken ? { 'Authorization': `Bearer ${authToken}` } : {};
+        const profileRes = await fetch(`${API_BASE}/api/profile/${encodeURIComponent(username)}`, { headers: authHeaders });
         if (!profileRes.ok) {
           throw new Error('Profile not found');
         }
         const profileData = await profileRes.json();
         
         // Fetch match history
-        const matchesRes = await fetch(`${API_BASE}/api/profile/${username}/matches?limit=10`);
+        const matchesRes = await fetch(`${API_BASE}/api/profile/${encodeURIComponent(username)}/matches?limit=10`, { headers: authHeaders });
         const matchesData = await matchesRes.json();
         
         // Hide loading, show profile
@@ -303,7 +305,8 @@
       
       // Check if this is the current user's profile
       const currentUserData = authToken ? JSON.parse(localStorage.getItem('currentUser') || '{}') : {};
-      isMyProfile = currentUserData.username === user.username;
+      // The server decides who the owner is (it only sends private data to them)
+      isMyProfile = data.isOwner === true;
       
       // Show settings button for profile owner
       if (isMyProfile) {
@@ -360,23 +363,28 @@
         document.getElementById('bioContainer').classList.remove('hidden');
       }
       
-      // Core stats
-      document.getElementById('winRate').textContent = `${stats.win_rate}%`;
-      document.getElementById('winRecord').textContent = `${stats.games_won}W - ${stats.games_played - stats.games_won}L`;
-      document.getElementById('winRateBar').style.width = `${stats.win_rate}%`;
-      
-      document.getElementById('kdRatio').textContent = stats.kd_ratio;
-      document.getElementById('kdDetails').textContent = `${stats.players_eliminated} Kills / ${stats.influences_lost} Deaths`;
-      
-      // Featured stats
-      renderFeaturedStats(stats);
-      
       // Determine what's visible to visitors based on privacy settings
       const canSeeAll = isMyProfile;
       const canSeeIndividualStats = canSeeAll || privacy.showIndividualStats;
       const canSeeWinRate = canSeeAll || privacy.showWinRate;
       const canSeeAchievements = canSeeAll || privacy.showAchievements;
       const canSeeMatchHistory = canSeeAll || privacy.showMatchHistory;
+
+      // The server only sends the numbers you're allowed to see, so only fill in
+      // the sections that were sent.
+      if (canSeeWinRate) {
+        document.getElementById('winRate').textContent = `${stats.win_rate}%`;
+        document.getElementById('winRecord').textContent = `${stats.games_won}W - ${stats.games_played - stats.games_won}L`;
+        document.getElementById('winRateBar').style.width = `${stats.win_rate}%`;
+        
+        document.getElementById('kdRatio').textContent = stats.kd_ratio;
+        document.getElementById('kdDetails').textContent = `${stats.players_eliminated} Kills / ${stats.influences_lost} Deaths`;
+      }
+      
+      // Featured stats
+      if (canSeeIndividualStats) {
+        renderFeaturedStats(stats);
+      }
       
       if (isMyProfile) {
         document.getElementById('privateContent').classList.remove('hidden');
@@ -402,15 +410,15 @@
 
       // Achievements - always show section now
       // Store achievements globally for re-rendering on toggle
-      window.allAchievements = achievements;
-      renderAchievements(achievements);
+      window.allAchievements = achievements || [];
+      renderAchievements(window.allAchievements);
       
       // Set up toggle listeners
       document.getElementById('toggleUnlocked').addEventListener('change', () => renderAchievements(window.allAchievements));
       document.getElementById('toggleLaterTiers').addEventListener('change', () => renderAchievements(window.allAchievements));
       
       // Match history
-      renderMatchHistory(matches.matches);
+      renderMatchHistory((matches && matches.matches) || []);
     }
 
     function renderFeaturedStats(stats) {

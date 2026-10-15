@@ -5,6 +5,7 @@ const http = require('http');
 const socketIO = require('socket.io');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -63,17 +64,53 @@ function sanitizeDisplayName(name, maxLength, fallback) {
   return cleaned.slice(0, maxLength);
 }
 
-// Persistent player IDs are only ever meant to be the random alphanumeric
-// tokens the client generates for itself (see getOrCreatePlayerId() in
-// index.html/lobby.html). They get interpolated into inline onclick
-// handlers client-side (e.g. onclick="performAction('steal', '<id>')"), so
-// an attacker-supplied value containing a quote could break out of that
-// JavaScript string and run arbitrary code in other players' browsers.
-// Reject anything that doesn't look like one of our generated IDs and fall
-// back to the always-safe socket ID instead.
-const PERSISTENT_ID_PATTERN = /^[A-Za-z0-9_.-]{1,128}$/;
-function sanitizePersistentId(id, fallback) {
-  return (typeof id === 'string' && PERSISTENT_ID_PATTERN.test(id)) ? id : fallback;
+// --- Player identity: public IDs vs. reconnect tokens ------------------------
+// Every player has TWO different values, and they must never be mixed up:
+//
+//   player.id             PUBLIC. Random, generated here on the server, sent to
+//                         every client in the game state and used to refer to a
+//                         player ("target this id", "this id is the current
+//                         turn"). It is not a secret and proves nothing. It is
+//                         only ever letters/digits/underscore, so it is also
+//                         safe to drop into the inline onclick handlers in
+//                         index.html.
+//
+//   player.reconnectToken SECRET. Random, generated here on the server and
+//                         handed ONLY to the player's own socket (in the
+//                         createRoom/joinRoom/switchToPlayer/attemptReconnect
+//                         reply). It is never included in game state, room
+//                         previews or the lobby room list. Presenting it is
+//                         what lets a (guest) player take their seat back after
+//                         a disconnect. Logged-in players are matched by their
+//                         verified account instead (and may also use it).
+//
+// (Previously one client-chosen value did both jobs and was broadcast to
+// everyone, so anyone watching a room - or just the lobby - could take over a
+// player's seat and read their hidden cards.)
+function newPublicId() {
+  return 'p_' + crypto.randomBytes(8).toString('hex');
+}
+function newReconnectToken() {
+  return crypto.randomBytes(24).toString('hex');
+}
+function tokensMatch(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length === 0 || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b));
+}
+// Client-supplied tokens: must be a plain string of sane length before we even compare.
+function cleanTokenInput(value) {
+  return (typeof value === 'string' && value.length > 0 && value.length <= 128) ? value : null;
+}
+// Is `userData` (a lobby socket entry) the owner of a seat in `room`?
+// Logged-in users are matched by account. Guests must present the secret token,
+// and only count while their seat is actually disconnected (so "Rejoin" only
+// shows when there is something to rejoin).
+function ownsSeatInRoom(room, userData) {
+  return room.players.some(p => {
+    if (p.hasLeft) return false;
+    if (userData.userId && p.userId === userData.userId) return true;
+    return p.disconnected && tokensMatch(p.reconnectToken, userData.reconnectToken);
+  });
 }
 
 // Avatars are either a short emoji/text glyph or the filename of an image
@@ -99,6 +136,99 @@ function isValidAvatarValue(avatar) {
   // for even multi-codepoint emoji sequences).
   if (/[<>&"'`]/.test(avatar)) return false;
   return [...avatar].length <= 8;
+}
+
+// --- Socket input hardening -------------------------------------------------
+// Socket.IO does NOT catch errors thrown inside event handlers: a single
+// exception takes down the whole Node process (and every game running in
+// it). Clients also fully control what they send - the payload can be
+// missing, the ack callback can be missing, and any field can be any type.
+// Every handler is therefore registered through onSafe() (see the
+// io.on('connection') block), which guarantees:
+//   1. the payload is always a plain object and the callback always a function
+//   2. roomCode fields are always short alphanumeric strings (anything else
+//      becomes '' and simply resolves to "Room not found")
+//   3. an unexpected exception is logged and answered with an error reply
+//      instead of crashing the server
+// Individual handlers/game functions still validate the fields they use.
+const ROOM_CODE_PATTERN = /^[A-Za-z0-9]{1,12}$/;
+const ROOM_CODE_FIELDS = ['roomCode', 'currentRoomCode'];
+const CHAT_MODES = ['separate', 'unified', 'none'];
+const MAX_CHAT_LENGTH = 200;
+
+// --- Chat + game log limits (begin) ------------------------------------------
+// The game log is re-sent, in full, to every player and spectator on every
+// game-state update, so anything that can grow it without limit is a
+// bandwidth/memory amplifier. Chat is capped separately and more tightly so a
+// chat flood can never push real game history out of the log.
+const MAX_LOG_ENTRIES = 600;         // total entries kept per room
+const MAX_CHAT_LOG_ENTRIES = 150;    // of which at most this many may be chat
+const MAX_LOBBY_CHAT_HISTORY = 200;  // lobby chat replayed to every new connection
+
+// Returns clean chat text, or null if the message should be dropped. Must be a
+// string; control characters and text-direction overrides (which can scramble
+// how a line is displayed) are replaced with spaces; 1-200 characters.
+function cleanChatText(value) {
+  if (typeof value !== 'string') return null;
+  const cleaned = value.replace(/[\x00-\x1F\x7F\u202A-\u202E\u2066-\u2069]/g, ' ').trim();
+  if (!cleaned || cleaned.length > MAX_CHAT_LENGTH) return null;
+  return cleaned;
+}
+
+// Drops the oldest chat entries beyond the chat cap, then the oldest entries
+// of any kind beyond the total cap.
+function trimGameLog(log) {
+  let chatCount = 0;
+  for (const entry of log) {
+    if (entry.type === 'chat') chatCount++;
+  }
+  for (let i = 0; chatCount > MAX_CHAT_LOG_ENTRIES && i < log.length;) {
+    if (log[i].type === 'chat') {
+      log.splice(i, 1);
+      chatCount--;
+    } else {
+      i++;
+    }
+  }
+  if (log.length > MAX_LOG_ENTRIES) {
+    log.splice(0, log.length - MAX_LOG_ENTRIES);
+  }
+}
+
+// Every log entry gets an increasing id. Because old entries get trimmed off,
+// clients can't tell what's new by comparing array lengths - they compare ids.
+function appendLog(room, entry) {
+  entry.id = ++room.logSeq;
+  room.gameLog.push(entry);
+  trimGameLog(room.gameLog);
+}
+// --- Chat + game log limits (end) --------------------------------------------
+
+function isPlainObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function safeSocketHandler(eventName, handler) {
+  return (...args) => {
+    const last = args[args.length - 1];
+    const callback = typeof last === 'function' ? last : () => {};
+    const data = isPlainObject(args[0]) ? args[0] : {};
+
+    for (const field of ROOM_CODE_FIELDS) {
+      if (field in data && !(typeof data[field] === 'string' && ROOM_CODE_PATTERN.test(data[field]))) {
+        data[field] = '';
+      }
+    }
+
+    try {
+      handler(data, callback);
+    } catch (error) {
+      console.error(`Error in socket handler "${eventName}":`, error);
+      try {
+        callback({ success: false, error: 'Something went wrong. Please try again.' });
+      } catch (_) { /* callback already used or client gone - nothing more to do */ }
+    }
+  };
 }
 
 const app = express();
@@ -499,7 +629,8 @@ app.get('/api/user/settings', (req, res) => {
         showIndividualStats: privacy.showIndividualStats === true,
         showWinRate: privacy.showWinRate === true,
         showAchievements: privacy.showAchievements === true,
-        showMatchHistory: privacy.showMatchHistory === true
+        showMatchHistory: privacy.showMatchHistory === true,
+        showOnLeaderboards: privacy.showOnLeaderboards !== false
       }
     });
   } catch (error) {
@@ -520,7 +651,18 @@ app.post('/api/user/settings', (req, res) => {
     // Build update
     const user = db.prepare('SELECT deck_preference, sound_preference, privacy_settings, bio, email, profanity_filter, avatar FROM users WHERE id = ?').get(verification.user.id);
     const currentPrivacy = JSON.parse(user.privacy_settings || '{}');
-    const newPrivacy = { ...currentPrivacy, ...privacy };
+    // Only the known switches, and only real true/false values. (This used to spread
+    // whatever the client sent straight into the stored settings.)
+    const PRIVACY_KEYS = ['showIndividualStats', 'showWinRate', 'showAchievements', 'showMatchHistory', 'showOnLeaderboards'];
+    const newPrivacy = {};
+    PRIVACY_KEYS.forEach(key => {
+      if (typeof currentPrivacy[key] === 'boolean') newPrivacy[key] = currentPrivacy[key];
+    });
+    if (isPlainObject(privacy)) {
+      PRIVACY_KEYS.forEach(key => {
+        if (typeof privacy[key] === 'boolean') newPrivacy[key] = privacy[key];
+      });
+    }
     
     const validDecks = getAvailableDecks();
     const newDeck = validDecks.includes(deckPreference) ? deckPreference : user.deck_preference;
@@ -684,13 +826,39 @@ app.post('/api/reset-password', authLimiter, (req, res) => {
   }
 });
 
-// POST /api/moderation/reset-password - Reset user password (admin only)
+// --- Moderation: who is allowed to act on whom -------------------------------
+// Roles form a ladder: user < moderator (shown as "Admin" in the UI) < admin
+// (shown as "Super Admin"). Account-level actions - resetting a password,
+// promoting, demoting - are only allowed on someone strictly BELOW your own
+// rung. Without that, any moderator could reset the super admin's password and
+// log in as them, which makes every other protection here pointless.
+const ROLE_RANK = { user: 0, moderator: 1, admin: 2 };
+function roleRank(role) {
+  return Object.prototype.hasOwnProperty.call(ROLE_RANK, role) ? ROLE_RANK[role] : 0;
+}
+
+// User IDs arrive in JSON bodies, so they can be anything. Only a positive
+// whole number (or a string of digits) counts; everything else is null.
+function parseUserId(value) {
+  const id = typeof value === 'number'
+    ? value
+    : (typeof value === 'string' && /^\d{1,12}$/.test(value) ? Number(value) : NaN);
+  return Number.isSafeInteger(id) && id > 0 ? id : null;
+}
+
+// Free-text "reason" fields get stored and shown in the admin log.
+function cleanReason(value) {
+  return (typeof value === 'string' && value.trim()) ? value.trim().slice(0, 500) : null;
+}
+
+// POST /api/moderation/reset-password - Reset user password (staff, for accounts below their own role)
 app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
   try {
-    const { userId, newPassword } = req.body;
+    const userId = parseUserId(req.body.userId);
+    const { newPassword } = req.body;
     
-    if (!userId || !newPassword) {
-      return res.status(400).json({ error: 'User ID and new password are required' });
+    if (!userId || typeof newPassword !== 'string' || !newPassword) {
+      return res.status(400).json({ error: 'A valid user ID and new password are required' });
     }
     
     if (newPassword.length < 6) {
@@ -700,6 +868,17 @@ app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
     const targetUser = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
     if (!targetUser) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Your own password: use Settings (it checks your current one). And never
+    // anyone at or above your own role - a moderator resetting the super admin's
+    // password would simply be a takeover of that account.
+    if (targetUser.id === req.moderator.id) {
+      return res.status(403).json({ error: 'Use the Settings page to change your own password' });
+    }
+    if (roleRank(req.moderator.role) <= roleRank(targetUser.role)) {
+      console.warn(`Blocked: ${req.moderator.username} (${req.moderator.role}) tried to reset the password of ${targetUser.username} (${targetUser.role})`);
+      return res.status(403).json({ error: 'You can only reset passwords for accounts below your own role' });
     }
     
     // Hash new password and update. Bumping token_version invalidates any
@@ -746,7 +925,9 @@ function requireModerator(req, res, next) {
     return res.status(403).json({ error: 'Forbidden: Admin access required' });
   }
   
-  req.moderator = verification.user;
+  // Carry the role we just read from the database (never from the token), so
+  // endpoints below can apply the role hierarchy without a second lookup.
+  req.moderator = { ...verification.user, role: user.role };
   next();
 }
 
@@ -799,7 +980,8 @@ app.get('/api/moderation/users', requireModerator, (req, res) => {
 // POST /api/moderation/timeout - Timeout a user for 24 hours
 app.post('/api/moderation/timeout', requireModerator, (req, res) => {
   try {
-    const { userId, reason } = req.body;
+    const userId = parseUserId(req.body.userId);
+    const reason = cleanReason(req.body.reason);
     
     if (!userId) {
       return res.status(400).json({ error: 'User ID required' });
@@ -841,7 +1023,8 @@ app.post('/api/moderation/timeout', requireModerator, (req, res) => {
 // POST /api/moderation/ban - Permanently ban a user
 app.post('/api/moderation/ban', requireModerator, (req, res) => {
   try {
-    const { userId, reason } = req.body;
+    const userId = parseUserId(req.body.userId);
+    const reason = cleanReason(req.body.reason);
     
     if (!userId) {
       return res.status(400).json({ error: 'User ID required' });
@@ -881,10 +1064,15 @@ app.post('/api/moderation/ban', requireModerator, (req, res) => {
 // POST /api/moderation/unban - Lift ban or timeout
 app.post('/api/moderation/unban', requireModerator, (req, res) => {
   try {
-    const { userId, reason } = req.body;
+    const userId = parseUserId(req.body.userId);
+    const reason = cleanReason(req.body.reason);
     
     if (!userId) {
       return res.status(400).json({ error: 'User ID required' });
+    }
+    
+    if (!db.prepare('SELECT id FROM users WHERE id = ?').get(userId)) {
+      return res.status(404).json({ error: 'User not found' });
     }
     
     db.prepare('UPDATE users SET banned = 0, timeout_until = NULL WHERE id = ?').run(userId);
@@ -927,21 +1115,31 @@ app.get('/api/moderation/log', requireModerator, (req, res) => {
   }
 });
 
-// POST /api/moderation/promote - Promote user to admin (super admin only)
+// POST /api/moderation/promote - Promote a regular user to moderator (super admin only)
 app.post('/api/moderation/promote', requireModerator, (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1] || req.body.token;
-    const verification = auth.verifyToken(token);
-    const moderatorUser = db.prepare('SELECT role FROM users WHERE id = ?').get(verification.user.id);
-    
-    if (moderatorUser.role !== 'admin') {
+    if (req.moderator.role !== 'admin') {
       return res.status(403).json({ error: 'Only admins can promote users' });
     }
     
-    const { userId } = req.body;
-    
+    const userId = parseUserId(req.body.userId);
     if (!userId) {
       return res.status(400).json({ error: 'User ID required' });
+    }
+    
+    const targetUser = db.prepare('SELECT id, role, banned FROM users WHERE id = ?').get(userId);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Only regular users can be promoted. This used to run an unconditional
+    // "set role = moderator", so pointing it at a super admin quietly DEMOTED
+    // them, and it happily "promoted" accounts that didn't exist.
+    if (targetUser.role !== 'user') {
+      return res.status(400).json({ error: 'Only regular users can be promoted' });
+    }
+    if (targetUser.banned) {
+      return res.status(400).json({ error: 'A banned account cannot be promoted' });
     }
     
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run('moderator', userId);
@@ -950,7 +1148,7 @@ app.post('/api/moderation/promote', requireModerator, (req, res) => {
     db.prepare(`
       INSERT INTO moderation_actions (target_user_id, moderator_user_id, action_type, reason)
       VALUES (?, ?, ?, ?)
-    `).run(userId, verification.user.id, 'promote', req.body.reason || 'Promoted to admin');
+    `).run(userId, req.moderator.id, 'promote', cleanReason(req.body.reason) || 'Promoted to admin');
     
     db.saveDatabase();
     
@@ -961,26 +1159,28 @@ app.post('/api/moderation/promote', requireModerator, (req, res) => {
   }
 });
 
-// POST /api/moderation/demote - Demote admin to user (super admin only)
+// POST /api/moderation/demote - Demote a moderator to regular user (super admin only)
 app.post('/api/moderation/demote', requireModerator, (req, res) => {
   try {
-    const token = req.headers.authorization?.split(' ')[1] || req.body.token;
-    const verification = auth.verifyToken(token);
-    const moderatorUser = db.prepare('SELECT role FROM users WHERE id = ?').get(verification.user.id);
-    
-    if (moderatorUser.role !== 'admin') {
+    if (req.moderator.role !== 'admin') {
       return res.status(403).json({ error: 'Only admins can demote users' });
     }
     
-    const { userId } = req.body;
-    
+    const userId = parseUserId(req.body.userId);
     if (!userId) {
       return res.status(400).json({ error: 'User ID required' });
     }
     
-    const targetUser = db.prepare('SELECT role FROM users WHERE id = ?').get(userId);
-    if (targetUser && targetUser.role === 'admin') {
+    const targetUser = db.prepare('SELECT id, role FROM users WHERE id = ?').get(userId);
+    if (!targetUser) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    if (targetUser.role === 'admin') {
       return res.status(403).json({ error: 'Cannot demote super admins' });
+    }
+    // Used to succeed (and write a log entry) for any account at all.
+    if (targetUser.role !== 'moderator') {
+      return res.status(400).json({ error: 'That user is not an admin' });
     }
     
     db.prepare('UPDATE users SET role = ? WHERE id = ?').run('user', userId);
@@ -989,7 +1189,7 @@ app.post('/api/moderation/demote', requireModerator, (req, res) => {
     db.prepare(`
       INSERT INTO moderation_actions (target_user_id, moderator_user_id, action_type, reason)
       VALUES (?, ?, ?, ?)
-    `).run(userId, verification.user.id, 'demote', req.body.reason || 'Demoted to user');
+    `).run(userId, req.moderator.id, 'demote', cleanReason(req.body.reason) || 'Demoted to user');
     
     db.saveDatabase();
     
@@ -1267,6 +1467,8 @@ function createRoom(roomCode, options = {}) {
     currentPlayerIndex: 0,
     actionInProgress: null,
     gameLog: [],
+    logSeq: 0, // id of the most recent log entry (see appendLog)
+    rematchInvites: new Set(), // one-time passes for people coming over from the previous game (see playAgain)
     pendingResponses: new Set(),
     useInquisitor: options.useInquisitor || false,
     allowSpectators: options.allowSpectators !== false, // Default to true
@@ -1282,7 +1484,7 @@ function createRoom(roomCode, options = {}) {
 }
 
 function addLogToRoom(room, message, type = 'info', character = null) {
-  room.gameLog.push({
+  appendLog(room, {
     time: Date.now(),
     message,
     type, // 'info', 'action', 'challenge', 'block', 'success', 'fail'
@@ -1290,12 +1492,37 @@ function addLogToRoom(room, message, type = 'info', character = null) {
   });
 }
 
+// Anonymous mode hides who is who while the game is being played; everything is
+// revealed once it ends. "Hiding" has to mean more than showing a different name
+// on screen: everything that identifies the real person (account name, account
+// id, avatar, stats, guest/logged-in status) must stay out of what is sent to
+// clients, otherwise anyone looking at the network traffic can read it off.
+function isAnonymousPlay(room) {
+  return room.anonymousMode === true && room.state === 'playing';
+}
+const ANONYMOUS_AVATAR = '🎭';
+
 function getDisplayName(room, player) {
   // In anonymous mode during gameplay, use anonymous names
   if (room.anonymousMode && room.state === 'playing' && player.anonymousName) {
     return player.anonymousName;
   }
   return player.name;
+}
+
+// The host is the first player still in the room (the creator, or whoever is
+// next in line if they've left). Only the host can start the game.
+function getRoomHost(room) {
+  return room.players.find(p => !p.hasLeft) || null;
+}
+
+// Game actions only mean anything while a game is actually running. Without
+// this gate they could be used in the lobby (the first player in the list was
+// treated as "the current player" before any game existed) or after the game
+// had ended.
+const NOT_IN_PROGRESS = { success: false, error: 'The game is not in progress' };
+function gameIsRunning(room) {
+  return room.state === 'playing';
 }
 
 function getPlayerBySocketId(room, socketId) {
@@ -1407,26 +1634,35 @@ function getPublicGameState(room, socketId, isSpectator = false) {
     allowLargeGames: room.allowLargeGames,
     chatMode: room.chatMode,
     hasPassword: !!room.password, // Only expose if password exists, not the actual password
+    hostId: getRoomHost(room)?.id || null, // Public id of the player allowed to start the game
     ranked: room.ranked,
     anonymousMode: room.anonymousMode,
     deckSize: room.deck.length,
     isSpectator: isSpectator,
     players: room.players.map(p => {
-      const displayName = room.anonymousMode && room.state === 'playing' && p.anonymousName ? p.anonymousName : p.name;
+      const hideIdentity = isAnonymousPlay(room);
+      const displayName = hideIdentity && p.anonymousName ? p.anonymousName : p.name;
       return {
         id: p.id,
         name: displayName,
-        username: p.username || null,
-        isGuest: p.isGuest === true,
-        userId: p.userId || null,
-        avatar: p.avatar || '👤',
-        stats: p.stats || null,
+        username: hideIdentity ? null : (p.username || null),
+        isGuest: hideIdentity ? false : p.isGuest === true,
+        userId: hideIdentity ? null : (p.userId || null),
+        avatar: hideIdentity ? ANONYMOUS_AVATAR : (p.avatar || '👤'),
+        stats: hideIdentity ? null : publicPlayerStats(p),
         coins: p.coins,
         influenceCount: p.influences.length,
         disconnected: p.disconnected || false,
         hasLeft: p.hasLeft || false,
-        // Spectators can see all cards, players can only see their own cards
-        influences: (p.socketId === socketId && !isSpectator) || isSpectator ? p.influences : p.influences.map(inf => inf.revealed ? inf : { revealed: false }),
+        // Hidden cards: players only ever get their own. Spectators get everyone's
+        // in UNRANKED games only (that's what powers click-to-peek there). In RANKED
+        // games spectators are sent nothing but card backs - hiding them in the page
+        // wasn't enough, because the data was still in every message the browser
+        // received, readable in its developer tools or by a modified client (for
+        // example a player watching their own game from a second device).
+        influences: ((p.socketId === socketId && !isSpectator) || (isSpectator && !room.ranked))
+          ? p.influences
+          : p.influences.map(inf => inf.revealed ? inf : { revealed: false }),
         alive: p.alive,
         mustRevealInfluence: p.mustRevealInfluence || false,
         influencesToLose: p.influencesToLose || 0,
@@ -1487,6 +1723,17 @@ function startGame(room) {
     const usedNames = new Set();
     room.players.forEach(player => {
       player.anonymousName = generateAnonymousName(usedNames);
+    });
+  }
+
+  clearActionAndTimeout(room); // never carry a stale action/timer into a fresh game
+  room.pendingResponses = new Set();
+  // Everyone saw the lobby, where names AND public ids were visible. If the same
+  // ids carried into the game, anyone could match id -> real name (lobby) ->
+  // anonymous name (game). Give every player a fresh id as the anonymous game begins.
+  if (room.anonymousMode) {
+    room.players.forEach(player => {
+      player.id = newPublicId();
     });
   }
 
@@ -1569,8 +1816,19 @@ function startGame(room) {
 }
 
 function performAction(room, socketId, action, targetId) {
+  if (!gameIsRunning(room)) return NOT_IN_PROGRESS;
+
   const player = getPlayerBySocketId(room, socketId);
   if (!player) return { success: false, error: 'Player not found' };
+
+  // Only real, own action names (ACTIONS['constructor'] etc. are "truthy" on a
+  // plain object and would otherwise let a client burn its turn on a no-op).
+  if (typeof action !== 'string' || !Object.prototype.hasOwnProperty.call(ACTIONS, action)) {
+    return { success: false, error: 'Invalid action' };
+  }
+  if (targetId !== undefined && targetId !== null && typeof targetId !== 'string') {
+    return { success: false, error: 'Invalid target' };
+  }
 
   if (room.players[room.currentPlayerIndex].socketId !== socketId) {
     return { success: false, error: 'Not your turn' };
@@ -1618,15 +1876,38 @@ function performAction(room, socketId, action, targetId) {
     return { success: false, error: 'Must coup with 10+ coins' };
   }
 
-  const targetPlayer = targetId ? getPlayerById(room, targetId) : null;
-  if ((action === 'steal' || action === 'assassinate' || action === 'coup' || action === 'examine') && !targetPlayer) {
-    return { success: false, error: 'Target required' };
+  // Examine belongs to the Inquisitor expansion. Without this it worked in a
+  // normal Ambassador game too - a free look at an opponent's card for the
+  // price of a bluff nobody could ever prove (there is no Inquisitor in the deck).
+  if (action === 'examine' && !room.useInquisitor) {
+    return { success: false, error: 'Examine is only available in Inquisitor games' };
   }
 
-  // Filter blockers based on game mode (remove Ambassador if using Inquisitor)
+  // Only some actions take a target. For the rest, a target sent by the client is
+  // thrown away: a "targeted" Foreign Aid (aimed at yourself, or at a dead
+  // player) meant that only that one player was allowed to block it - i.e.
+  // nobody could.
+  const needsTarget = action === 'steal' || action === 'assassinate' || action === 'coup' || action === 'examine';
+  if (!needsTarget) targetId = null;
+
+  const targetPlayer = targetId ? getPlayerById(room, targetId) : null;
+  if (needsTarget) {
+    if (!targetPlayer) {
+      return { success: false, error: 'Target required' };
+    }
+    if (targetPlayer.id === player.id) {
+      return { success: false, error: 'You cannot target yourself' };
+    }
+    if (!targetPlayer.alive || targetPlayer.hasLeft) {
+      return { success: false, error: 'That player has been eliminated' };
+    }
+  }
+
+  // Which cards may block this action in this game. Each variant has only one
+  // of Ambassador/Inquisitor in the deck, so the other can never be a real block.
   let blockers = actionData.blocker;
-  if (actionData.blockable && room.useInquisitor && Array.isArray(blockers)) {
-    blockers = blockers.filter(card => card !== 'Ambassador');
+  if (actionData.blockable && Array.isArray(blockers)) {
+    blockers = blockers.filter(card => room.useInquisitor ? card !== 'Ambassador' : card !== 'Inquisitor');
   }
 
   // Clear any existing timer from previous action
@@ -1649,9 +1930,9 @@ function performAction(room, socketId, action, targetId) {
   room.actionInProgress = {
     action,
     playerId: player.id,
-    playerName: player.name,
+    playerName: getDisplayName(room, player),
     targetId,
-    targetName: targetPlayer?.name,
+    targetName: targetPlayer ? getDisplayName(room, targetPlayer) : undefined,
     canChallenge: actionData.challengeable,
     canBlock: actionData.blockable,
     blocker: blockers,
@@ -1742,6 +2023,15 @@ function performAction(room, socketId, action, targetId) {
 }
 
 function respondToAction(room, socketId, response) {
+  if (!gameIsRunning(room)) return NOT_IN_PROGRESS;
+
+  if (!isPlainObject(response) || !['pass', 'challenge', 'block'].includes(response.type)) {
+    return { success: false, error: 'Invalid response' };
+  }
+  if (response.type === 'block' && (typeof response.blockCard !== 'string' || response.blockCard.length > 20)) {
+    return { success: false, error: 'Invalid response' };
+  }
+
   const player = getPlayerBySocketId(room, socketId);
   if (!player || !room.actionInProgress) {
     return { success: false, error: 'Invalid response' };
@@ -1767,10 +2057,43 @@ function respondToAction(room, socketId, response) {
     return { success: false, error: 'Cannot respond to your own block' };
   }
 
-  // Check if trying to block a targeted action when not the target
-  if (response.type === 'block' && room.actionInProgress.blockableByTarget) {
-    if (player.id !== room.actionInProgress.targetCanBlock) {
-      return { success: false, error: 'Only the target can block this action' };
+  const current = room.actionInProgress;
+
+  // A challenge is already being settled (someone is revealing a card). Anything
+  // that arrives now - a second challenge, or an "Allow" that was already on its
+  // way from another player - must not touch the action: an "Allow" used to be
+  // able to resolve the action underneath the challenge, so the actor got paid
+  // before the challenge was decided. Quietly ignored, not an error, because this
+  // happens to honest players who click at the same moment.
+  if (current.pendingChallengeResolution || current.pendingBlockChallengeResolution) {
+    return { success: true, ignored: true };
+  }
+
+  if (current.phase === 'waiting') {
+    if (response.type === 'challenge' && !current.canChallenge) {
+      return { success: false, error: 'This action cannot be challenged' };
+    }
+    if (response.type === 'block') {
+      if (!current.canBlock) {
+        return { success: false, error: 'This action cannot be blocked' };
+      }
+      // Check if trying to block a targeted action when not the target
+      if (current.blockableByTarget && player.id !== current.targetCanBlock) {
+        return { success: false, error: 'Only the target can block this action' };
+      }
+      // The card must be one that really can block this action in this game.
+      // Before, any string was accepted, so a player could "block" by claiming
+      // any card they actually held - and win the challenge honestly.
+      if (!Array.isArray(current.blocker) || !current.blocker.includes(response.blockCard)) {
+        return { success: false, error: 'That card cannot block this action' };
+      }
+    }
+  } else if (current.phase === 'block') {
+    // Once a block is up, the only thing left to do through this call is accept
+    // it. Challenging a block has its own event (challengeBlock); blocking a block
+    // isn't a thing.
+    if (response.type !== 'pass') {
+      return { success: false, error: 'A block is already in place' };
     }
   }
 
@@ -1846,7 +2169,7 @@ function respondToAction(room, socketId, response) {
             room.actionInProgress.pausedForDisconnection = true;
             const disconnectedNames = room.players
               .filter(p => p.alive && p.id !== room.actionInProgress.blockerId && p.disconnected)
-              .map(p => p.name)
+              .map(p => getDisplayName(room, p))
               .join(', ');
             addLogToRoom(room, `Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
             
@@ -1960,6 +2283,7 @@ function handleBlock(room, blockerId, blockCard) {
   
   // Now the block can be challenged by ANY player
   room.actionInProgress.phase = 'block';
+  room.actionInProgress.responses = {}; // fresh slate: players who already said "Allow" to the action itself must still be able to answer the block
   room.actionInProgress.blockerId = blockerId;
   room.actionInProgress.blockCard = blockCard;
   
@@ -2014,7 +2338,7 @@ function handleBlock(room, blockerId, blockCard) {
     room.actionInProgress.pausedForDisconnection = true;
     const disconnectedNames = room.players
       .filter(p => p.alive && p.id !== blockerId && p.disconnected)
-      .map(p => p.name)
+      .map(p => getDisplayName(room, p))
       .join(', ');
     addLogToRoom(room, `Waiting for ${disconnectedNames} to reconnect to respond to block...`, 'info');
   } else {
@@ -2080,6 +2404,14 @@ function handleBlock(room, blockerId, blockCard) {
 function challengeBlock(room, socketId) {
   const action = room.actionInProgress;
   const challenger = getPlayerBySocketId(room, socketId);
+
+  // Spectators, eliminated players, and "nothing to challenge right now" all
+  // used to fall through to a null dereference here.
+  if (!gameIsRunning(room)) return NOT_IN_PROGRESS;
+  if (!action || action.phase !== 'block' || !challenger || !challenger.alive) {
+    return { success: false, error: 'Invalid block challenge' };
+  }
+
   const blocker = getPlayerById(room, action.blockerId);
   
   if (!blocker || !action.blockCard) {
@@ -2089,6 +2421,17 @@ function challengeBlock(room, socketId) {
   if (challenger.id === action.blockerId) {
     return { success: false, error: 'Cannot challenge your own block' };
   }
+
+  // Only players who are actually being asked (alive, connected, not the blocker)
+  // may challenge, and only once - a second challenge arriving while the first is
+  // being settled used to overwrite it.
+  if (action.pendingBlockChallengeResolution || action.pendingChallengeResolution) {
+    return { success: true, ignored: true }; // simultaneous clicks - not an error for the player
+  }
+  if (!room.pendingResponses.has(challenger.id)) {
+    return { success: false, error: 'Not eligible to respond' };
+  }
+  room.pendingResponses.delete(challenger.id);
   
   // Clear any existing timer since challenge resolves the block
   if (action.responseTimeout) {
@@ -2381,6 +2724,7 @@ function loseInfluence(room, playerId, count = 1, causedByPlayerId = null, isLos
 }
 
 function completeExchange(room, playerId, keepIndices) {
+  if (!gameIsRunning(room)) return NOT_IN_PROGRESS;
   const player = getPlayerById(room, playerId);
   if (!player || !player.mustChooseExchange) {
     return { success: false, error: 'Not in exchange mode' };
@@ -2401,6 +2745,13 @@ function completeExchange(room, playerId, keepIndices) {
 
   if (!Array.isArray(keepIndices) || keepIndices.length !== cardsToKeep) {
     return { success: false, error: `Must choose exactly ${cardsToKeep} cards to keep` };
+  }
+
+  // Indices must be whole numbers and can't repeat - otherwise [2, 2] would
+  // keep the same drawn card twice (duplicating it), and something like 0.5
+  // would put an undefined "card" into the player's hand.
+  if (!keepIndices.every(idx => Number.isInteger(idx)) || new Set(keepIndices).size !== keepIndices.length) {
+    return { success: false, error: 'Invalid card indices' };
   }
 
   // Validate indices
@@ -2442,12 +2793,13 @@ function completeExchange(room, playerId, keepIndices) {
 }
 
 function showCardToExaminer(room, playerId, cardIndex) {
+  if (!gameIsRunning(room)) return NOT_IN_PROGRESS;
   const player = getPlayerById(room, playerId);
   if (!player || !player.mustShowCardToExaminer) {
     return { success: false, error: 'Not required to show card' };
   }
 
-  if (cardIndex < 0 || cardIndex >= player.influences.length) {
+  if (!Number.isInteger(cardIndex) || cardIndex < 0 || cardIndex >= player.influences.length) {
     return { success: false, error: 'Invalid card index' };
   }
 
@@ -2458,6 +2810,9 @@ function showCardToExaminer(room, playerId, cardIndex) {
 
   // Store the shown card on the examiner
   const examiner = getPlayerById(room, player.examinedBy);
+  if (!examiner || !examiner.mustChooseExamine || examiner.examineTargetId !== player.id) {
+    return { success: false, error: 'Nobody is examining you' };
+  }
   if (examiner) {
     examiner.examinedCard = influence.card;
     examiner.examinedCardIndex = cardIndex;
@@ -2492,9 +2847,17 @@ function showCardToExaminer(room, playerId, cardIndex) {
 }
 
 function completeExamine(room, playerId, forceExchange) {
+  if (!gameIsRunning(room)) return NOT_IN_PROGRESS;
   const player = getPlayerById(room, playerId);
   if (!player || !player.mustChooseExamine) {
     return { success: false, error: 'Not in examine mode' };
+  }
+
+  // The target has to have shown a card first. Without this the examiner could
+  // "finish" at once: the turn then never advanced (the examiner got another
+  // action), and when the card was shown a moment later the examiner saw it for free.
+  if (!player.examinedCard) {
+    return { success: false, error: 'Wait for the player to show you a card' };
   }
 
   const target = getPlayerById(room, player.examineTargetId);
@@ -2545,25 +2908,29 @@ function completeExamine(room, playerId, forceExchange) {
 }
 
 function revealInfluence(room, playerId, cardIndex) {
+  if (!gameIsRunning(room)) return NOT_IN_PROGRESS;
   const player = getPlayerById(room, playerId);
   
   if (!player || !player.mustRevealInfluence) {
     return { success: false, error: 'Not required to reveal influence' };
   }
 
-  // Clear reveal timeout since player is revealing manually
-  if (player.revealTimeout) {
-    clearTimeout(player.revealTimeout);
-    player.revealTimeout = null;
-  }
-
-  if (cardIndex < 0 || cardIndex >= player.influences.length) {
+  // Validate first. This used to clear the auto-reveal timer *before*
+  // checking the index, so a player could send a bad index, cancel their own
+  // timer, and stall the whole game forever.
+  if (!Number.isInteger(cardIndex) || cardIndex < 0 || cardIndex >= player.influences.length) {
     return { success: false, error: 'Invalid card index' };
   }
 
   const influence = player.influences[cardIndex];
   if (influence.revealed) {
     return { success: false, error: 'Card already revealed' };
+  }
+
+  // Clear reveal timeout since player is revealing manually
+  if (player.revealTimeout) {
+    clearTimeout(player.revealTimeout);
+    player.revealTimeout = null;
   }
 
   influence.revealed = true;
@@ -3305,7 +3672,7 @@ function forfeitPlayerFromGame(room, playerIndex, logMessage) {
   // fire later and re-run this same forfeit a second time (which would
   // double-count their elimination, and, if this ends the game, double-
   // write final stats/game history to the database).
-  const timerKey = `${room.code}-${player.persistentId}`;
+  const timerKey = `${room.code}-${player.id}`;
   if (disconnectionTimers.has(timerKey)) {
     clearTimeout(disconnectionTimers.get(timerKey));
     disconnectionTimers.delete(timerKey);
@@ -3345,6 +3712,30 @@ function forfeitPlayerFromGame(room, playerIndex, logMessage) {
   player.mustShowCardToExaminer = false;
   player.influencesToLose = 0;
 
+  // If this player was part of an examine, release the other half. The examiner
+  // can now only finish after being shown a card, so an examine whose target
+  // leaves (or whose examiner leaves while the target is choosing) would
+  // otherwise freeze the game for everyone.
+  let releasedExaminer = null;
+  room.players.forEach(other => {
+    if (other.id === player.id) return;
+    if (other.mustChooseExamine && other.examineTargetId === player.id) {
+      other.mustChooseExamine = false;
+      other.examineTargetId = null;
+      other.examinedCard = null;
+      other.examinedCardIndex = null;
+      if (other.examineTimeout) { clearTimeout(other.examineTimeout); other.examineTimeout = null; }
+      releasedExaminer = other;
+    }
+    if (other.mustShowCardToExaminer && other.examinedBy === player.id) {
+      other.mustShowCardToExaminer = false;
+      other.examinedBy = null;
+      if (other.showCardTimeout) { clearTimeout(other.showCardTimeout); other.showCardTimeout = null; }
+    }
+  });
+  if (player.examineTimeout) { clearTimeout(player.examineTimeout); player.examineTimeout = null; }
+  if (player.showCardTimeout) { clearTimeout(player.showCardTimeout); player.showCardTimeout = null; }
+
   addLogToRoom(room, logMessage, 'info');
   if (revealedCards.length > 0) {
     addLogToRoom(room, `${getDisplayName(room, player)}'s cards are revealed: ${revealedCards.join(' and ')}`, 'info');
@@ -3352,6 +3743,12 @@ function forfeitPlayerFromGame(room, playerIndex, logMessage) {
 
   // Check win condition
   checkWinCondition(room);
+
+  // The examiner's action can't finish now that the target is gone - move the game on.
+  if (releasedExaminer && room.state === 'playing' && room.currentPlayerIndex !== playerIndex) {
+    addLogToRoom(room, `${getDisplayName(room, releasedExaminer)}'s examine ends - the player left.`, 'info');
+    nextTurn(room);
+  }
 
   // If it was their turn, advance to next player
   if (room.currentPlayerIndex === playerIndex) {
@@ -3434,7 +3831,7 @@ function nextTurn(room) {
   addLogToRoom(room, `--- ${getDisplayName(room, room.players[next])}'s turn ---`, 'info');
 }
 
-function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedUser = null) {
+function switchToPlayer(room, socketId, name, authenticatedUser = null) {
   const spectator = getSpectatorBySocketId(room, socketId);
   if (!spectator) {
     return { success: false, error: 'Spectator not found' };
@@ -3458,13 +3855,12 @@ function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedU
     stats = authenticatedUser.stats;
   }
 
-  const safePersistentId = sanitizePersistentId(persistentPlayerId, socketId);
   const safeName = sanitizeDisplayName(name, 40, spectator.name);
 
   // Add to players
   const player = {
-    id: safePersistentId,
-    persistentId: safePersistentId,
+    id: newPublicId(),
+    reconnectToken: newReconnectToken(),
     socketId: socketId,
     name: authenticatedUser ? authenticatedUser.username : safeName,
     userId: authenticatedUser ? authenticatedUser.id : null,
@@ -3481,7 +3877,7 @@ function switchToPlayer(room, socketId, name, persistentPlayerId, authenticatedU
 
   room.players.push(player);
 
-  return { success: true };
+  return { success: true, reconnectToken: player.reconnectToken };
 }
 
 function switchToSpectator(room, socketId) {
@@ -3503,7 +3899,7 @@ function switchToSpectator(room, socketId) {
 
   // Add to spectators
   const spectator = {
-    id: socketId,
+    id: newPublicId(),
     socketId: socketId,
     name: player.name,
     userId: player.userId || null,
@@ -3518,6 +3914,61 @@ function switchToSpectator(room, socketId) {
 // ==========================================
 // PROFILE & LEADERBOARD API ROUTES
 // ==========================================
+
+// --- Profile privacy ---------------------------------------------------------
+// The four privacy switches in Settings used to be honoured only by the profile
+// PAGE: the API still returned everything, so anyone could read a "private"
+// profile straight from the API. They are now enforced here. Always public:
+// username, join date, avatar, bio, games played, Elo and rank. The owner of a
+// profile always sees all of their own data.
+function getPrivacySettings(user) {
+  try {
+    const p = JSON.parse(user.privacy_settings || '{}');
+    return {
+      showIndividualStats: p.showIndividualStats === true,
+      showWinRate: p.showWinRate === true,
+      showAchievements: p.showAchievements === true,
+      showMatchHistory: p.showMatchHistory === true,
+      // The one switch that defaults to ON: players appear on the leaderboards
+      // unless they opted out (accounts that never touched it count as "on").
+      showOnLeaderboards: p.showOnLeaderboards !== false
+    };
+  } catch {
+    return { showIndividualStats: false, showWinRate: false, showAchievements: false, showMatchHistory: false, showOnLeaderboards: true };
+  }
+}
+
+// SQL: "this user has not opted out of the leaderboards". Used wherever players are
+// listed or ranked. Missing/unreadable settings count as "on".
+const LEADERBOARD_VISIBLE_SQL = "(u.privacy_settings IS NULL OR NOT json_valid(u.privacy_settings) OR COALESCE(json_extract(u.privacy_settings, '$.showOnLeaderboards'), 1) != 0)";
+const LEADERBOARD_VISIBLE_IDS_SQL = `(SELECT u.id FROM users u WHERE ${LEADERBOARD_VISIBLE_SQL})`;
+
+// Who is asking? The logged-in user's id if they sent a valid token, otherwise null.
+function getViewerId(req) {
+  const header = req.headers.authorization;
+  const token = (typeof header === 'string' && header.startsWith('Bearer ')) ? header.slice(7) : null;
+  if (!token) return null;
+  const verification = auth.verifyToken(token);
+  return verification.success ? verification.user.id : null;
+}
+
+// Usernames win over numeric ids: a user can be called "012", which is also a
+// valid number - that used to open some other account's profile instead.
+function findUserByIdentifier(identifier) {
+  let user = db.prepare('SELECT * FROM users WHERE username = ?').get(identifier);
+  if (!user && /^\d{1,12}$/.test(identifier)) {
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(parseInt(identifier, 10));
+  }
+  return user;
+}
+
+// Stats other people in a game/lobby may see about a player: only what is
+// always public. (The whole stats row used to be sent to everyone in the room,
+// and to anyone who previewed the room, whatever the player's privacy settings.)
+function publicPlayerStats(player) {
+  if (!player.stats) return null;
+  return { elo_rating: player.stats.elo_rating, games_played: player.stats.games_played };
+}
 
 // Helper: Calculate playstyle archetype
 function calculatePlaystyle(stats) {
@@ -4622,15 +5073,7 @@ app.get('/api/profile/:identifier', (req, res) => {
   const { identifier } = req.params;
   
   try {
-    // Try to find by username first, then by userId
-    let user;
-    if (isNaN(identifier)) {
-      // It's a username
-      user = db.prepare('SELECT * FROM users WHERE username = ?').get(identifier);
-    } else {
-      // It's a userId
-      user = db.prepare('SELECT * FROM users WHERE id = ?').get(parseInt(identifier));
-    }
+    const user = findUserByIdentifier(identifier);
     
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
@@ -4654,14 +5097,15 @@ app.get('/api/profile/:identifier', (req, res) => {
       : 0;
     
     // Get rank
+    // (Only players who are listed on the leaderboards count - see LEADERBOARD_VISIBLE_SQL)
     const rankData = db.prepare(`
       SELECT COUNT(*) + 1 as rank 
       FROM user_stats 
-      WHERE elo_rating > ? AND games_played >= 5
+      WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL} AND elo_rating > ? AND games_played >= 5
     `).get(stats.elo_rating);
     
     // Get total ranked players
-    const totalPlayers = db.prepare('SELECT COUNT(*) as count FROM user_stats WHERE games_played >= 5').get();
+    const totalPlayers = db.prepare(`SELECT COUNT(*) as count FROM user_stats WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL} AND games_played >= 5`).get();
     
     // Calculate playstyle
     const playstyle = calculatePlaystyle(stats);
@@ -4696,7 +5140,36 @@ app.get('/api/profile/:identifier', (req, res) => {
       console.error('Achievement unlock tracking error (table may need migration):', e.message);
     }
     
+    // What is this viewer allowed to see?
+    const isOwner = getViewerId(req) === user.id;
+    const privacy = getPrivacySettings(user);
+
+    const fullStats = {
+      ...stats,
+      win_rate: parseFloat(winRate),
+      kd_ratio: parseFloat(kdRatio),
+      challenge_accuracy: parseFloat(challengeAccuracy),
+      bluff_success_rate: parseFloat(bluffSuccessRate)
+    };
+    const WIN_RATE_FIELDS = ['games_won', 'players_eliminated', 'influences_lost', 'win_rate', 'kd_ratio'];
+    let visibleStats;
+    if (isOwner) {
+      visibleStats = fullStats;
+    } else {
+      visibleStats = { games_played: stats.games_played, elo_rating: stats.elo_rating };
+      if (privacy.showWinRate) {
+        WIN_RATE_FIELDS.forEach(field => { visibleStats[field] = fullStats[field]; });
+      }
+      if (privacy.showIndividualStats) {
+        Object.keys(fullStats).forEach(field => {
+          if (field === 'user_id' || WIN_RATE_FIELDS.includes(field)) return; // win/loss data follows its own switch
+          visibleStats[field] = fullStats[field];
+        });
+      }
+    }
+    
     res.json({
+      isOwner,
       user: {
         id: user.id,
         username: user.username,
@@ -4704,31 +5177,20 @@ app.get('/api/profile/:identifier', (req, res) => {
         bio: user.bio || '',
         avatar: user.avatar || '👤'
       },
-      stats: {
-        ...stats,
-        win_rate: parseFloat(winRate),
-        kd_ratio: parseFloat(kdRatio),
-        challenge_accuracy: parseFloat(challengeAccuracy),
-        bluff_success_rate: parseFloat(bluffSuccessRate)
-      },
-      rank: {
+      stats: visibleStats,
+      // A player who opted out of the leaderboards doesn't get a published rank either
+      rank: !privacy.showOnLeaderboards ? {
+        current: null,
+        total: totalPlayers.count,
+        percentile: null
+      } : {
         current: rankData.rank,
         total: totalPlayers.count,
         percentile: totalPlayers.count > 0 ? ((1 - (rankData.rank / totalPlayers.count)) * 100).toFixed(1) : 0
       },
       playstyle,
-      achievements,
-      privacy: (() => {
-        try {
-          const p = JSON.parse(user.privacy_settings || '{}');
-          return {
-            showIndividualStats: p.showIndividualStats === true,
-            showWinRate: p.showWinRate === true,
-            showAchievements: p.showAchievements === true,
-            showMatchHistory: p.showMatchHistory === true
-          };
-        } catch { return {}; }
-      })()
+      achievements: (isOwner || privacy.showAchievements) ? achievements : [],
+      privacy
     });
     
   } catch (error) {
@@ -4740,34 +5202,35 @@ app.get('/api/profile/:identifier', (req, res) => {
 // GET /api/profile/:identifier/matches - Get match history
 app.get('/api/profile/:identifier/matches', (req, res) => {
   const { identifier } = req.params;
-  const limit = parseInt(req.query.limit) || 20;
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 20, 1), 50);
   
   try {
-    // Find user
-    let user;
-    if (isNaN(identifier)) {
-      user = db.prepare('SELECT * FROM users WHERE username = ?').get(identifier);
-    } else {
-      user = db.prepare('SELECT * FROM users WHERE id = ?').get(parseInt(identifier));
-    }
+    const user = findUserByIdentifier(identifier);
     
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
+
+    // Match history is private unless its owner switched it on (or it's their own)
+    const isOwner = getViewerId(req) === user.id;
+    if (!isOwner && !getPrivacySettings(user).showMatchHistory) {
+      return res.json({ matches: [], private: true });
+    }
     
-    // Get match history
-    const matches = db.prepare(`
+    // Get match history. The comma matters: without it, user 1 also matched
+    // games belonging to users 10-19 ("userId":1 is a prefix of "userId":10).
+    const rows = db.prepare(`
       SELECT * FROM game_history 
       WHERE player_data LIKE ? 
       ORDER BY ended_at DESC 
       LIMIT ?
-    `).all(`%"userId":${user.id}%`, limit);
+    `).all(`%"userId":${user.id},%`, limit);
     
     // Parse and format matches
-    const formattedMatches = matches.map(match => {
+    const formattedMatches = rows.map(match => {
       const playerData = JSON.parse(match.player_data);
       const myData = playerData.find(p => p.userId === user.id);
-      const winner = playerData.find(p => p.userId === match.winner_id);
+      if (!myData) return null; // belt and braces: never show a game this user wasn't in
       
       // Determine placement
       const sortedPlayers = playerData.sort((a, b) => {
@@ -4784,20 +5247,21 @@ app.get('/api/profile/:identifier/matches', (req, res) => {
         endedAt: match.ended_at,
         placement,
         totalPlayers: playerData.length,
-        isWinner: match.winner_id === user.id,
+        // (the column is winner_user_id - this used to read a column that doesn't exist, so nobody was ever the winner)
+        isWinner: match.winner_user_id === user.id,
         finalCoins: myData?.finalCoins || 0,
         influencesRemaining: myData?.influencesRemaining || 0,
         eloChange: myData?.eloChange || null,
         players: playerData.map(p => ({
           username: p.username || p.name,
           isMe: p.userId === user.id,
-          isWinner: p.userId === match.winner_id,
+          isWinner: p.userId != null && p.userId === match.winner_user_id,
           finalCoins: p.finalCoins,
           influencesRemaining: p.influencesRemaining
         })),
         stats: myData?.gameStats || {}
       };
-    });
+    }).filter(Boolean);
     
     res.json({ matches: formattedMatches });
     
@@ -4823,7 +5287,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.elo_rating DESC, s.games_won DESC
           LIMIT ?
@@ -4835,7 +5299,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
           SELECT u.id, u.username, s.*,
                  (CAST(s.games_won AS FLOAT) / s.games_played * 100) as win_rate
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY win_rate DESC, s.games_won DESC
           LIMIT ?
@@ -4847,7 +5311,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
           SELECT u.id, u.username, s.*,
                  (CAST(s.players_eliminated AS FLOAT) / NULLIF(s.influences_lost, 0)) as kd_ratio
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ? AND s.influences_lost > 0
           ORDER BY kd_ratio DESC, s.players_eliminated DESC
           LIMIT ?
@@ -4858,7 +5322,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.games_won DESC, s.elo_rating DESC
           LIMIT ?
@@ -4869,7 +5333,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           ORDER BY s.games_played DESC, s.elo_rating DESC
           LIMIT ?
         `;
@@ -4879,7 +5343,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.bluffs_succeeded DESC, s.elo_rating DESC
           LIMIT ?
@@ -4890,7 +5354,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.tax_succeeded DESC, s.elo_rating DESC
           LIMIT ?
@@ -4901,7 +5365,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.assassinations_succeeded DESC, s.elo_rating DESC
           LIMIT ?
@@ -4912,7 +5376,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.players_eliminated DESC, s.elo_rating DESC
           LIMIT ?
@@ -4923,7 +5387,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.coins_earned DESC, s.elo_rating DESC
           LIMIT ?
@@ -4934,7 +5398,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.steals_succeeded DESC, s.elo_rating DESC
           LIMIT ?
@@ -4945,7 +5409,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.contessa_succeeded DESC, s.elo_rating DESC
           LIMIT ?
@@ -4956,7 +5420,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.influence_examined DESC, s.elo_rating DESC
           LIMIT ?
@@ -4967,7 +5431,7 @@ app.get('/api/leaderboards/:type', (req, res) => {
         query = `
           SELECT u.id, u.username, s.* 
           FROM user_stats s
-          JOIN users u ON s.user_id = u.id
+          JOIN users u ON s.user_id = u.id AND ${LEADERBOARD_VISIBLE_SQL}
           WHERE s.games_played >= ?
           ORDER BY s.influence_exchanged DESC, s.elo_rating DESC
           LIMIT ?
@@ -5044,6 +5508,11 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
     if (!userStats) {
       return res.status(404).json({ error: 'Stats not found' });
     }
+
+    // Ranks are among the players who are actually listed. Someone who opted out
+    // of the leaderboards has no rank to show.
+    const meRow = db.prepare('SELECT privacy_settings FROM users WHERE id = ?').get(decoded.id);
+    const hiddenFromBoards = meRow ? !getPrivacySettings(meRow).showOnLeaderboards : false;
     
     // Calculate rank based on type
     let rankQuery;
@@ -5054,7 +5523,7 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
         rankQuery = `
           SELECT COUNT(*) + 1 as rank 
           FROM user_stats 
-          WHERE elo_rating > ? AND games_played >= ?
+          WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL} AND elo_rating > ? AND games_played >= ?
         `;
         userValue = userStats.elo_rating;
         break;
@@ -5064,7 +5533,7 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
         rankQuery = `
           SELECT COUNT(*) + 1 as rank 
           FROM user_stats 
-          WHERE (CAST(games_won AS FLOAT) / games_played) > ? AND games_played >= ?
+          WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL} AND (CAST(games_won AS FLOAT) / games_played) > ? AND games_played >= ?
         `;
         userValue = userWinRate;
         break;
@@ -5074,7 +5543,7 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
         rankQuery = `
           SELECT COUNT(*) + 1 as rank 
           FROM user_stats 
-          WHERE (CAST(players_eliminated AS FLOAT) / NULLIF(influences_lost, 0)) > ? AND games_played >= ?
+          WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL} AND (CAST(players_eliminated AS FLOAT) / NULLIF(influences_lost, 0)) > ? AND games_played >= ?
         `;
         userValue = userKD;
         break;
@@ -5083,7 +5552,7 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
         rankQuery = `
           SELECT COUNT(*) + 1 as rank 
           FROM user_stats 
-          WHERE games_won > ? AND games_played >= ?
+          WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL} AND games_won > ? AND games_played >= ?
         `;
         userValue = userStats.games_won;
         break;
@@ -5092,7 +5561,7 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
         rankQuery = `
           SELECT COUNT(*) + 1 as rank 
           FROM user_stats 
-          WHERE games_played > ?
+          WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL} AND games_played > ?
         `;
         userValue = userStats.games_played;
         break;
@@ -5107,11 +5576,12 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
       : db.prepare(rankQuery).get(userValue, minGames);
     
     const totalPlayers = type === 'games'
-      ? db.prepare('SELECT COUNT(*) as count FROM user_stats').get()
-      : db.prepare('SELECT COUNT(*) as count FROM user_stats WHERE games_played >= ?').get(minGames);
+      ? db.prepare(`SELECT COUNT(*) as count FROM user_stats WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL}`).get()
+      : db.prepare(`SELECT COUNT(*) as count FROM user_stats WHERE user_id IN ${LEADERBOARD_VISIBLE_IDS_SQL} AND games_played >= ?`).get(minGames);
     
     res.json({
-      rank: rankData.rank,
+      rank: hiddenFromBoards ? null : rankData.rank,
+      hidden: hiddenFromBoards,
       totalPlayers: totalPlayers.count,
       value: userValue
     });
@@ -5267,47 +5737,40 @@ const pendingLobbyRemovals = new Map(); // username -> timeout
 const LOBBY_REMOVAL_DELAY = 3000; // 3 seconds grace period for page navigation
 
 function broadcastRoomList() {
-  const roomList = Array.from(rooms.entries())
+  // Everything here is public except `isMine`, which is worked out separately
+  // for each recipient below. (This used to broadcast every player's user ID
+  // and every disconnected guest's reconnect credential to the whole lobby so
+  // the client could work out "is this my game?" for itself.)
+  const entries = Array.from(rooms.entries())
     .map(([code, room]) => {
       // Count only players who haven't left
       const activePlayers = room.players.filter(p => !p.hasLeft);
       const activeSpectators = room.spectators.filter(s => !s.hasLeft);
       
-      // Get user IDs of players (for detecting if current user can rejoin)
-      const playerUserIds = activePlayers
-        .filter(p => p.userId)
-        .map(p => p.userId);
-      
-      // Get persistent IDs of disconnected players (for guest reconnection detection)
-      const disconnectedPersistentIds = activePlayers
-        .filter(p => p.disconnected && p.persistentId)
-        .map(p => p.persistentId);
-      
       return {
-        code: code,
-        name: room.name,
-        state: room.state,
-        playerCount: activePlayers.length,
-        spectatorCount: activeSpectators.length,
-        useInquisitor: room.useInquisitor,
-        allowSpectators: room.allowSpectators,
-        chatMode: room.chatMode,
-        hasPassword: !!room.password,
-        ranked: room.ranked,
-        anonymousMode: room.anonymousMode,
-        allowLargeGames: room.allowLargeGames,
-        maxPlayers: room.allowLargeGames ? 10 : 6,
-        playerUserIds: playerUserIds, // For detecting rejoins (authenticated users)
-        disconnectedPersistentIds: disconnectedPersistentIds, // For detecting rejoins (guests)
-        _hasActivePlayers: activePlayers.length > 0 || activeSpectators.length > 0
+        room,
+        hasActive: activePlayers.length > 0 || activeSpectators.length > 0,
+        info: {
+          code: code,
+          name: room.name,
+          state: room.state,
+          playerCount: activePlayers.length,
+          spectatorCount: activeSpectators.length,
+          useInquisitor: room.useInquisitor,
+          allowSpectators: room.allowSpectators,
+          chatMode: room.chatMode,
+          hasPassword: !!room.password,
+          ranked: room.ranked,
+          anonymousMode: room.anonymousMode,
+          allowLargeGames: room.allowLargeGames,
+          maxPlayers: room.allowLargeGames ? 10 : 6
+        }
       };
     })
-    .filter(room => room._hasActivePlayers); // Only show rooms with active players/spectators
-  
-  // Remove the internal flag before sending
-  roomList.forEach(room => delete room._hasActivePlayers);
+    .filter(entry => entry.hasActive); // Only show rooms with active players/spectators
   
   lobbySockets.forEach((userData, socketId) => {
+    const roomList = entries.map(entry => ({ ...entry.info, isMine: ownsSeatInRoom(entry.room, userData) }));
     io.to(socketId).emit('roomListUpdate', { rooms: roomList });
   });
 }
@@ -5383,6 +5846,9 @@ function broadcastOnlineUsers() {
 
 // Socket.IO event handlers
 io.on('connection', (socket) => {
+  // Register every event through this instead of socket.on() - see safeSocketHandler().
+  const onSafe = (eventName, handler) => socket.on(eventName, safeSocketHandler(eventName, handler));
+
   
   // Get client IP - same resolveClientIp() logic used for HTTP requests, so
   // a ban or rate limit means the same thing whether it was triggered via a
@@ -5398,7 +5864,7 @@ io.on('connection', (socket) => {
   
   // Store user info from auth token (if provided)
   let authenticatedUser = null;
-  const token = socket.handshake.auth.token;
+  const token = socket.handshake.auth?.token;
   
   if (token) {
     const verification = auth.verifyToken(token);
@@ -5428,10 +5894,21 @@ io.on('connection', (socket) => {
     }
   }
 
-  socket.on('createRoom', (data, callback) => {
+  onSafe('createRoom', (data, callback) => {
     if (isSocketRateLimited(`${socket.id}:createRoom`, 5, 60000)) {
       callback({ success: false, error: 'You are creating rooms too quickly. Please wait a moment.' });
       return;
+    }
+
+    // Password is optional, but if one is supplied it has to be a sensible
+    // string - never silently fall back to a public room.
+    let roomPassword = null;
+    if (data.password !== undefined && data.password !== null && data.password !== '') {
+      if (typeof data.password !== 'string' || data.password.length < 4 || data.password.length > 20) {
+        callback({ success: false, error: 'Password must be 4-20 characters' });
+        return;
+      }
+      roomPassword = data.password;
     }
 
     const roomCode = generateRoomCode();
@@ -5444,13 +5921,13 @@ io.on('connection', (socket) => {
     
     const room = createRoom(roomCode, { 
       name: roomName,
-      useInquisitor: data.useInquisitor || false,
+      useInquisitor: data.useInquisitor === true,
       allowSpectators: data.allowSpectators !== false,
-      chatMode: data.chatMode || 'separate',
-      password: data.password || null,
+      chatMode: CHAT_MODES.includes(data.chatMode) ? data.chatMode : 'separate',
+      password: roomPassword,
       ranked: data.ranked !== false,
-      anonymousMode: data.anonymousMode || false,
-      allowLargeGames: data.allowLargeGames || false
+      anonymousMode: data.anonymousMode === true,
+      allowLargeGames: data.allowLargeGames === true
     });
     
     // Fetch stats if authenticated
@@ -5459,11 +5936,9 @@ io.on('connection', (socket) => {
       stats = authenticatedUser.stats;
     }
     
-    const safePersistentId = sanitizePersistentId(data.persistentPlayerId, socket.id);
-
     const player = {
-      id: safePersistentId,
-      persistentId: safePersistentId,
+      id: newPublicId(),
+      reconnectToken: newReconnectToken(),
       socketId: socket.id,
       name: playerName,
       userId: authenticatedUser ? authenticatedUser.id : null,
@@ -5492,17 +5967,39 @@ io.on('connection', (socket) => {
     // Broadcast room list update
     broadcastRoomList();
     
-    callback({ success: true, roomCode });
+    callback({ success: true, roomCode, reconnectToken: player.reconnectToken });
     emitToRoom(roomCode, 'gameState');
   });
 
-  socket.on('previewRoom', (data, callback) => {
+  onSafe('previewRoom', (data, callback) => {
     const { roomCode } = data;
     const room = rooms.get(roomCode);
 
     if (!room) {
       callback({ success: false, error: 'Room not found' });
       return;
+    }
+
+    // A preview shows who is in the room, so it needs the password too (this
+    // used to hand the player list of a password-protected room to anyone with
+    // its code). Someone already inside doesn't have to retype it. Wrong guesses
+    // share the same throttle as joining, so previewing can't be used to guess
+    // passwords any faster than joining could.
+    const alreadyInside = !!getPlayerBySocketId(room, socket.id) || !!getSpectatorBySocketId(room, socket.id);
+    if (room.password && !alreadyInside) {
+      if (isSocketRateLimited(`${clientIP}:joinRoomPassword:${roomCode}`, 5, 60000)) {
+        callback({ success: false, error: 'Too many incorrect password attempts. Please wait a minute and try again.' });
+        return;
+      }
+      const supplied = typeof data.password === 'string' ? data.password : '';
+      if (room.password !== supplied) {
+        callback({
+          success: false,
+          passwordRequired: true,
+          error: supplied ? 'Incorrect password' : 'This room is password protected'
+        });
+        return;
+      }
     }
 
     // Send room info without joining
@@ -5516,16 +6013,20 @@ io.on('connection', (socket) => {
         allowLargeGames: room.allowLargeGames,
         chatMode: room.chatMode,
         anonymousMode: room.anonymousMode,
-        players: room.players.map(p => ({
-          id: p.id,
-          name: p.name,
-          username: p.username || null,
-          isGuest: p.isGuest === true,
-          userId: p.userId || null,
-          avatar: p.avatar || '👤',
-          stats: p.stats || null,
-          isMe: false
-        })),
+        players: room.players.map(p => {
+          // Anyone with the room code can preview it - including while an anonymous game is running.
+          const hideIdentity = isAnonymousPlay(room);
+          return {
+            id: p.id,
+            name: getDisplayName(room, p),
+            username: hideIdentity ? null : (p.username || null),
+            isGuest: hideIdentity ? false : p.isGuest === true,
+            userId: hideIdentity ? null : (p.userId || null),
+            avatar: hideIdentity ? ANONYMOUS_AVATAR : (p.avatar || '👤'),
+            stats: hideIdentity ? null : publicPlayerStats(p),
+            isMe: false
+          };
+        }),
         spectators: room.spectators.map(s => ({
           id: s.id,
           name: s.name,
@@ -5535,12 +6036,26 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('playAgain', (data, callback) => {
-    const { currentRoomCode, useInquisitor, allowSpectators, chatMode, ranked, hasPassword, anonymousMode } = data;
+  onSafe('playAgain', (data, callback) => {
+    const { currentRoomCode } = data;
     
     const oldRoom = rooms.get(currentRoomCode);
     if (!oldRoom) {
       callback({ success: false, error: 'Original room not found' });
+      return;
+    }
+
+    // Only someone who was in that game, and only once it is over. This used to
+    // work for any connection that knew the old room code, at any time - handing
+    // the rematch room's code to outsiders and even pulling players out of a game
+    // that was still being played.
+    const requester = getPlayerBySocketId(oldRoom, socket.id) || getSpectatorBySocketId(oldRoom, socket.id);
+    if (!requester || requester.hasLeft) {
+      callback({ success: false, error: 'You are not in that game' });
+      return;
+    }
+    if (oldRoom.state !== 'ended') {
+      callback({ success: false, error: 'The game has not ended yet' });
       return;
     }
     
@@ -5558,12 +6073,18 @@ io.on('connection', (socket) => {
       // Create rematch room with same settings (no password)
       rematchRoom = createRoom(rematchRoomCode, {
         name: `${oldRoomName} - Rematch`,
-        useInquisitor: useInquisitor,
-        allowSpectators: allowSpectators,
-        chatMode: chatMode,
-        password: null, // Don't copy password
-        ranked: ranked,
-        anonymousMode: anonymousMode
+        // Settings come from the server's own copy of the old room, not from
+        // whatever the client claims they were.
+        useInquisitor: oldRoom.useInquisitor,
+        allowSpectators: oldRoom.allowSpectators,
+        chatMode: oldRoom.chatMode,
+        // The rematch keeps the password. People from the game just played get a
+        // one-time pass (below) so they don't have to type it again; everyone else
+        // needs the password like for any other protected room.
+        password: oldRoom.password,
+        ranked: oldRoom.ranked,
+        anonymousMode: oldRoom.anonymousMode,
+        allowLargeGames: oldRoom.allowLargeGames
       });
       
       rooms.set(rematchRoomCode, rematchRoom);
@@ -5575,6 +6096,14 @@ io.on('connection', (socket) => {
       broadcastRoomList();
     }
     
+    // A one-time pass for THIS person, delivered only to them in the reply below.
+    // (The password itself is never sent to anyone.)
+    let rematchToken = null;
+    if (rematchRoom.password) {
+      rematchToken = newReconnectToken();
+      rematchRoom.rematchInvites.add(rematchToken);
+    }
+
     // Remove player from old room
     const playerIndex = oldRoom.players.findIndex(p => p.socketId === socket.id);
     const spectatorIndex = oldRoom.spectators.findIndex(s => s.socketId === socket.id);
@@ -5606,12 +6135,14 @@ io.on('connection', (socket) => {
     
     callback({
       success: true,
-      newRoomCode: rematchRoomCode
+      newRoomCode: rematchRoomCode,
+      rematchToken
     });
   });
 
-  socket.on('joinRoom', (data, callback) => {
-    const { roomCode, playerName, asSpectator, persistentPlayerId, password } = data;
+  onSafe('joinRoom', (data, callback) => {
+    const { roomCode, playerName, asSpectator, password } = data;
+    const claimedToken = cleanTokenInput(data.reconnectToken);
     const room = rooms.get(roomCode);
 
     if (!room) {
@@ -5620,15 +6151,20 @@ io.on('connection', (socket) => {
     }
 
     // Values that get stored on the room and broadcast to every other
-    // client - sanitize once up front, then use the safe versions below.
-    // (The raw persistentPlayerId is still used for the reconnect lookups
-    // just below - those are pure equality checks against already-sanitized
-    // IDs already stored on other players, so they're safe either way.)
-    const safePersistentId = sanitizePersistentId(persistentPlayerId, socket.id);
+    // client - sanitize once up front, then use the safe version below.
     const safePlayerName = sanitizeDisplayName(playerName, 40, null);
 
+    // People coming over from the previous game bring a one-time pass instead of
+    // the password (see playAgain). It's used up only once they're actually in.
+    const inviteToken = cleanTokenInput(data.rematchToken);
+    const hasValidInvite = !!inviteToken && Array.from(room.rematchInvites).some(t => tokensMatch(t, inviteToken));
+    const consumeInvite = () => {
+      if (!hasValidInvite) return;
+      room.rematchInvites.forEach(t => { if (tokensMatch(t, inviteToken)) room.rematchInvites.delete(t); });
+    };
+
     // Check password if room is password protected
-    if (room.password) {
+    if (room.password && !hasValidInvite) {
       // Throttle attempts per (IP, room) rather than per-socket - a client
       // could otherwise reset its budget just by disconnecting and
       // reconnecting with a fresh socket.id. This is the socket-layer
@@ -5645,13 +6181,14 @@ io.on('connection', (socket) => {
       }
     }
 
-    // Check if this persistent ID is already connected in this room
-    if (persistentPlayerId) {
-      const existingPlayer = room.players.find(p => p.persistentId === persistentPlayerId && !p.hasLeft);
+    // A guest who presents the secret token of a seat that's still connected
+    // is a second tab/window of the same person - don't create a duplicate.
+    // (Logged-in users are handled by the account check just below.)
+    if (claimedToken) {
+      const existingPlayer = room.players.find(p => !p.hasLeft && tokensMatch(p.reconnectToken, claimedToken));
       if (existingPlayer && existingPlayer.socketId !== socket.id) {
-        // Don't block if this is an authenticated user trying to reconnect with their userId
         const isAuthReconnect = authenticatedUser && existingPlayer.userId === authenticatedUser.id;
-        if (!isAuthReconnect) {
+        if (!isAuthReconnect && !existingPlayer.disconnected) {
           callback({ success: false, error: 'You are already connected in another tab/window' });
           return;
         }
@@ -5669,10 +6206,10 @@ io.on('connection', (socket) => {
       }
     }
     
-    // Also check for guest players by persistentPlayerId
-    if (persistentPlayerId) {
-      const existingPlayerByPersistentId = room.players.find(p => p.persistentId === persistentPlayerId && !p.hasLeft && p.disconnected);
-      if (existingPlayerByPersistentId) {
+    // Also check for guest players presenting the token of a disconnected seat
+    if (claimedToken) {
+      const existingPlayerByToken = room.players.find(p => !p.hasLeft && p.disconnected && tokensMatch(p.reconnectToken, claimedToken));
+      if (existingPlayerByToken) {
         // This is a guest player reconnecting - trigger attemptReconnect
         callback({ success: false, shouldReconnect: true, roomCode: roomCode });
         return;
@@ -5687,7 +6224,7 @@ io.on('connection', (socket) => {
       }
 
       const spectator = {
-        id: socket.id,
+        id: newPublicId(),
         socketId: socket.id,
         name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Spectator ${room.spectators.length + 1}`),
         userId: authenticatedUser ? authenticatedUser.id : null,
@@ -5697,6 +6234,7 @@ io.on('connection', (socket) => {
       room.spectators.push(spectator);
       socket.join(roomCode);
       
+      consumeInvite();
       callback({ success: true, joinedAs: 'spectator' });
       emitToRoom(roomCode, 'gameState');
       return;
@@ -5711,7 +6249,7 @@ io.on('connection', (socket) => {
       }
 
       const spectator = {
-        id: socket.id,
+        id: newPublicId(),
         socketId: socket.id,
         name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Spectator ${room.spectators.length + 1}`),
         userId: authenticatedUser ? authenticatedUser.id : null,
@@ -5721,6 +6259,7 @@ io.on('connection', (socket) => {
       room.spectators.push(spectator);
       socket.join(roomCode);
       
+      consumeInvite();
       callback({ success: true, joinedAs: 'spectator' });
       emitToRoom(roomCode, 'gameState');
       return;
@@ -5734,8 +6273,8 @@ io.on('connection', (socket) => {
     }
     
     const player = {
-      id: safePersistentId,
-      persistentId: safePersistentId,
+      id: newPublicId(),
+      reconnectToken: newReconnectToken(),
       socketId: socket.id,
       name: authenticatedUser ? authenticatedUser.username : (safePlayerName || `Player ${room.players.length + 1}`),
       userId: authenticatedUser ? authenticatedUser.id : null,
@@ -5763,12 +6302,14 @@ io.on('connection', (socket) => {
     // Broadcast room list update
     broadcastRoomList();
     
-    callback({ success: true, joinedAs: 'player' });
+    consumeInvite();
+    callback({ success: true, joinedAs: 'player', reconnectToken: player.reconnectToken });
     emitToRoom(roomCode, 'gameState');
   });
 
-  socket.on('attemptReconnect', (data, callback) => {
-    const { roomCode, persistentPlayerId } = data;
+  onSafe('attemptReconnect', (data, callback) => {
+    const { roomCode } = data;
+    const claimedToken = cleanTokenInput(data.reconnectToken);
     const room = rooms.get(roomCode);
 
     if (!room) {
@@ -5776,12 +6317,15 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Find player by persistent ID OR by userId for authenticated users
-    let player = room.players.find(p => p.persistentId === persistentPlayerId);
-    
-    // If not found by persistentId, try matching by userId for authenticated users
-    if (!player && authenticatedUser) {
+    // Who gets to take over a seat? Only (a) the logged-in account that owns it,
+    // or (b) whoever holds the seat's secret reconnect token. Public player IDs
+    // - which every client in the room can see - prove nothing.
+    let player = null;
+    if (authenticatedUser) {
       player = room.players.find(p => p.userId === authenticatedUser.id);
+    }
+    if (!player && claimedToken) {
+      player = room.players.find(p => tokensMatch(p.reconnectToken, claimedToken));
     }
     
     if (!player) {
@@ -5794,22 +6338,15 @@ io.on('connection', (socket) => {
       return;
     }
 
-    // Cancel disconnection timer if exists (try both old and new persistent IDs)
-    const oldTimerKey = `${roomCode}-${player.persistentId}`;
-    const newTimerKey = `${roomCode}-${persistentPlayerId}`;
-    
-    if (disconnectionTimers.has(oldTimerKey)) {
-      clearTimeout(disconnectionTimers.get(oldTimerKey));
-      disconnectionTimers.delete(oldTimerKey);
-    }
-    if (disconnectionTimers.has(newTimerKey)) {
-      clearTimeout(disconnectionTimers.get(newTimerKey));
-      disconnectionTimers.delete(newTimerKey);
+    // Cancel the "reconnect within 30s or forfeit" timer if there is one
+    const timerKey = `${roomCode}-${player.id}`;
+    if (disconnectionTimers.has(timerKey)) {
+      clearTimeout(disconnectionTimers.get(timerKey));
+      disconnectionTimers.delete(timerKey);
     }
 
-    // Update socket ID, persistent ID, and mark as reconnected
+    // Point the seat at this socket and mark it as reconnected
     player.socketId = socket.id;
-    player.persistentId = sanitizePersistentId(persistentPlayerId, player.persistentId); // Update to new device's persistent ID
     player.disconnected = false;
     socket.join(roomCode);
 
@@ -5878,12 +6415,12 @@ io.on('connection', (socket) => {
       }
     }
     
-    callback({ success: true, gameState: getPublicGameState(room, socket.id, false) });
+    callback({ success: true, reconnectToken: player.reconnectToken, gameState: getPublicGameState(room, socket.id, false) });
     emitToRoom(roomCode, 'gameState');
   });
 
-  socket.on('switchToPlayer', (data, callback) => {
-    const { roomCode, persistentPlayerId } = data;
+  onSafe('switchToPlayer', (data, callback) => {
+    const { roomCode } = data;
     const room = rooms.get(roomCode);
 
     if (!room) {
@@ -5891,7 +6428,7 @@ io.on('connection', (socket) => {
       return;
     }
 
-    const result = switchToPlayer(room, socket.id, data.name, persistentPlayerId, authenticatedUser);
+    const result = switchToPlayer(room, socket.id, data.name, authenticatedUser);
     callback(result);
     
     if (result.success) {
@@ -5899,7 +6436,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('switchToSpectator', (data, callback) => {
+  onSafe('switchToSpectator', (data, callback) => {
     const { roomCode } = data;
     const room = rooms.get(roomCode);
 
@@ -5916,12 +6453,30 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('startGame', (data, callback) => {
+  onSafe('startGame', (data, callback) => {
     const { roomCode } = data;
     const room = rooms.get(roomCode);
 
     if (!room) {
       callback({ success: false, error: 'Room not found' });
+      return;
+    }
+
+    // Who may start? Only the host, and only one time, from the lobby. This
+    // used to have no checks at all: anyone who knew the room code (they're
+    // listed publicly) - even someone who never joined - could flip a game
+    // that was already running back into a countdown and re-deal it.
+    const caller = getPlayerBySocketId(room, socket.id);
+    if (!caller || caller.hasLeft) {
+      callback({ success: false, error: 'Only players in this room can start the game' });
+      return;
+    }
+    if (room.state !== 'lobby') {
+      callback({ success: false, error: room.state === 'countdown' ? 'The game is already starting' : 'The game has already started' });
+      return;
+    }
+    if (getRoomHost(room)?.id !== caller.id) {
+      callback({ success: false, error: 'Only the host can start the game' });
       return;
     }
 
@@ -5941,18 +6496,27 @@ io.on('connection', (socket) => {
     
     // After 3 seconds, actually start the game
     setTimeout(() => {
-      if (room.state === 'countdown') {
-        const result = startGame(room);
-        if (result.success) {
-          emitToRoom(roomCode, 'gameState');
-          // Broadcast room list update (state changed from lobby to playing)
-          broadcastRoomList();
-        }
+      // The room may have been deleted (everyone left) or changed state meanwhile
+      if (rooms.get(roomCode) !== room || room.state !== 'countdown') return;
+
+      const result = startGame(room);
+      if (result.success) {
+        emitToRoom(roomCode, 'gameState');
+        // Broadcast room list update (state changed from lobby to playing)
+        broadcastRoomList();
+      } else {
+        // e.g. players left during the countdown and fewer than 2 remain. Go
+        // back to the lobby instead of sitting in "countdown" forever.
+        room.state = 'lobby';
+        room.countdownStartTime = null;
+        addLogToRoom(room, `Game could not start: ${result.error}`, 'info');
+        emitToRoom(roomCode, 'gameState');
+        broadcastRoomList();
       }
     }, 3000);
   });
 
-  socket.on('performAction', (data, callback) => {
+  onSafe('performAction', (data, callback) => {
     const { roomCode, action, targetId } = data;
     const room = rooms.get(roomCode);
 
@@ -5969,7 +6533,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('respondToAction', (data, callback) => {
+  onSafe('respondToAction', (data, callback) => {
     const { roomCode, response } = data;
     const room = rooms.get(roomCode);
 
@@ -5986,7 +6550,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('challengeBlock', (data, callback) => {
+  onSafe('challengeBlock', (data, callback) => {
     const { roomCode } = data;
     const room = rooms.get(roomCode);
 
@@ -6003,7 +6567,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('completeExchange', (data, callback) => {
+  onSafe('completeExchange', (data, callback) => {
     const { roomCode, keepIndices } = data;
     const room = rooms.get(roomCode);
 
@@ -6026,7 +6590,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('showCardToExaminer', (data, callback) => {
+  onSafe('showCardToExaminer', (data, callback) => {
     const { roomCode, cardIndex } = data;
     const room = rooms.get(roomCode);
 
@@ -6049,7 +6613,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('completeExamine', (data, callback) => {
+  onSafe('completeExamine', (data, callback) => {
     const { roomCode, forceExchange } = data;
     const room = rooms.get(roomCode);
 
@@ -6072,7 +6636,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('revealInfluence', (data, callback) => {
+  onSafe('revealInfluence', (data, callback) => {
     const { roomCode, cardIndex } = data;
     const room = rooms.get(roomCode);
 
@@ -6095,7 +6659,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('leaveRoom', (data) => {
+  onSafe('leaveRoom', (data) => {
     const { roomCode } = data;
     const room = rooms.get(roomCode);
     
@@ -6132,7 +6696,7 @@ io.on('connection', (socket) => {
   });
 
   // Lobby events
-  socket.on('joinLobby', (data) => {
+  onSafe('joinLobby', (data) => {
     // For authenticated users, always use their actual username from the token
     // For guests, use client-supplied username or generate one
     let username;
@@ -6190,7 +6754,9 @@ io.on('connection', (socket) => {
       userId: authenticatedUser ? authenticatedUser.id : null,
       inGame: false,
       role: userRole,
-      ip: clientIP
+      ip: clientIP,
+      // Secret - only used server-side by ownsSeatInRoom(); never sent to anyone.
+      reconnectToken: cleanTokenInput(data.reconnectToken)
     });
     
     // Send initial room list to this user
@@ -6212,7 +6778,7 @@ io.on('connection', (socket) => {
     broadcastOnlineUsers();
   });
 
-  socket.on('lobbyChatMessage', (data) => {
+  onSafe('lobbyChatMessage', (data) => {
     if (isSocketRateLimited(`${socket.id}:lobbyChat`, 5, 10000)) {
       socket.emit('chatRateLimited', { message: 'You are sending messages too quickly. Please slow down.' });
       return;
@@ -6221,8 +6787,8 @@ io.on('connection', (socket) => {
     const userData = lobbySockets.get(socket.id);
     if (!userData) return;
     
-    const message = data.message.trim();
-    if (!message || message.length > 200) return;
+    const message = cleanChatText(data.message);
+    if (!message) return;
     
     // Get avatar from database for authenticated users
     let avatar = '👤';
@@ -6248,6 +6814,7 @@ io.on('connection', (socket) => {
     
     // Store in history
     lobbyChatHistory.push(chatMessage);
+    while (lobbyChatHistory.length > MAX_LOBBY_CHAT_HISTORY) lobbyChatHistory.shift();
     
     // Broadcast to all lobby users
     lobbySockets.forEach((otherUserData, socketId) => {
@@ -6255,7 +6822,7 @@ io.on('connection', (socket) => {
     });
   });
 
-  socket.on('disconnect', () => {
+  onSafe('disconnect', () => {
     clearSocketRateLimits(socket.id);
     
     // Handle player/spectator disconnection
@@ -6271,7 +6838,7 @@ io.on('connection', (socket) => {
           player.disconnected = true;
           addLogToRoom(room, `${getDisplayName(room, player)} disconnected. Waiting 30 seconds to reconnect...`, 'info');
           
-          const timerKey = `${roomCode}-${player.persistentId}`;
+          const timerKey = `${roomCode}-${player.id}`;
           const forfeitTimer = setTimeout(() => {
             // Grace period expired - forfeit, unless they reconnected (clears
             // `disconnected`) or were already removed some other way in the
@@ -6339,13 +6906,15 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('sendChatMessage', (data) => {
+  onSafe('sendChatMessage', (data) => {
     if (isSocketRateLimited(`${socket.id}:gameChat`, 5, 10000)) {
       socket.emit('chatRateLimited', { message: 'You are sending messages too quickly. Please slow down.' });
       return;
     }
 
-    const { roomCode, message } = data;
+    const { roomCode } = data;
+    const message = cleanChatText(data.message);
+    if (!message) return;
     const room = rooms.get(roomCode);
     
     if (!room) return;
@@ -6357,12 +6926,14 @@ io.on('connection', (socket) => {
     const player = getPlayerBySocketId(room, socket.id);
     const spectator = getSpectatorBySocketId(room, socket.id);
     
-    if (!player && !spectator) return;
+    // (A player who has left stays in the list so their cards stay visible, but they shouldn't keep chatting.)
+    if ((!player && !spectator) || player?.hasLeft) return;
     
     const senderName = player ? getDisplayName(room, player) : spectator.name;
-    const senderAvatar = player ? (player.avatar || '👤') : '👤';
-    const senderUsername = player ? player.username : null;
-    const senderIsGuest = player ? player.isGuest : true;
+    const hideIdentity = !!player && isAnonymousPlay(room);
+    const senderAvatar = hideIdentity ? ANONYMOUS_AVATAR : (player ? (player.avatar || '👤') : '👤');
+    const senderUsername = hideIdentity ? null : (player ? player.username : null);
+    const senderIsGuest = hideIdentity ? false : (player ? player.isGuest : true);
     const isSpectatorMessage = !!spectator;
     
     // Add message to game log
@@ -6377,7 +6948,7 @@ io.on('connection', (socket) => {
       isSpectator: isSpectatorMessage
     };
     
-    room.gameLog.push(chatLog);
+    appendLog(room, chatLog);
     
     // Emit based on chat mode
     if (room.chatMode === 'unified') {
@@ -6454,11 +7025,30 @@ function runStartupConfigChecks() {
 }
 
 // Initialize database and start server
+// Last line of defence. The socket layer is wrapped in safeSocketHandler(), but
+// game timers (auto-reveal, response timeouts, forfeit timers) run outside any
+// handler; an exception in one of those should be logged, not take every game
+// on the server down with it. Prefer fixing the bug the log points at, and
+// still run under a process manager (systemd/pm2/Docker restart policy).
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception (server kept running):', error);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+
 async function startServer() {
   try {
     runStartupConfigChecks();
 
     await db.initDatabase();
+
+    // Because of the uncaughtException guard above, a failed listen() (port
+    // already in use, etc.) would otherwise leave a zombie process running.
+    server.once('error', (error) => {
+      console.error('Server failed to start:', error);
+      process.exit(1);
+    });
     
     server.listen(PORT, () => {
       console.log(`Coup game server running on http://localhost:${PORT}`);

@@ -1,12 +1,91 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const os = require('os');
+const { Worker } = require('worker_threads');
 const dbModule = require('./database');
 
 // Secret key for JWT (in production, use environment variable)
 const JWT_SECRET = process.env.JWT_SECRET || 'coup-secret-key-change-in-production';
 const JWT_EXPIRES_IN = '30d'; // Token valid for 30 days
 const RESET_TOKEN_EXPIRY_MS = 60 * 60 * 1000; // Password reset links are valid for 1 hour
+
+// --- Password hashing, off the main thread ----------------------------------
+// bcrypt is deliberately slow (~75 ms per check here). Done on the main thread
+// it freezes EVERYTHING - every game, every chat message - for that long, and
+// bcryptjs's own "async" mode doesn't help: it only pauses every ~100 ms, so a
+// burst of 20 logins froze the whole server for about 1.5 seconds. The work is
+// done in a small pool of worker threads instead, so a flood of login attempts
+// can slow down logins but not the games in progress.
+const MAX_PASSWORD_LENGTH = 72; // bcrypt silently ignores anything past 72 bytes
+const BCRYPT_WORKER_SOURCE = `
+  const { parentPort } = require('worker_threads');
+  const bcrypt = require(${JSON.stringify(require.resolve('bcryptjs'))});
+  parentPort.on('message', ({ id, op, a, b }) => {
+    try {
+      parentPort.postMessage({ id, result: op === 'hash' ? bcrypt.hashSync(a, 10) : bcrypt.compareSync(a, b) });
+    } catch (error) {
+      parentPort.postMessage({ id, error: String((error && error.message) || error) });
+    }
+  });
+`;
+const POOL_SIZE = Math.max(1, Math.min(2, (os.cpus().length || 2) - 1));
+const MAX_PENDING_PASSWORD_JOBS = 400; // beyond this, say "busy" rather than queue without limit
+const passwordWorkers = new Array(POOL_SIZE).fill(null);
+const pendingPasswordJobs = new Map(); // job id -> { resolve, reject, worker }
+let nextPasswordWorker = 0;
+let nextPasswordJobId = 1;
+
+function spawnPasswordWorker(index) {
+  const worker = new Worker(BCRYPT_WORKER_SOURCE, { eval: true });
+  worker.unref(); // never keep the process alive just for these
+  worker.on('message', ({ id, result, error }) => {
+    const job = pendingPasswordJobs.get(id);
+    if (!job) return;
+    pendingPasswordJobs.delete(id);
+    if (error) job.reject(new Error(error)); else job.resolve(result);
+  });
+  const onStopped = (error) => {
+    if (passwordWorkers[index] === worker) passwordWorkers[index] = null; // a fresh one starts on the next job
+    for (const [id, job] of pendingPasswordJobs) {
+      if (job.worker === worker) {
+        pendingPasswordJobs.delete(id);
+        job.reject(error instanceof Error ? error : new Error('Password worker stopped'));
+      }
+    }
+  };
+  worker.on('error', onStopped);
+  worker.on('exit', () => onStopped(new Error('Password worker exited')));
+  passwordWorkers[index] = worker;
+  return worker;
+}
+
+function runPasswordJob(op, a, b) {
+  if (pendingPasswordJobs.size >= MAX_PENDING_PASSWORD_JOBS) {
+    return Promise.reject(Object.assign(new Error('Too many password checks in progress'), { code: 'PASSWORD_BUSY' }));
+  }
+  let worker;
+  try {
+    const index = nextPasswordWorker++ % POOL_SIZE;
+    worker = passwordWorkers[index] || spawnPasswordWorker(index);
+  } catch (error) {
+    // Worker threads unavailable for some reason: still work, one at a time, on the main thread
+    console.error('Password worker unavailable, falling back to the main thread:', error.message);
+    return new Promise((resolve) => setImmediate(() => resolve(op === 'hash' ? bcrypt.hashSync(a, 10) : bcrypt.compareSync(a, b))));
+  }
+  return new Promise((resolve, reject) => {
+    const id = nextPasswordJobId++;
+    pendingPasswordJobs.set(id, { resolve, reject, worker });
+    worker.postMessage({ id, op, a, b });
+  });
+}
+
+function hashPassword(password) { return runPasswordJob('hash', password); }
+function comparePassword(password, hash) { return runPasswordJob('compare', password, hash); }
+
+// Checked against when a username doesn't exist, so "no such user" takes as long
+// as "wrong password" and response time can't be used to find out who has an account.
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('not-a-real-password-just-for-timing', 10);
 
 // Helper to get db instance
 function getDb() {
@@ -28,7 +107,14 @@ function signToken(userId, username, tokenVersion) {
 /**
  * Register a new user
  */
-function register(username, password, email = null) {
+async function register(username, password, email = null) {
+  if (typeof username !== 'string' || typeof password !== 'string') {
+    return { success: false, error: 'Username and password required' };
+  }
+  if (email !== null && email !== undefined && typeof email !== 'string') {
+    return { success: false, error: 'Invalid email address' };
+  }
+
   // Validate username
   if (!username || username.length < 3 || username.length > 20) {
     return { success: false, error: 'Username must be 3-20 characters' };
@@ -42,6 +128,9 @@ function register(username, password, email = null) {
   // Validate password
   if (!password || password.length < 6) {
     return { success: false, error: 'Password must be at least 6 characters' };
+  }
+  if (password.length > MAX_PASSWORD_LENGTH) {
+    return { success: false, error: `Password must be ${MAX_PASSWORD_LENGTH} characters or fewer` };
   }
 
   // Check if user already exists
@@ -68,9 +157,17 @@ function register(username, password, email = null) {
   }
 
   try {
-    // Hash password
-    const salt = bcrypt.genSaltSync(10);
-    const passwordHash = bcrypt.hashSync(password, salt);
+    // Hash password (on a worker thread - see hashPassword)
+    const passwordHash = await hashPassword(password);
+
+    // The hash took a moment, during which someone else could have registered the
+    // same email. Everything from here to the insert runs without pausing.
+    if (email && email.trim()) {
+      const emailTakenNow = dbModule.prepare('SELECT id FROM users WHERE email = ? COLLATE NOCASE').get(email.trim());
+      if (emailTakenNow) {
+        return { success: false, error: 'That email address is already in use by another account.' };
+      }
+    }
 
     // Check if this is the first user (make them admin)
     const userCount = dbModule.prepare('SELECT COUNT(*) as count FROM users').get();
@@ -123,6 +220,14 @@ function register(username, password, email = null) {
       }
     };
   } catch (error) {
+    if (error && error.code === 'PASSWORD_BUSY') throw error; // let the route answer "busy"
+
+    // Two people picking the same name at the same moment: the database lets only
+    // one in. That's expected, not an error worth a stack trace in the log.
+    if (error && error.message && error.message.includes('UNIQUE')) {
+      return { success: false, error: 'Username already taken' };
+    }
+
     console.error('Registration error:', error);
     
     // More specific error messages
@@ -137,9 +242,9 @@ function register(username, password, email = null) {
 /**
  * Login user
  */
-function login(username, password) {
+async function login(username, password) {
   // Validate input
-  if (!username || !password) {
+  if (typeof username !== 'string' || typeof password !== 'string' || !username || !password) {
     return { success: false, error: 'Username and password required' };
   }
 
@@ -151,11 +256,12 @@ function login(username, password) {
   `);
   const user = getUserByUsername.get(username);
   if (!user) {
+    await comparePassword(password, DUMMY_PASSWORD_HASH); // same delay as a real check
     return { success: false, error: 'Invalid username or password' };
   }
 
   // Verify password
-  const validPassword = bcrypt.compareSync(password, user.password_hash);
+  const validPassword = await comparePassword(password, user.password_hash);
   if (!validPassword) {
     return { success: false, error: 'Invalid username or password' };
   }
@@ -337,13 +443,16 @@ function requestPasswordReset(identifier) {
  * The token itself is never stored in plaintext - only its SHA-256 hash is
  * compared against what's on file, and it's single-use (cleared on success).
  */
-function resetPasswordWithToken(token, newPassword) {
+async function resetPasswordWithToken(token, newPassword) {
   if (!token || typeof token !== 'string') {
     return { success: false, error: 'Invalid or expired reset link' };
   }
 
-  if (!newPassword || newPassword.length < 6) {
+  if (typeof newPassword !== 'string' || newPassword.length < 6) {
     return { success: false, error: 'Password must be at least 6 characters' };
+  }
+  if (newPassword.length > MAX_PASSWORD_LENGTH) {
+    return { success: false, error: `Password must be ${MAX_PASSWORD_LENGTH} characters or fewer` };
   }
 
   const tokenHash = crypto.createHash('sha256').update(token).digest('hex');
@@ -360,18 +469,23 @@ function resetPasswordWithToken(token, newPassword) {
     return { success: false, error: 'This reset link has expired. Please request a new one.' };
   }
 
-  const salt = bcrypt.genSaltSync(10);
-  const passwordHash = bcrypt.hashSync(newPassword, salt);
+  const passwordHash = await hashPassword(newPassword);
 
   // Bump token_version so any previously-issued tokens for this account stop
   // working immediately - this reset flow exists precisely for "someone else
   // may have my password", so an attacker's existing session needs to die
   // the moment the password changes, not up to 30 days later.
-  dbModule.prepare(`
+  const updated = dbModule.prepare(`
     UPDATE users
     SET password_hash = ?, reset_token_hash = NULL, reset_token_expires = NULL, token_version = token_version + 1
-    WHERE id = ?
-  `).run(passwordHash, user.id);
+    WHERE id = ? AND reset_token_hash = ?
+  `).run(passwordHash, user.id, tokenHash);
+
+  // The hash took a moment; if the same link was used twice at once, only one
+  // of the two requests may succeed (the link is single-use).
+  if (updated.changes === 0) {
+    return { success: false, error: 'Invalid or expired reset link' };
+  }
   dbModule.saveDatabase();
 
   return { success: true, userId: user.id };
@@ -391,7 +505,7 @@ function resetPasswordWithToken(token, newPassword) {
  * match records of other players they've played against. This function
  * does not attempt to rewrite that historical data.
  */
-function deleteAccount(userId, password) {
+async function deleteAccount(userId, password) {
   const user = dbModule.prepare(`
     SELECT id, username, password_hash, role FROM users WHERE id = ?
   `).get(userId);
@@ -400,7 +514,7 @@ function deleteAccount(userId, password) {
     return { success: false, error: 'Account not found' };
   }
 
-  if (!password || !bcrypt.compareSync(password, user.password_hash)) {
+  if (typeof password !== 'string' || !password || !(await comparePassword(password, user.password_hash))) {
     return { success: false, error: 'Incorrect password' };
   }
 
@@ -431,6 +545,8 @@ module.exports = {
   requestPasswordReset,
   resetPasswordWithToken,
   deleteAccount,
+  hashPassword,
+  comparePassword,
   signToken,
   JWT_SECRET
 };

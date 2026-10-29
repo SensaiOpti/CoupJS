@@ -71,6 +71,15 @@ The server will refuse to start with the placeholder value if `TRUST_PROXY` is s
 ### Email (password reset)
 See the comment block at the top of `email.js` for the SMTP-related environment variables. If these aren't set, "forgot password" links are only logged to the server console instead of emailed - fine for local testing, but means anyone who can read your server's logs can reset any account's password, so make sure real SMTP credentials are configured before letting the public register.
 
+### Abuse limits
+The server limits how fast anything can be done to stop floods and password guessing, but it is built on the assumption that many *actual* people may share one IP address (e.g.: a household, school, office or VPN). So:
+
+- Limits that count **per IP** are high ceilings. A busy group of friends, or a whole class, should never meet them.
+- The strict limits are tied to **one specific thing**: a single account's wrong passwords, one account's password-reset emails (5 an hour), one account's chat speed, one connection's room creation. Correct logins never count against anyone.
+- Every per-IP number can be changed in `.env`; see the "Abuse limits" section in that file (or the `.env.example` file).
+
+Other protections worth knowing about: password hashing runs on worker threads so a burst of logins can't freeze games in progress; passwords are limited to 72 characters (bcrypt ignores anything longer); moderators can't IP-ban their own address or one an admin is online from, and a ban applies to everyone behind that address, so use it sparingly; and the server only accepts socket connections started from pages it serves itself, `APP_BASE_URL`, or `ALLOWED_ORIGINS` (in `.env`, set `ALLOW_ANY_ORIGIN=true` to turn that check off).
+
 ### First Time Use / Administrators
 The first created user account is an administrator...a super one! This super admin has access to special privileges. I **strongly advise** you, as the one hosting this, to create an admin user prior to allowing others to register. 
 

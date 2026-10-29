@@ -6,6 +6,7 @@ const socketIO = require('socket.io');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const net = require('net');
 const jwt = require('jsonwebtoken');
 const helmet = require('helmet');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
@@ -231,6 +232,112 @@ function safeSocketHandler(eventName, handler) {
   };
 }
 
+// --- Abuse limits ---------------------------------------------------------------
+// Many legitimate players can share one IP address (a household, a school, an
+// office, a VPN), so limits that count per IP are deliberately HIGH backstops
+// against floods, not something a busy group of friends should ever meet. The
+// strict limits are tied to one specific thing - one account, one username, one
+// connection. Every number can be changed in .env (see _env.example).
+function envInt(name, fallback) {
+  const value = parseInt(process.env[name], 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+const LIMITS = {
+  maxConnectionsPerIp: envInt('MAX_CONNECTIONS_PER_IP', 200),               // open connections at once
+  connectionsPerMinutePerIp: envInt('CONNECTIONS_PER_MINUTE_PER_IP', 600),  // new connections per minute
+  apiRequestsPer15MinPerIp: envInt('API_REQUESTS_PER_15MIN_PER_IP', 3000),  // all /api requests
+  registrationsPerHourPerIp: envInt('REGISTRATIONS_PER_HOUR_PER_IP', 30),
+  failedLoginsPer15MinPerIp: envInt('FAILED_LOGINS_PER_15MIN_PER_IP', 100), // wrong passwords, all usernames
+  failedLoginsPer15MinPerAccount: envInt('FAILED_LOGINS_PER_ACCOUNT_AND_IP', 10), // wrong passwords for ONE username from one IP
+  chatMessagesPer10SecPerIp: envInt('CHAT_MESSAGES_PER_10S_PER_IP', 200),
+  roomsCreatedPerMinPerIp: envInt('ROOMS_CREATED_PER_MIN_PER_IP', 60),
+  maxRooms: envInt('MAX_ROOMS', 2000),
+  maxSpectatorsPerRoom: envInt('MAX_SPECTATORS_PER_ROOM', 100)
+};
+const connectionsPerIp = new Map(); // ip -> open connections right now
+
+// Which websites' pages may open a socket connection to this server. A browser
+// always tells the server which site a page came from (the Origin header), so
+// other websites can't quietly make your visitors' browsers connect here. Pages
+// served from this server itself are always allowed; add other addresses (a
+// separate front-end domain, etc.) with ALLOWED_ORIGINS, or switch the check off
+// with ALLOW_ANY_ORIGIN=true. Non-browser clients send no Origin and aren't affected.
+const ALLOWED_ORIGINS = new Set();
+(process.env.APP_BASE_URL ? [process.env.APP_BASE_URL] : []).concat((process.env.ALLOWED_ORIGINS || '').split(','))
+  .map(value => value.trim()).filter(Boolean)
+  .forEach(value => { try { ALLOWED_ORIGINS.add(new URL(value).origin.toLowerCase()); } catch (error) { /* ignore malformed entries */ } });
+const ALLOW_ANY_ORIGIN = process.env.ALLOW_ANY_ORIGIN === 'true';
+const lastOriginWarning = new Map();
+
+function isAllowedSocketOrigin(req) {
+  const origin = req.headers.origin;
+  if (!origin || ALLOW_ANY_ORIGIN) return true;
+
+  let originUrl;
+  try { originUrl = new URL(origin); } catch (error) { return false; }
+  if (ALLOWED_ORIGINS.has(originUrl.origin.toLowerCase())) return true;
+
+  // Same site as the page that is being served: Origin's host matches the Host
+  // we were addressed as (or, behind a proxy we trust, the forwarded one)
+  const hosts = [req.headers.host];
+  if (TRUST_PROXY_MODE !== 'off') hosts.push(req.headers['x-forwarded-host']);
+  const sameSite = hosts.filter(Boolean)
+    .flatMap(value => String(value).split(',')).map(value => value.trim().toLowerCase())
+    .includes(originUrl.host.toLowerCase());
+  if (sameSite) return true;
+
+  const now = Date.now();
+  if (now - (lastOriginWarning.get(origin) || 0) > 60000) {
+    lastOriginWarning.set(origin, now);
+    console.warn(`Rejected a socket connection from the website ${origin}. If that is one of YOUR addresses, add it to ALLOWED_ORIGINS in .env.`);
+  }
+  return false;
+}
+
+// --- IP address helpers ---
+// The same visitor can show up as "1.2.3.4" or "::ffff:1.2.3.4" depending on how
+// they connected, so bans and comparisons treat those as one address.
+function normalizeIp(ip) {
+  if (typeof ip !== 'string') return '';
+  let value = ip.trim().toLowerCase();
+  if (value.startsWith('::ffff:') && net.isIPv4(value.slice(7))) value = value.slice(7);
+  return value;
+}
+function ipVariants(ip) {
+  const normalized = normalizeIp(ip);
+  const variants = new Set([typeof ip === 'string' ? ip.trim() : '', normalized]);
+  if (net.isIPv4(normalized)) variants.add('::ffff:' + normalized);
+  return Array.from(variants).filter(Boolean);
+}
+function sameIp(a, b) {
+  const left = normalizeIp(a);
+  return left !== '' && left === normalizeIp(b);
+}
+
+// Express 4 doesn't catch errors from async route handlers (the request would
+// just hang), so async routes go through this.
+function asyncRoute(handler, failureMessage = 'Something went wrong') {
+  return (req, res, next) => {
+    Promise.resolve(handler(req, res, next)).catch((error) => {
+      if (res.headersSent) return;
+      if (error && error.code === 'PASSWORD_BUSY') {
+        return res.status(503).json({ success: false, error: 'The server is busy. Please try again in a moment.' });
+      }
+      console.error(`${failureMessage}:`, error);
+      res.status(500).json({ success: false, error: failureMessage });
+    });
+  };
+}
+
+// Chat is limited per connection (strict), per logged-in account across ALL of its
+// connections (strict - opening more tabs doesn't buy more messages) and per IP
+// (a high backstop for guests and floods).
+function isChatRateLimited(socket, clientIP, authenticatedUser, kind) {
+  if (isSocketRateLimited(`${socket.id}:${kind}`, 5, 10000)) return true;
+  if (authenticatedUser && isSocketRateLimited(`u:${authenticatedUser.id}:${kind}`, 5, 10000)) return true;
+  return isSocketRateLimited(`ip:${clientIP}:${kind}`, LIMITS.chatMessagesPer10SecPerIp, 10000);
+}
+
 const app = express();
 const server = http.createServer(app);
 
@@ -282,16 +389,16 @@ app.use(helmet({
 }));
 
 const io = socketIO(server, {
-  cors: {
-    origin: "*",
-    methods: ["GET", "POST"]
-  },
+  // No blanket CORS: the pages are served by this same server, so browsers don't
+  // need it, and allowRequest below refuses connections started from other websites.
+  allowRequest: (req, callback) => callback(null, isAllowedSocketOrigin(req)),
+  maxHttpBufferSize: 16 * 1024, // the largest legitimate message is a 200-character chat line
   pingTimeout: 10000, // How long to wait for pong before disconnect (10s)
   pingInterval: 5000, // How often to send ping (5s)
   connectTimeout: 10000 // Connection timeout
 });
 
-app.use(express.json());
+app.use(express.json({ limit: '10kb' }));
 
 // --- Client IP resolution behind a reverse proxy/CDN -----------------------
 // Controls how (and whether) proxy-supplied headers are trusted when
@@ -407,39 +514,92 @@ function rateLimitKey(req) {
   return ipKeyGenerator(getClientIP(req));
 }
 
-// Catch-all safety net for every /api/ route.
+const tooManyMessage = (text) => ({ success: false, error: text });
+const limiterDefaults = { standardHeaders: true, legacyHeaders: false };
+const FIFTEEN_MINUTES = 15 * 60 * 1000;
+
+// Catch-all safety net for every /api/ route. (Generous: a household or a class
+// browsing profiles, leaderboards and settings all share this one counter.)
 const generalApiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
+  ...limiterDefaults,
+  windowMs: FIFTEEN_MINUTES,
+  max: LIMITS.apiRequestsPer15MinPerIp,
   keyGenerator: rateLimitKey,
-  message: { success: false, error: 'Too many requests. Please slow down and try again shortly.' }
+  message: tooManyMessage('Too many requests. Please slow down and try again shortly.')
 });
 app.use('/api/', generalApiLimiter);
 
-// Strict limiter for the classic brute-force targets: login and password changes.
-// Keyed by IP + username together, so one attacker can't reset their budget by just
-// switching target accounts, and one popular shared IP (e.g. an office) can't lock
-// every account behind it out just because one person mistyped a password a lot.
-const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => `${rateLimitKey(req)}:${(req.body?.username || '').toLowerCase()}`,
-  message: { success: false, error: 'Too many attempts. Please try again in 15 minutes.' }
+// Logging in. Only WRONG passwords count, so signing in normally (from several
+// devices, over and over) never uses any of this up. Two limits:
+//  - per username from one IP: stops guessing one account's password (strict)
+//  - per IP in total: stops trying one password against many usernames (generous
+//    enough for a class full of people mistyping at the same moment)
+const loginAccountLimiter = rateLimit({
+  ...limiterDefaults,
+  windowMs: FIFTEEN_MINUTES,
+  max: LIMITS.failedLoginsPer15MinPerAccount,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => `${rateLimitKey(req)}:${String(req.body?.username ?? '').toLowerCase().slice(0, 64)}`,
+  message: tooManyMessage('Too many failed attempts for this account. Please try again in 15 minutes.')
+});
+const loginIpLimiter = rateLimit({
+  ...limiterDefaults,
+  windowMs: FIFTEEN_MINUTES,
+  max: LIMITS.failedLoginsPer15MinPerIp,
+  skipSuccessfulRequests: true,
+  keyGenerator: rateLimitKey,
+  message: tooManyMessage('Too many failed login attempts from this network. Please try again in 15 minutes.')
 });
 
-// Looser limiter for account creation (register/guest) - not trying to guess a
-// secret, but still worth capping to prevent mass fake-account/guest spam.
-const accountCreationLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
+// Password change / account deletion: limited per ACCOUNT (not per IP, which used
+// to make everyone on a shared connection share one tiny bucket), failures only.
+const accountActionLimiter = rateLimit({
+  ...limiterDefaults,
+  windowMs: FIFTEEN_MINUTES,
   max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
+  skipSuccessfulRequests: true,
+  keyGenerator: (req) => {
+    const token = req.headers.authorization?.split(' ')[1] || req.body?.token;
+    const verification = typeof token === 'string' ? auth.verifyToken(token) : { success: false };
+    return verification.success ? `u:${verification.user.id}` : rateLimitKey(req);
+  },
+  message: tooManyMessage('Too many attempts. Please try again in 15 minutes.')
+});
+
+// "Forgot password" sends an email, so it is limited per account (so nobody's inbox
+// can be flooded - however many IPs the requests come from) and, more loosely, per
+// IP. These count requests for names that don't exist too, so the limit itself
+// can't be used to find out which accounts exist.
+const forgotAccountLimiter = rateLimit({
+  ...limiterDefaults,
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyGenerator: (req) => `id:${String(req.body?.identifier ?? '').trim().toLowerCase().slice(0, 100)}`,
+  message: tooManyMessage('Too many reset requests for this account. Please try again later.')
+});
+const forgotIpLimiter = rateLimit({
+  ...limiterDefaults,
+  windowMs: FIFTEEN_MINUTES,
+  max: 30,
   keyGenerator: rateLimitKey,
-  message: { success: false, error: 'Too many accounts created from this network. Please try again later.' }
+  message: tooManyMessage('Too many reset requests from this network. Please try again later.')
+});
+const resetIpLimiter = rateLimit({
+  ...limiterDefaults,
+  windowMs: FIFTEEN_MINUTES,
+  max: 30,
+  keyGenerator: rateLimitKey,
+  message: tooManyMessage('Too many attempts. Please try again later.')
+});
+
+// Creating accounts - not trying to guess a secret, but worth capping so one
+// address can't mass-produce accounts. (Sized so a classroom can all sign up.)
+const accountCreationLimiter = rateLimit({
+  ...limiterDefaults,
+  windowMs: 60 * 60 * 1000,
+  max: LIMITS.registrationsPerHourPerIp,
+  keyGenerator: rateLimitKey,
+  message: tooManyMessage('Too many accounts created from this network. Please try again later.')
 });
 
 // Check if IP is banned
@@ -447,7 +607,8 @@ function isIPBanned(ip) {
   if (!ip || ip === 'unknown') return false;
   
   try {
-    const banned = db.prepare('SELECT id FROM banned_ips WHERE ip_address = ?').get(ip);
+    const variants = ipVariants(ip);
+    const banned = db.prepare(`SELECT id FROM banned_ips WHERE ip_address IN (${variants.map(() => '?').join(',')})`).get(...variants);
     return !!banned;
   } catch (e) {
     console.error('Error checking IP ban:', e);
@@ -475,27 +636,27 @@ app.use((req, res, next) => {
 });
 
 // Authentication routes
-app.post('/api/register', accountCreationLimiter, (req, res) => {
+app.post('/api/register', accountCreationLimiter, asyncRoute(async (req, res) => {
   const { username, password, email } = req.body;
-  const result = auth.register(username, password, email);
+  const result = await auth.register(username, password, email);
   
   if (result.success) {
     res.json(result);
   } else {
     res.status(400).json(result);
   }
-});
+}, 'Registration failed'));
 
-app.post('/api/login', authLimiter, (req, res) => {
+app.post('/api/login', loginIpLimiter, loginAccountLimiter, asyncRoute(async (req, res) => {
   const { username, password } = req.body;
-  const result = auth.login(username, password);
+  const result = await auth.login(username, password);
   
   if (result.success) {
     res.json(result);
   } else {
     res.status(401).json(result);
   }
-});
+}, 'Login failed'));
 
 app.post('/api/verify', (req, res) => {
   const { token } = req.body;
@@ -708,7 +869,7 @@ app.post('/api/user/settings', (req, res) => {
 });
 
 // POST /api/user/change-password - Change user password
-app.post('/api/user/change-password', authLimiter, (req, res) => {
+app.post('/api/user/change-password', accountActionLimiter, asyncRoute(async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1] || req.body.token;
   const verification = auth.verifyToken(token);
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
@@ -716,20 +877,22 @@ app.post('/api/user/change-password', authLimiter, (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;
     
-    if (!currentPassword || !newPassword) {
+    if (typeof currentPassword !== 'string' || typeof newPassword !== 'string' || !currentPassword || !newPassword) {
       return res.status(400).json({ error: 'Current password and new password are required' });
     }
     
     if (newPassword.length < 6) {
       return res.status(400).json({ error: 'New password must be at least 6 characters' });
     }
+    if (newPassword.length > 72) {
+      return res.status(400).json({ error: 'New password must be 72 characters or fewer' });
+    }
     
     // Get user's current password hash
     const user = db.prepare('SELECT password_hash, token_version FROM users WHERE id = ?').get(verification.user.id);
     
     // Verify current password
-    const bcrypt = require('bcryptjs');
-    const isValid = bcrypt.compareSync(currentPassword, user.password_hash);
+    const isValid = await auth.comparePassword(currentPassword, user.password_hash);
     
     if (!isValid) {
       return res.status(400).json({ error: 'Current password is incorrect' });
@@ -741,8 +904,11 @@ app.post('/api/user/change-password', authLimiter, (req, res) => {
     // request just authenticated with, so issue a fresh one below rather
     // than leaving the user's own session broken immediately after a
     // successful password change.
-    const newHash = bcrypt.hashSync(newPassword, 10);
-    const newTokenVersion = (user.token_version || 0) + 1;
+    const newHash = await auth.hashPassword(newPassword);
+    // Read the version again after the waits above, so two simultaneous changes
+    // can't both start from the same number
+    const latest = db.prepare('SELECT token_version FROM users WHERE id = ?').get(verification.user.id);
+    const newTokenVersion = ((latest && latest.token_version) || 0) + 1;
     db.prepare('UPDATE users SET password_hash = ?, token_version = ? WHERE id = ?').run(newHash, newTokenVersion, verification.user.id);
     db.saveDatabase();
 
@@ -750,20 +916,21 @@ app.post('/api/user/change-password', authLimiter, (req, res) => {
     
     res.json({ success: true, message: 'Password updated successfully', token: newToken });
   } catch (error) {
+    if (error && error.code === 'PASSWORD_BUSY') throw error;
     console.error('Error changing password:', error);
     res.status(500).json({ error: 'Failed to change password' });
   }
-});
+}, 'Failed to change password'));
 
 // POST /api/user/delete-account - Permanently delete your own account
-app.post('/api/user/delete-account', authLimiter, (req, res) => {
+app.post('/api/user/delete-account', accountActionLimiter, asyncRoute(async (req, res) => {
   const token = req.headers.authorization?.split(' ')[1] || req.body.token;
   const verification = auth.verifyToken(token);
   if (!verification.success) return res.status(401).json({ error: 'Unauthorized' });
 
   try {
     const { password } = req.body;
-    const result = auth.deleteAccount(verification.user.id, password);
+    const result = await auth.deleteAccount(verification.user.id, password);
 
     if (result.success) {
       res.json(result);
@@ -771,17 +938,18 @@ app.post('/api/user/delete-account', authLimiter, (req, res) => {
       res.status(400).json(result);
     }
   } catch (error) {
+    if (error && error.code === 'PASSWORD_BUSY') throw error;
     console.error('Error deleting account:', error);
     res.status(500).json({ error: 'Failed to delete account' });
   }
-});
+}, 'Failed to delete account'));
 
 // POST /api/forgot-password - Request a password reset email
 // Always returns the same generic message regardless of whether the account
 // exists, has an email on file, or the email send actually succeeded - this
 // endpoint must never be usable to test whether a given username/email has
 // an account (user enumeration).
-app.post('/api/forgot-password', authLimiter, async (req, res) => {
+app.post('/api/forgot-password', forgotIpLimiter, forgotAccountLimiter, async (req, res) => {
   const GENERIC_MESSAGE = 'If an account with that username or email exists, we\'ve sent password reset instructions to its email address.';
 
   try {
@@ -805,10 +973,10 @@ app.post('/api/forgot-password', authLimiter, async (req, res) => {
 });
 
 // POST /api/reset-password - Complete a password reset using the emailed token
-app.post('/api/reset-password', authLimiter, (req, res) => {
+app.post('/api/reset-password', resetIpLimiter, asyncRoute(async (req, res) => {
   try {
     const { token, newPassword } = req.body;
-    const result = auth.resetPasswordWithToken(token, newPassword);
+    const result = await auth.resetPasswordWithToken(token, newPassword);
 
     if (result.success) {
       // Kick any already-connected session for this account right now, not
@@ -821,10 +989,11 @@ app.post('/api/reset-password', authLimiter, (req, res) => {
       res.status(400).json(result);
     }
   } catch (error) {
+    if (error && error.code === 'PASSWORD_BUSY') throw error;
     console.error('Error in reset-password:', error);
     res.status(500).json({ success: false, error: 'Failed to reset password' });
   }
-});
+}, 'Failed to reset password'));
 
 // --- Moderation: who is allowed to act on whom -------------------------------
 // Roles form a ladder: user < moderator (shown as "Admin" in the UI) < admin
@@ -852,7 +1021,7 @@ function cleanReason(value) {
 }
 
 // POST /api/moderation/reset-password - Reset user password (staff, for accounts below their own role)
-app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
+app.post('/api/moderation/reset-password', requireModerator, asyncRoute(async (req, res) => {
   try {
     const userId = parseUserId(req.body.userId);
     const { newPassword } = req.body;
@@ -863,6 +1032,9 @@ app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
     
     if (newPassword.length < 6) {
       return res.status(400).json({ error: 'New password must be at least 6 characters' });
+    }
+    if (newPassword.length > 72) {
+      return res.status(400).json({ error: 'New password must be 72 characters or fewer' });
     }
     
     const targetUser = db.prepare('SELECT id, username, role FROM users WHERE id = ?').get(userId);
@@ -887,8 +1059,7 @@ app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
     // resetting someone else's password (unlike the self-service change-
     // password endpoint, there's no "own session" to preserve for the
     // caller - the admin and the target account are different people).
-    const bcrypt = require('bcryptjs');
-    const newHash = bcrypt.hashSync(newPassword, 10);
+    const newHash = await auth.hashPassword(newPassword);
     db.prepare('UPDATE users SET password_hash = ?, token_version = token_version + 1 WHERE id = ?').run(newHash, userId);
     
     // Log the action
@@ -906,10 +1077,11 @@ app.post('/api/moderation/reset-password', requireModerator, (req, res) => {
     
     res.json({ success: true, message: 'Password reset successfully' });
   } catch (error) {
+    if (error && error.code === 'PASSWORD_BUSY') throw error;
     console.error('Error resetting password:', error);
     res.status(500).json({ error: 'Failed to reset password' });
   }
-});
+}, 'Failed to reset password'));
 
 // Admin middleware
 function requireModerator(req, res, next) {
@@ -1203,14 +1375,28 @@ app.post('/api/moderation/demote', requireModerator, (req, res) => {
 // POST /api/moderation/ban-ip - Ban an IP address
 app.post('/api/moderation/ban-ip', requireModerator, (req, res) => {
   try {
-    const { ip, reason } = req.body;
+    const ip = normalizeIp(typeof req.body.ip === 'string' ? req.body.ip : '');
     
-    if (!ip) {
-      return res.status(400).json({ error: 'IP address required' });
+    if (!net.isIP(ip)) {
+      return res.status(400).json({ error: 'A valid IP address is required' });
+    }
+
+    // Two ways an IP ban can lock the wrong people out: banning the address you
+    // are using yourself, and banning one a staff member is online from right
+    // now. (Remember an IP address can be shared by many people - a whole
+    // household or school - and a ban applies to all of them.)
+    if (sameIp(ip, getClientIP(req))) {
+      return res.status(403).json({ error: "You can't ban the IP address you are connected from" });
+    }
+    const staffOnlineFromThere = Array.from(lobbySockets.values())
+      .some(user => (user.role === 'admin' || user.role === 'moderator') && sameIp(user.ip, ip));
+    if (staffOnlineFromThere) {
+      return res.status(403).json({ error: 'An admin is online from that IP address right now' });
     }
     
     // Check if already banned
-    const existing = db.prepare('SELECT id FROM banned_ips WHERE ip_address = ?').get(ip);
+    const variants = ipVariants(ip);
+    const existing = db.prepare(`SELECT id FROM banned_ips WHERE ip_address IN (${variants.map(() => '?').join(',')})`).get(...variants);
     if (existing) {
       return res.status(400).json({ error: 'IP address already banned' });
     }
@@ -1218,7 +1404,7 @@ app.post('/api/moderation/ban-ip', requireModerator, (req, res) => {
     db.prepare(`
       INSERT INTO banned_ips (ip_address, reason, banned_by)
       VALUES (?, ?, ?)
-    `).run(ip, reason || 'No reason provided', req.moderator.id);
+    `).run(ip, cleanReason(req.body.reason) || 'No reason provided', req.moderator.id);
     
     db.saveDatabase();
     
@@ -1235,13 +1421,14 @@ app.post('/api/moderation/ban-ip', requireModerator, (req, res) => {
 // POST /api/moderation/unban-ip - Unban an IP address
 app.post('/api/moderation/unban-ip', requireModerator, (req, res) => {
   try {
-    const { ip } = req.body;
+    const ip = normalizeIp(typeof req.body.ip === 'string' ? req.body.ip : '');
     
-    if (!ip) {
-      return res.status(400).json({ error: 'IP address required' });
+    if (!net.isIP(ip)) {
+      return res.status(400).json({ error: 'A valid IP address is required' });
     }
     
-    db.prepare('DELETE FROM banned_ips WHERE ip_address = ?').run(ip);
+    const variants = ipVariants(ip);
+    db.prepare(`DELETE FROM banned_ips WHERE ip_address IN (${variants.map(() => '?').join(',')})`).run(...variants);
     db.saveDatabase();
     
     res.json({ success: true, message: 'IP address unbanned' });
@@ -3890,6 +4077,10 @@ function switchToSpectator(room, socketId) {
     return { success: false, error: 'Spectators not allowed in this room' };
   }
 
+  if (room.spectators.length >= LIMITS.maxSpectatorsPerRoom) {
+    return { success: false, error: 'This game has too many spectators' };
+  }
+
   if (room.state !== 'lobby') {
     return { success: false, error: 'Cannot switch to spectator during active game' };
   }
@@ -5592,6 +5783,16 @@ app.get('/api/leaderboards/me/:type', (req, res) => {
   }
 });
 
+// Last stop for errors from the routes above (e.g. a request body that is too big
+// or not valid JSON): a short JSON answer, never a stack trace.
+app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+  if (err && err.type === 'entity.too.large') return res.status(413).json({ success: false, error: 'Request too large' });
+  if (err && err.type === 'entity.parse.failed') return res.status(400).json({ success: false, error: 'Invalid request' });
+  console.error('Unhandled request error:', err);
+  res.status(500).json({ success: false, error: 'Internal server error' });
+});
+
 // Lobby system tracking
 const lobbySockets = new Map(); // socketId -> { username, socketId, isAuthenticated, userId, inGame }
 const lobbyChatHistory = []; // Store last 30 minutes of chat messages
@@ -5619,7 +5820,7 @@ function disconnectIP(ip) {
 
   // Disconnect from lobby
   lobbySockets.forEach((userData, socketId) => {
-    if (userData.ip === ip) {
+    if (sameIp(userData.ip, ip)) {
       const socket = io.sockets.sockets.get(socketId);
       if (socket) {
         socket.emit('error', errorPayload);
@@ -5645,7 +5846,7 @@ function disconnectIP(ip) {
     let changed = false;
 
     let playerIndex;
-    while ((playerIndex = room.players.findIndex(p => p.ip === ip && !p.hasLeft)) !== -1) {
+    while ((playerIndex = room.players.findIndex(p => sameIp(p.ip, ip) && !p.hasLeft)) !== -1) {
       const player = room.players[playerIndex];
       const socket = io.sockets.sockets.get(player.socketId);
       removePlayerFromRoom(room, playerIndex, `${getDisplayName(room, player)}'s IP address was banned and they forfeit!`);
@@ -5657,7 +5858,7 @@ function disconnectIP(ip) {
     }
 
     let spectatorIndex;
-    while ((spectatorIndex = room.spectators.findIndex(s => s.ip === ip && !s.hasLeft)) !== -1) {
+    while ((spectatorIndex = room.spectators.findIndex(s => sameIp(s.ip, ip) && !s.hasLeft)) !== -1) {
       const spectator = room.spectators[spectatorIndex];
       const socket = io.sockets.sockets.get(spectator.socketId);
       removeSpectatorFromRoom(room, spectatorIndex);
@@ -5672,6 +5873,15 @@ function disconnectIP(ip) {
       emitToRoom(room.code, 'gameState');
     }
   });
+
+  // Any other open connection from that address (one that hasn't joined the lobby
+  // or a game yet) goes too - otherwise it could carry on creating rooms.
+  for (const openSocket of io.sockets.sockets.values()) {
+    if (sameIp(openSocket.data.ip, ip)) {
+      openSocket.emit('error', errorPayload);
+      openSocket.disconnect(true);
+    }
+  }
 
   broadcastOnlineUsers();
   broadcastRoomList();
@@ -5730,13 +5940,37 @@ function disconnectUser(userId, message) {
     }
   });
 
+  // Same for any open connection of this account that hasn't joined anything yet
+  for (const openSocket of io.sockets.sockets.values()) {
+    if (openSocket.data.userId === userId) {
+      openSocket.emit('error', errorPayload);
+      openSocket.disconnect(true);
+    }
+  }
+
   broadcastOnlineUsers();
   broadcastRoomList();
 }
 const pendingLobbyRemovals = new Map(); // username -> timeout
 const LOBBY_REMOVAL_DELAY = 3000; // 3 seconds grace period for page navigation
 
+// The room list and the online-users list are sent to every lobby connection, and
+// they get requested constantly (every join, leave, page load...). Requests that
+// arrive within a moment of each other are merged into one send, so a burst of
+// activity - or someone hammering "join lobby" - costs one broadcast, not hundreds.
+const BROADCAST_DELAY_MS = 150;
+let roomListBroadcastTimer = null;
+let onlineUsersBroadcastTimer = null;
 function broadcastRoomList() {
+  if (roomListBroadcastTimer) return;
+  roomListBroadcastTimer = setTimeout(() => { roomListBroadcastTimer = null; sendRoomListNow(); }, BROADCAST_DELAY_MS);
+}
+function broadcastOnlineUsers() {
+  if (onlineUsersBroadcastTimer) return;
+  onlineUsersBroadcastTimer = setTimeout(() => { onlineUsersBroadcastTimer = null; sendOnlineUsersNow(); }, BROADCAST_DELAY_MS);
+}
+
+function sendRoomListNow() {
   // Everything here is public except `isMine`, which is worked out separately
   // for each recipient below. (This used to broadcast every player's user ID
   // and every disconnected guest's reconnect credential to the whole lobby so
@@ -5775,7 +6009,7 @@ function broadcastRoomList() {
   });
 }
 
-function broadcastOnlineUsers() {
+function sendOnlineUsersNow() {
   // Get all users
   const allUsers = Array.from(lobbySockets.values()).map(user => ({
     username: user.username,
@@ -5862,6 +6096,27 @@ io.on('connection', (socket) => {
     return;
   }
   
+  // Connection limits per IP. High on purpose (see LIMITS): a whole class or
+  // household can share one address. This only stops a flood from one place.
+  if (clientIP && clientIP !== 'unknown') {
+    const tooManyOpen = (connectionsPerIp.get(clientIP) || 0) >= LIMITS.maxConnectionsPerIp;
+    const tooFast = isSocketRateLimited(`ip:${clientIP}:connect`, LIMITS.connectionsPerMinutePerIp, 60000);
+    if (tooManyOpen || tooFast) {
+      socket.emit('error', { message: 'Too many connections from your network. Please try again in a moment.' });
+      socket.disconnect(true);
+      return;
+    }
+    connectionsPerIp.set(clientIP, (connectionsPerIp.get(clientIP) || 0) + 1);
+    socket.once('disconnect', () => {
+      const remaining = (connectionsPerIp.get(clientIP) || 1) - 1;
+      if (remaining <= 0) connectionsPerIp.delete(clientIP); else connectionsPerIp.set(clientIP, remaining);
+    });
+  }
+
+  // Remember where this connection comes from, so a ban can find it even if it
+  // hasn't joined the lobby or a game yet.
+  socket.data.ip = clientIP;
+
   // Store user info from auth token (if provided)
   let authenticatedUser = null;
   const token = socket.handshake.auth?.token;
@@ -5894,9 +6149,17 @@ io.on('connection', (socket) => {
     }
   }
 
+  socket.data.userId = authenticatedUser ? authenticatedUser.id : null;
+
   onSafe('createRoom', (data, callback) => {
-    if (isSocketRateLimited(`${socket.id}:createRoom`, 5, 60000)) {
+    if (isSocketRateLimited(`${socket.id}:createRoom`, 5, 60000)
+        || (authenticatedUser && isSocketRateLimited(`u:${authenticatedUser.id}:createRoom`, 5, 60000))
+        || isSocketRateLimited(`ip:${clientIP}:createRoom`, LIMITS.roomsCreatedPerMinPerIp, 60000)) {
       callback({ success: false, error: 'You are creating rooms too quickly. Please wait a moment.' });
+      return;
+    }
+    if (rooms.size >= LIMITS.maxRooms) {
+      callback({ success: false, error: 'The server has too many games open right now. Please try again shortly.' });
       return;
     }
 
@@ -6222,6 +6485,10 @@ io.on('connection', (socket) => {
         callback({ success: false, error: 'Game in progress and spectators not allowed' });
         return;
       }
+      if (room.spectators.length >= LIMITS.maxSpectatorsPerRoom) {
+        callback({ success: false, error: 'This game has too many spectators' });
+        return;
+      }
 
       const spectator = {
         id: newPublicId(),
@@ -6245,6 +6512,10 @@ io.on('connection', (socket) => {
     if (asSpectator || room.players.length >= maxPlayers) {
       if (!room.allowSpectators) {
         callback({ success: false, error: 'Spectators not allowed in this room' });
+        return;
+      }
+      if (room.spectators.length >= LIMITS.maxSpectatorsPerRoom) {
+        callback({ success: false, error: 'This game has too many spectators' });
         return;
       }
 
@@ -6697,6 +6968,7 @@ io.on('connection', (socket) => {
 
   // Lobby events
   onSafe('joinLobby', (data) => {
+    if (isSocketRateLimited(`${socket.id}:joinLobby`, 30, 60000)) return; // a page only needs to do this once or twice
     // For authenticated users, always use their actual username from the token
     // For guests, use client-supplied username or generate one
     let username;
@@ -6779,7 +7051,7 @@ io.on('connection', (socket) => {
   });
 
   onSafe('lobbyChatMessage', (data) => {
-    if (isSocketRateLimited(`${socket.id}:lobbyChat`, 5, 10000)) {
+    if (isChatRateLimited(socket, clientIP, authenticatedUser, 'lobbyChat')) {
       socket.emit('chatRateLimited', { message: 'You are sending messages too quickly. Please slow down.' });
       return;
     }
@@ -6907,7 +7179,7 @@ io.on('connection', (socket) => {
   });
 
   onSafe('sendChatMessage', (data) => {
-    if (isSocketRateLimited(`${socket.id}:gameChat`, 5, 10000)) {
+    if (isChatRateLimited(socket, clientIP, authenticatedUser, 'gameChat')) {
       socket.emit('chatRateLimited', { message: 'You are sending messages too quickly. Please slow down.' });
       return;
     }
